@@ -4,6 +4,7 @@ import com.l2dchat.chat.ChatWebSocketManager.ConnectionState
 import com.l2dchat.chat.ChatWebSocketManager.RuntimeMode
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.core.LocalChatRuntime
+import com.l2dchat.core.reply.ReplySink
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +22,12 @@ class LocalTransport(
 
     private val logger = L2DLogger.module(LogModule.CHAT)
     private var running = false
+    private val replySink =
+            object : ReplySink {
+                override suspend fun send(message: MessageBase) {
+                    callbacks.onIncomingText(message.toJsonString())
+                }
+            }
 
     fun start() {
         val wasRunning = running
@@ -43,19 +50,15 @@ class LocalTransport(
         if (!running) {
             start()
         }
-        if (!runtime.shouldReply(message)) {
-            return true
-        }
         scope.launch {
             try {
                 delay(120L)
-                val reply =
-                        runtime.createReply(
+                runtime.handleMessage(
                                 inbound = message,
                                 fallbackPlatform = platformProvider(),
-                                fallbackAgentName = agentNameProvider()
+                                fallbackAgentName = agentNameProvider(),
+                                replySink = replySink
                         )
-                callbacks.onIncomingText(reply.toJsonString())
             } catch (e: Exception) {
                 callbacks.onError("本地运行时处理消息失败：${e.message ?: "未知错误"}", e)
             }

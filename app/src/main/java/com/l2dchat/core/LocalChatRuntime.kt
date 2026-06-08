@@ -7,6 +7,7 @@ import com.l2dchat.chat.ReceiverInfo
 import com.l2dchat.chat.Seg
 import com.l2dchat.chat.SenderInfo
 import com.l2dchat.chat.UserInfo
+import com.l2dchat.core.reply.ReplySink
 
 /**
  * First local runtime slice.
@@ -23,6 +24,25 @@ class LocalChatRuntime {
                         ?.toString()
                         ?.lowercase()
         return messageType == null || messageType == "chat"
+    }
+
+    suspend fun handleMessage(
+            inbound: MessageBase,
+            fallbackPlatform: String,
+            fallbackAgentName: String?,
+            replySink: ReplySink
+    ): Boolean {
+        if (!shouldReply(inbound)) {
+            return false
+        }
+        replySink.send(
+                createReply(
+                        inbound = inbound,
+                        fallbackPlatform = fallbackPlatform,
+                        fallbackAgentName = fallbackAgentName
+                )
+        )
+        return true
     }
 
     fun createReply(
