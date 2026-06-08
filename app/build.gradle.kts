@@ -31,8 +31,7 @@ android {
     signingConfigs {
         create("release") {
             if (!signingPropsFile.exists()) {
-                // 如果缺少签名文件，给出清晰错误，防止构建一个未签名的 release
-                throw GradleException("缺少 signing.properties，请创建并填写签名信息后再构建 release")
+                return@create
             }
             val storePath = signingProps.getProperty("storeFile")
                 ?: throw GradleException("signing.properties 缺少 storeFile")
@@ -71,6 +70,29 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+}
+
+tasks.register("validateReleaseSigning") {
+    group = "verification"
+    description = "Fail release builds early when signing.properties is missing or incomplete"
+
+    doFirst {
+        if (!signingPropsFile.exists()) {
+            throw GradleException("缺少 signing.properties，请创建并填写签名信息后再构建 release")
+        }
+
+        val missingKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+            .filter { signingProps.getProperty(it).isNullOrBlank() }
+        if (missingKeys.isNotEmpty()) {
+            throw GradleException("signing.properties 缺少 ${missingKeys.joinToString(", ")}")
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name.contains("Release")) {
+        dependsOn("validateReleaseSigning")
     }
 }
 
