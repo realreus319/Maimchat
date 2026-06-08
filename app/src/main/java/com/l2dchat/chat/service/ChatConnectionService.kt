@@ -89,7 +89,7 @@ class ChatConnectionService : Service() {
         if (!lastKnownReceiverId.isNullOrBlank() || !lastKnownReceiverNickname.isNullOrBlank()) {
             manager.setReceiverInfo(lastKnownReceiverId, lastKnownReceiverNickname)
         }
-        lastKnownUrl?.let { url -> manager.connect(url, lastKnownPlatform, lastKnownAuth) }
+        manager.startLocalRuntime()
     }
 
     private fun startObservers() {
@@ -127,7 +127,7 @@ class ChatConnectionService : Service() {
                             when (state) {
                                 ConnectionState.DISCONNECTED -> "未连接"
                                 ConnectionState.CONNECTING -> "连接中"
-                                ConnectionState.CONNECTED -> "已连接"
+                                ConnectionState.CONNECTED -> manager.getConnectionStateDescription()
                                 ConnectionState.ERROR -> "错误"
                             }
                     )
@@ -237,7 +237,11 @@ class ChatConnectionService : Service() {
             notifyError("发送内容不能为空")
             return
         }
-        ensureConnected()
+        if (manager.isLocalMode()) {
+            manager.startLocalRuntime()
+        } else {
+            ensureConnected()
+        }
         manager.sendUserMessage(text)
     }
 

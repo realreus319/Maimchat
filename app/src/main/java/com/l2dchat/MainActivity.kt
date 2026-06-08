@@ -77,9 +77,6 @@ fun Live2DChatApp() {
         if (!nickname.isNullOrBlank()) {
             chatManager.setUserProfile(nickname)
         }
-        if (!lastUrl.isNullOrBlank()) {
-            chatManager.connect(lastUrl)
-        }
         if (selectedModel == null) {
             val savedModelFolder = prefs.getString(ChatPreferenceKeys.SELECTED_MODEL_FOLDER, null)
             if (!savedModelFolder.isNullOrBlank()) {

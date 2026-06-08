@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.l2dchat.core.LocalChatRuntime
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import java.util.concurrent.TimeUnit
@@ -31,6 +32,8 @@ class ChatWebSocketManager {
     private val logger = L2DLogger.module(LogModule.CHAT)
     private val gson = Gson()
     private var webSocket: WebSocket? = null
+    private val localRuntime = LocalChatRuntime()
+    private var runtimeMode: RuntimeMode = RuntimeMode.LOCAL
     private val client =
             OkHttpClient.Builder()
                     .connectTimeout(20, TimeUnit.SECONDS)
@@ -80,6 +83,11 @@ class ChatWebSocketManager {
         ERROR
     }
 
+    enum class RuntimeMode {
+        LOCAL,
+        REMOTE
+    }
+
     data class ChatMessage(
             val id: String,
             val content: String,
@@ -112,6 +120,10 @@ class ChatWebSocketManager {
         return if (trimmed.isEmpty()) DEFAULT_PLATFORM else trimmed
     }
     fun connect(url: String, platform: String? = null, authToken: String? = null) {
+        if (runtimeMode == RuntimeMode.LOCAL) {
+            _connectionState.value = ConnectionState.DISCONNECTED
+        }
+        runtimeMode = RuntimeMode.REMOTE
         if (_connectionState.value == ConnectionState.CONNECTED ||
                         _connectionState.value == ConnectionState.CONNECTING
         ) {
@@ -200,6 +212,27 @@ class ChatWebSocketManager {
             reportConnectionError("创建 WebSocket 失败：${e.message ?: "未知错误"}", e)
         }
     }
+
+    fun startLocalRuntime() {
+        val wasRunning =
+                runtimeMode == RuntimeMode.LOCAL && _connectionState.value == ConnectionState.CONNECTED
+        if (runtimeMode != RuntimeMode.LOCAL) {
+            try {
+                webSocket?.close(1000, "切换到本地运行时")
+            } catch (_: Exception) {}
+            webSocket = null
+        }
+        runtimeMode = RuntimeMode.LOCAL
+        userInitiatedDisconnect = false
+        reconnectJobActive = false
+        retryCount = 0
+        _connectionState.value = ConnectionState.CONNECTED
+        if (!wasRunning) {
+            logger.info("本地聊天运行时已启动")
+        }
+    }
+
+    fun isLocalMode(): Boolean = runtimeMode == RuntimeMode.LOCAL
 
     private fun reportConnectionError(message: String, throwable: Throwable? = null) {
         logger.error(message, throwable)
@@ -409,7 +442,28 @@ class ChatWebSocketManager {
         sendStandardMessage(message)
     }
     fun sendStandardMessage(message: MessageBase) {
+        if (runtimeMode == RuntimeMode.LOCAL) {
+            sendLocalStandardMessage(message)
+            return
+        }
         sendRawMessage(message.toJsonString())
+    }
+
+    private fun sendLocalStandardMessage(message: MessageBase) {
+        if (_connectionState.value != ConnectionState.CONNECTED) {
+            startLocalRuntime()
+        }
+        addStandardMessage(message)
+        if (!localRuntime.shouldReply(message)) return
+        scope.launch {
+            try {
+                kotlinx.coroutines.delay(120L)
+                val reply = localRuntime.createReply(message, platform, receiverModelName)
+                handleIncomingMessage(reply.toJsonString())
+            } catch (e: Exception) {
+                reportConnectionError("本地运行时处理消息失败：${e.message ?: "未知错误"}", e)
+            }
+        }
     }
     private fun sendRawMessage(text: String) {
         if (_connectionState.value == ConnectionState.CONNECTED) {
@@ -610,6 +664,10 @@ class ChatWebSocketManager {
             "u_${System.currentTimeMillis()}_${(Math.random()*1000).toInt()}"
     fun disconnect() {
         userInitiatedDisconnect = true
+        if (runtimeMode == RuntimeMode.LOCAL) {
+            _connectionState.value = ConnectionState.DISCONNECTED
+            return
+        }
         try {
             webSocket?.close(1000, "用户断开")
         } catch (_: Exception) {}
@@ -619,7 +677,8 @@ class ChatWebSocketManager {
             when (_connectionState.value) {
                 ConnectionState.DISCONNECTED -> "未连接"
                 ConnectionState.CONNECTING -> "连接中..."
-                ConnectionState.CONNECTED -> "已连接"
+                ConnectionState.CONNECTED ->
+                        if (runtimeMode == RuntimeMode.LOCAL) "本地运行中" else "已连接"
                 ConnectionState.ERROR -> "连接错误"
             }
 
