@@ -7,6 +7,8 @@ import com.l2dchat.chat.ReceiverInfo
 import com.l2dchat.chat.Seg
 import com.l2dchat.chat.SenderInfo
 import com.l2dchat.chat.UserInfo
+import com.l2dchat.core.inbound.InboundBuilder
+import com.l2dchat.core.perception.PerceptionProcessor
 import com.l2dchat.core.reply.ReplySink
 
 /**
@@ -16,6 +18,8 @@ import com.l2dchat.core.reply.ReplySink
  * message and emit a local assistant standard message without a backend.
  */
 class LocalChatRuntime {
+    private val inboundBuilder = InboundBuilder()
+    private val perceptionProcessor = PerceptionProcessor()
 
     fun shouldReply(message: MessageBase): Boolean {
         val messageType =
@@ -35,11 +39,19 @@ class LocalChatRuntime {
         if (!shouldReply(inbound)) {
             return false
         }
+        val perception =
+                perceptionProcessor.process(
+                        inboundBuilder.fromMessageBase(
+                                message = inbound,
+                                fallbackPlatform = fallbackPlatform
+                        )
+                )
         replySink.send(
                 createReply(
                         inbound = inbound,
                         fallbackPlatform = fallbackPlatform,
-                        fallbackAgentName = fallbackAgentName
+                        fallbackAgentName = fallbackAgentName,
+                        inboundText = perception.parsedMessage.text
                 )
         )
         return true
@@ -50,14 +62,35 @@ class LocalChatRuntime {
             fallbackPlatform: String,
             fallbackAgentName: String?
     ): MessageBase {
+        val perception =
+                perceptionProcessor.process(
+                        inboundBuilder.fromMessageBase(
+                                message = inbound,
+                                fallbackPlatform = fallbackPlatform
+                        )
+                )
+        return createReply(
+                inbound = inbound,
+                fallbackPlatform = fallbackPlatform,
+                fallbackAgentName = fallbackAgentName,
+                inboundText = perception.parsedMessage.text
+        )
+    }
+
+    private fun createReply(
+            inbound: MessageBase,
+            fallbackPlatform: String,
+            fallbackAgentName: String?,
+            inboundText: String
+    ): MessageBase {
         val platform = inbound.messageInfo.platform ?: fallbackPlatform
         val agentName = fallbackAgentName?.takeIf { it.isNotBlank() } ?: "Maimchat"
-        val inboundText = extractText(inbound.messageSegment).ifBlank { inbound.rawMessage.orEmpty() }
+        val normalizedText = inboundText.ifBlank { inbound.rawMessage.orEmpty() }
         val replyText =
-                if (inboundText.isBlank()) {
+                if (normalizedText.isBlank()) {
                     "本地回复运行时已接管聊天链路。"
                 } else {
-                    "本地回复运行时已接收：$inboundText"
+                    "本地回复运行时已接收：$normalizedText"
                 }
 
         val assistantUser =
@@ -112,17 +145,6 @@ class LocalChatRuntime {
                     userNickname = user?.userNickname?.takeIf { it.isNotBlank() } ?: fallbackName,
                     userCardname = user?.userCardname
             )
-
-    private fun extractText(segment: Seg): String =
-            when (segment.type) {
-                "text" -> segment.data.toString()
-                "seglist" -> {
-                    @Suppress("UNCHECKED_CAST")
-                    val list = segment.data as? List<Seg>
-                    list?.joinToString(" ") { extractText(it) }.orEmpty().trim()
-                }
-                else -> ""
-            }
 
     private fun generateMessageId(): String =
             "local_${System.currentTimeMillis()}_${(Math.random() * 1000).toInt()}"

@@ -330,6 +330,15 @@ Acceptance:
 - Mentioned messages get high priority.
 - Normal text, emoji, voice, and image blocks are not dropped.
 
+Progress:
+
+- Done: `RoutingKey`, `InboundMessage`, and `ContentBlock` core models.
+- Done: `InboundBuilder` for existing `MessageBase` input, room parsing, seglist text/image normalization, and image marker validation.
+- Done: default parser for text, command prefix, command args, and mentions.
+- Done: `Trigger` and `PerceptionProcessor` conversion from parsed message to `MSG` trigger.
+- Done: `LocalChatRuntime` now reads inbound text through the inbound/perception path while keeping fixed local reply behavior.
+- Pending: queued per-agent processor lifecycle, persistent internal message save, complete emoji/voice preservation, and routing into the planner layer.
+
 ## Phase 4: PlannerLoop Core
 
 Goal: port the backend's central reply state machine.
