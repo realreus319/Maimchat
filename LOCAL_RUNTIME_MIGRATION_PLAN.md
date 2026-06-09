@@ -275,6 +275,14 @@ Acceptance:
 - New messages persist through process death.
 - `ChatContext.getConversationHistory()` can be implemented on top of Room.
 
+Progress:
+
+- Done: Room-backed `messages` and `standard_messages` storage.
+- Done: one-time import from legacy SharedPreferences history.
+- Done: compatibility mirror from Room-backed flow state back to existing visible/standard message APIs.
+- Done: scoped history clearing by model context and optional agent id.
+- Pending: planner/session/tool/memory tables and higher-level `ChatContext` query API.
+
 ## Phase 3: Inbound And Perception
 
 Goal: implement the backend `Bridge -> InboundBuilder -> PerceptionProcessor -> Trigger` path in Kotlin.

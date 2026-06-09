@@ -9,6 +9,11 @@ import com.l2dchat.chat.transport.ChatTransportCallbacks
 import com.l2dchat.chat.transport.LocalTransport
 import com.l2dchat.chat.transport.RemoteWebSocketConfig
 import com.l2dchat.chat.transport.RemoteWebSocketTransport
+import com.l2dchat.core.message.RuntimeMessageMapper
+import com.l2dchat.core.message.VisibleMessageRecord
+import com.l2dchat.core.storage.ChatDatabase
+import com.l2dchat.core.storage.ChatHistoryStore
+import com.l2dchat.core.storage.RoomChatHistoryStore
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import kotlinx.coroutines.CoroutineScope
@@ -26,6 +31,9 @@ import kotlinx.coroutines.launch
 class ChatWebSocketManager {
     companion object {
         private const val DEFAULT_PLATFORM = "live2d_chat"
+        private const val HISTORY_PREFS = "chat_history"
+        private const val HISTORY_LIMIT = 200
+        private const val ROOM_IMPORT_PREFIX = "room_imported_"
     }
     private val logger = L2DLogger.module(LogModule.CHAT)
     private val gson = Gson()
@@ -77,6 +85,8 @@ class ChatWebSocketManager {
     private var receiverModelName: String? = null
     private var activeModelKey: String? = null
     private var appContext: Context? = null
+    private var historyStore: ChatHistoryStore? = null
+    private var historyLoadGeneration: Long = 0L
     private var receiverUserIdOverride: String? = null
     private var receiverUserNicknameOverride: String? = null
 
@@ -167,8 +177,10 @@ class ChatWebSocketManager {
     fun setActiveModel(context: Context, modelName: String?) {
         receiverModelName = modelName?.ifBlank { null }
         activeModelKey = modelName?.lowercase()?.replace(Regex("[^a-z0-9_-]+"), "_")
-        appContext = context.applicationContext
-        activeModelKey?.let { loadHistory(context, it) }
+        val app = context.applicationContext
+        appContext = app
+        historyStoreFor(app)
+        activeModelKey?.let { loadHistory(app, it) }
     }
     fun setReceiverInfo(userId: String?, userNickname: String?) {
         receiverUserIdOverride = userId?.ifBlank { null }
@@ -323,6 +335,7 @@ class ChatWebSocketManager {
         if (list.any { it.id == message.id }) return
         list.add(message)
         _messages.value = list
+        appendVisibleHistory(message)
         val key = activeModelKey
         val ctx = appContext
         if (key != null && ctx != null) saveHistory(ctx, key)
@@ -333,6 +346,7 @@ class ChatWebSocketManager {
         if (!mid.isNullOrBlank() && list.any { it.messageInfo.messageId == mid }) return
         list.add(message)
         _standardMessages.value = list
+        appendStandardHistory(message)
         val key = activeModelKey
         val ctx = appContext
         if (key != null && ctx != null) saveHistory(ctx, key)
@@ -400,7 +414,10 @@ class ChatWebSocketManager {
         lastServerMessageTime = 0L
         val key = activeModelKey
         val ctx = appContext
-        if (key != null && ctx != null) saveHistory(ctx, key)
+        if (key != null && ctx != null) {
+            saveHistory(ctx, key)
+            clearRoomHistory(key)
+        }
     }
     fun clearMessagesEphemeral() {
         _messages.value = emptyList()
@@ -408,8 +425,46 @@ class ChatWebSocketManager {
         lastServerMessageTime = 0L
     }
     fun loadHistory(context: Context, modelKey: String) {
+        val app = context.applicationContext
+        appContext = app
+        historyStoreFor(app)
+        val generation = ++historyLoadGeneration
+        val legacy = readLegacyHistory(app, modelKey)
+        applyLoadedHistory(legacy.visibleMessages, legacy.standardMessages)
+        loadRoomHistory(app, modelKey, legacy, generation)
+    }
+    fun saveHistory(context: Context, modelKey: String) {
         try {
-            val sp = context.getSharedPreferences("chat_history", Context.MODE_PRIVATE)
+            val editor = historyPreferences(context).edit()
+            val msgs = _messages.value.takeLast(HISTORY_LIMIT)
+            val arrMsgs = JsonArray()
+            msgs.forEach { m ->
+                val o = JsonObject()
+                o.addProperty("id", m.id)
+                o.addProperty("content", m.content)
+                o.addProperty("isFromUser", m.isFromUser)
+                o.addProperty("timestamp", m.timestamp)
+                arrMsgs.add(o)
+            }
+            val stds = _standardMessages.value.takeLast(HISTORY_LIMIT)
+            val arrStd = JsonArray()
+            stds.forEach { s -> arrStd.add(s.toJsonString()) }
+            editor.putString("messages_" + modelKey, gson.toJson(arrMsgs))
+            editor.putString("standard_" + modelKey, gson.toJson(arrStd))
+            editor.apply()
+        } catch (e: Exception) {
+            logger.error("保存历史失败", e)
+        }
+    }
+
+    private data class StoredHistory(
+            val visibleMessages: List<ChatMessage>,
+            val standardMessages: List<MessageBase>
+    )
+
+    private fun readLegacyHistory(context: Context, modelKey: String): StoredHistory {
+        try {
+            val sp = historyPreferences(context)
             val msgsStr = sp.getString("messages_" + modelKey, null)
             val stdStr = sp.getString("standard_" + modelKey, null)
             val loadedMsgs = mutableListOf<ChatMessage>()
@@ -441,39 +496,203 @@ class ChatWebSocketManager {
                     }
                 } catch (_: Exception) {}
             }
-            _messages.value = loadedMsgs
-            _standardMessages.value = loadedStd
-            synchronizeCachedMessagePlatforms(this.platform)
-            val lastTs = loadedStd.maxOfOrNull { (((it.messageInfo.time) ?: 0.0) * 1000).toLong() }
-            if (lastTs != null && lastTs > 0) lastServerMessageTime = lastTs
+            return StoredHistory(loadedMsgs, loadedStd)
         } catch (e: Exception) {
             logger.error("加载历史失败", e)
         }
+        return StoredHistory(emptyList(), emptyList())
     }
-    fun saveHistory(context: Context, modelKey: String) {
-        try {
-            val sp = context.getSharedPreferences("chat_history", Context.MODE_PRIVATE)
-            val editor = sp.edit()
-            val msgs = _messages.value.takeLast(200)
-            val arrMsgs = JsonArray()
-            msgs.forEach { m ->
-                val o = JsonObject()
-                o.addProperty("id", m.id)
-                o.addProperty("content", m.content)
-                o.addProperty("isFromUser", m.isFromUser)
-                o.addProperty("timestamp", m.timestamp)
-                arrMsgs.add(o)
+
+    private fun applyLoadedHistory(
+            visibleMessages: List<ChatMessage>,
+            standardMessages: List<MessageBase>
+    ) {
+        _messages.value = visibleMessages
+        _standardMessages.value = standardMessages
+        synchronizeCachedMessagePlatforms(this.platform)
+        lastServerMessageTime =
+                _standardMessages.value
+                        .maxOfOrNull { (((it.messageInfo.time) ?: 0.0) * 1000).toLong() }
+                        ?.takeIf { it > 0L }
+                        ?: 0L
+    }
+
+    private fun loadRoomHistory(
+            context: Context,
+            modelKey: String,
+            legacy: StoredHistory,
+            generation: Long
+    ) {
+        val store = historyStoreFor(context)
+        val contextId = historyContextId(modelKey)
+        val agentId = historyAgentId(modelKey)
+        val baselineVisibleIds = legacy.visibleMessages.map { it.id }.toSet()
+        val baselineStandardIds = legacy.standardMessages.map { it.historyIdentity() }.toSet()
+        scope.launch {
+            try {
+                importLegacyHistoryIfNeeded(context, store, modelKey, contextId, agentId, legacy)
+                val roomVisible =
+                        store.queryRecentVisibleMessages(contextId, agentId, HISTORY_LIMIT)
+                                .asReversed()
+                                .map { it.toChatMessage() }
+                val roomStandard =
+                        store.queryRecentStandardMessages(contextId, agentId, HISTORY_LIMIT)
+                                .asReversed()
+                if (
+                        canApplyRoomHistory(
+                                modelKey,
+                                generation,
+                                baselineVisibleIds,
+                                baselineStandardIds
+                        )
+                ) {
+                    applyLoadedHistory(roomVisible, roomStandard)
+                    saveHistory(context, modelKey)
+                }
+            } catch (e: Exception) {
+                logger.error("加载 Room 历史失败", e)
             }
-            val stds = _standardMessages.value.takeLast(200)
-            val arrStd = JsonArray()
-            stds.forEach { s -> arrStd.add(s.toJsonString()) }
-            editor.putString("messages_" + modelKey, gson.toJson(arrMsgs))
-            editor.putString("standard_" + modelKey, gson.toJson(arrStd))
-            editor.apply()
-        } catch (e: Exception) {
-            logger.error("保存历史失败", e)
         }
     }
+
+    private suspend fun importLegacyHistoryIfNeeded(
+            context: Context,
+            store: ChatHistoryStore,
+            modelKey: String,
+            contextId: String,
+            agentId: String?,
+            legacy: StoredHistory
+    ) {
+        val sp = historyPreferences(context)
+        val importKey = roomImportKey(modelKey)
+        if (sp.getBoolean(importKey, false)) return
+
+        legacy.visibleMessages.forEach { message ->
+            store.appendVisibleMessage(contextId, agentId, message.toVisibleRecord())
+        }
+        legacy.standardMessages.forEach { message ->
+            store.appendStandardMessage(
+                    contextId = contextId,
+                    agentId = agentId,
+                    message = message,
+                    fallbackTimestampMillis = fallbackTimestampMillis(message)
+            )
+        }
+        sp.edit().putBoolean(importKey, true).apply()
+    }
+
+    private fun canApplyRoomHistory(
+            modelKey: String,
+            generation: Long,
+            baselineVisibleIds: Set<String>,
+            baselineStandardIds: Set<String>
+    ): Boolean {
+        if (generation != historyLoadGeneration || activeModelKey != modelKey) return false
+        val currentVisibleIds = _messages.value.map { it.id }.toSet()
+        val currentStandardIds = _standardMessages.value.map { it.historyIdentity() }.toSet()
+        return currentVisibleIds == baselineVisibleIds && currentStandardIds == baselineStandardIds
+    }
+
+    private fun appendVisibleHistory(message: ChatMessage) {
+        val key = activeModelKey ?: return
+        val context = appContext ?: return
+        val store = historyStoreFor(context)
+        val contextId = historyContextId(key)
+        val agentId = historyAgentId(key)
+        scope.launch {
+            try {
+                store.appendVisibleMessage(contextId, agentId, message.toVisibleRecord())
+            } catch (e: Exception) {
+                logger.error("保存可见消息到 Room 失败", e)
+            }
+        }
+    }
+
+    private fun appendStandardHistory(message: MessageBase) {
+        val key = activeModelKey ?: return
+        val context = appContext ?: return
+        val store = historyStoreFor(context)
+        val contextId = historyContextId(key)
+        val agentId = historyAgentId(key)
+        scope.launch {
+            try {
+                store.appendStandardMessage(
+                        contextId = contextId,
+                        agentId = agentId,
+                        message = message,
+                        fallbackTimestampMillis = fallbackTimestampMillis(message)
+                )
+            } catch (e: Exception) {
+                logger.error("保存标准消息到 Room 失败", e)
+            }
+        }
+    }
+
+    private fun clearRoomHistory(modelKey: String) {
+        val context = appContext ?: return
+        val store = historyStoreFor(context)
+        val contextId = historyContextId(modelKey)
+        val agentId = historyAgentId(modelKey)
+        scope.launch {
+            try {
+                store.clearHistory(contextId, agentId)
+            } catch (e: Exception) {
+                logger.error("清空 Room 历史失败", e)
+            }
+        }
+    }
+
+    private fun historyStoreFor(context: Context): ChatHistoryStore =
+            historyStore
+                    ?: RoomChatHistoryStore(
+                                    ChatDatabase.getInstance(context.applicationContext)
+                                            .runtimeMessageDao()
+                            )
+                            .also { historyStore = it }
+
+    private fun historyContextId(modelKey: String?): String =
+            RuntimeMessageMapper.contextIdForModel(modelKey)
+
+    private fun historyAgentId(modelKey: String?): String? = modelKey?.takeIf { it.isNotBlank() }
+
+    private fun historyPreferences(context: Context) =
+            context.applicationContext.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
+
+    private fun roomImportKey(modelKey: String): String = ROOM_IMPORT_PREFIX + modelKey
+
+    private fun fallbackTimestampMillis(message: MessageBase): Long =
+            message.messageInfo.time?.takeIf { it > 0.0 }?.let { (it * 1000).toLong() }
+                    ?: System.currentTimeMillis()
+
+    private fun ChatMessage.toVisibleRecord(): VisibleMessageRecord =
+            VisibleMessageRecord(
+                    messageId = id,
+                    content = content,
+                    isFromUser = isFromUser,
+                    timestampMillis = timestamp,
+                    motionGroup = motionData?.group,
+                    motionIndex = motionData?.index,
+                    motionLoop = motionData?.loop ?: false
+            )
+
+    private fun VisibleMessageRecord.toChatMessage(): ChatMessage =
+            ChatMessage(
+                    id = messageId,
+                    content = content,
+                    isFromUser = isFromUser,
+                    timestamp = timestampMillis,
+                    motionData =
+                            if (motionGroup != null && motionIndex != null) {
+                                MotionData(motionGroup, motionIndex, motionLoop)
+                            } else {
+                                null
+                            }
+            )
+
+    private fun MessageBase.historyIdentity(): String =
+            messageInfo.messageId?.takeIf { it.isNotBlank() }
+                    ?: "standard_${Integer.toHexString(toJsonString().hashCode())}"
+
     private fun generateMessageId(): String =
             "msg_${System.currentTimeMillis()}_${(Math.random()*1000).toInt()}"
     private fun generateUserId(): String =

@@ -26,6 +26,24 @@ interface RuntimeMessageDao {
 
     @Query(
             """
+            DELETE FROM messages
+            WHERE context_id = :contextId
+              AND (:agentId IS NULL OR agent_id = :agentId)
+            """
+    )
+    suspend fun deleteMessages(contextId: String, agentId: String?)
+
+    @Query(
+            """
+            DELETE FROM standard_messages
+            WHERE context_id = :contextId
+              AND (:agentId IS NULL OR agent_id = :agentId)
+            """
+    )
+    suspend fun deleteStandardMessages(contextId: String, agentId: String?)
+
+    @Query(
+            """
             SELECT * FROM messages
             WHERE context_id = :contextId
               AND (:agentId IS NULL OR agent_id = :agentId)

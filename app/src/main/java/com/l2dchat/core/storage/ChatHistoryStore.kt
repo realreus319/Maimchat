@@ -18,6 +18,8 @@ interface ChatHistoryStore {
             fallbackTimestampMillis: Long = System.currentTimeMillis()
     )
 
+    suspend fun clearHistory(contextId: String, agentId: String?)
+
     suspend fun queryRecentVisibleMessages(
             contextId: String,
             agentId: String?,
@@ -61,6 +63,11 @@ class RoomChatHistoryStore(private val messageDao: RuntimeMessageDao) : ChatHist
                         fallbackTimestampMillis = fallbackTimestampMillis
                 )
         )
+    }
+
+    override suspend fun clearHistory(contextId: String, agentId: String?) {
+        messageDao.deleteMessages(contextId, agentId)
+        messageDao.deleteStandardMessages(contextId, agentId)
     }
 
     override suspend fun queryRecentVisibleMessages(
