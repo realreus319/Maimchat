@@ -38,6 +38,9 @@ class LocalChatRuntime(
         private val perceptionStoreFactory: (RoutingKey) -> PerceptionStore? = { null },
         private val plannerSessionStoreFactory: (RoutingKey) -> PlannerSessionStore = {
             NoopPlannerSessionStore
+        },
+        private val plannerProcessorFactory: (RoutingKey) -> PlannerTriggerProcessor = {
+            fixedReplyPlannerProcessor()
         }
 ) {
     private val inboundBuilder = InboundBuilder()
@@ -47,11 +50,7 @@ class LocalChatRuntime(
     private val replyLayerFactory =
             ReplyLayerFactory(
                     scope = scope,
-                    processorFactory = {
-                        PlannerTriggerProcessor { context ->
-                            context.sendReply(context.triggerText)
-                        }
-                    },
+                    processorFactory = plannerProcessorFactory,
                     replySinkFactory = { PlannerReplySink { reply -> handlePlannerReply(reply) } },
                     sessionStoreFactory = plannerSessionStoreFactory,
                     onError = { _, trigger, throwable ->
@@ -227,13 +226,7 @@ class LocalChatRuntime(
     ): MessageBase {
         val platform = inbound.messageInfo.platform ?: fallbackPlatform
         val agentName = fallbackAgentName?.takeIf { it.isNotBlank() } ?: "Maimchat"
-        val normalizedText = inboundText.ifBlank { inbound.rawMessage.orEmpty() }
-        val replyText =
-                if (normalizedText.isBlank()) {
-                    "本地回复运行时已接管聊天链路。"
-                } else {
-                    "本地回复运行时已接收：$normalizedText"
-                }
+        val replyText = inboundText.ifBlank { "本地回复运行时已接管聊天链路。" }
 
         val assistantUser =
                 normalizeUser(
@@ -290,4 +283,17 @@ class LocalChatRuntime(
 
     private fun generateMessageId(): String =
             "local_${System.currentTimeMillis()}_${(Math.random() * 1000).toInt()}"
+
+    companion object {
+        private fun fixedReplyPlannerProcessor(): PlannerTriggerProcessor =
+                PlannerTriggerProcessor { context ->
+                    val replyText =
+                            if (context.triggerText.isBlank()) {
+                                "本地回复运行时已接管聊天链路。"
+                            } else {
+                                "本地回复运行时已接收：${context.triggerText}"
+                            }
+                    context.sendReply(replyText)
+                }
+    }
 }

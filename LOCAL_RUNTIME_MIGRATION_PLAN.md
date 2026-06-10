@@ -406,6 +406,7 @@ Progress:
 - Done: `PlannerLoop` processes queued triggers by priority and timestamp, supports `MSG` interruption through foreground epoch advancement and job cancellation, rejects duplicate foreground replies, and rejects stale foreground sends.
 - Done: `LocalChatRuntime` now routes perception triggers into `ReplyLayerFactory`/`PlannerLoop`; the temporary fixed reply is emitted by a planner processor and converted back through `PlannerReplySink`.
 - Done: `PlannerSessionStore` and `RoomPlannerSessionStore` persist planner rounds plus trigger/user/assistant session messages for each processed turn.
+- Done: `PlannerPromptBuilder` and `LlmPlannerTriggerProcessor` can build a trigger prompt, call a fake/provider-neutral LLM client, and send final assistant content when no tool call is returned.
 - Pending: native tool-calling processor, tool task/session message persistence, and decision/fork replier adoption.
 
 ## Phase 5: LLM Client
@@ -807,7 +808,7 @@ Planner:
 - [x] Planner session is persisted.
 - [ ] Native tool calling works.
 - [ ] JSON fallback works for providers without tool calling.
-- [ ] Final assistant text fallback sends only when no tool reply was sent.
+- [x] Final assistant text fallback sends only when no tool reply was sent.
 
 Replier:
 

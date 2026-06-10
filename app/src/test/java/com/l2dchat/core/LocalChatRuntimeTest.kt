@@ -8,6 +8,7 @@ import com.l2dchat.chat.SenderInfo
 import com.l2dchat.chat.UserInfo
 import com.l2dchat.core.perception.ParsedMessage
 import com.l2dchat.core.perception.PerceptionStore
+import com.l2dchat.core.reply.PlannerTriggerProcessor
 import com.l2dchat.core.reply.ReplySink
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -101,6 +102,34 @@ class LocalChatRuntimeTest {
                     listOf("persist:inbound-id", "reply:本地回复运行时已接收：记录我"),
                     order
             )
+            runtime.stopAndDrain()
+        }
+    }
+
+    @Test
+    fun `handleMessage emits injected planner reply as final text`() {
+        val emitted = mutableListOf<MessageBase>()
+
+        runBlocking {
+            val runtime =
+                    LocalChatRuntime(
+                            scope = this,
+                            plannerProcessorFactory = {
+                                PlannerTriggerProcessor { context ->
+                                    context.sendReply("LLM 直接回复")
+                                }
+                            }
+                    )
+            val handled =
+                    runtime.handleMessage(
+                            inbound = buildMessage(content = "你好"),
+                            fallbackPlatform = "fallback",
+                            fallbackAgentName = "Maimchat",
+                            replySink = collectingSink(emitted)
+                    )
+
+            assertTrue(handled)
+            assertEquals("LLM 直接回复", emitted.single().rawMessage)
             runtime.stopAndDrain()
         }
     }
