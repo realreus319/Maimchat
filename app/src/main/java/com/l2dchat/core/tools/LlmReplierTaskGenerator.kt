@@ -9,12 +9,15 @@ import kotlinx.coroutines.flow.flow
 class LlmReplierTaskGenerator(
         private val llmClient: LlmClient,
         private val config: LlmGenerationConfig,
-        private val promptBuilder: ReplierPromptBuilder = ReplierPromptBuilder()
+        private val promptBuilder: ReplierPromptBuilder = ReplierPromptBuilder(),
+        private val contextProvider: ReplierPromptContextProvider =
+                EmptyReplierPromptContextProvider
 ) : ReplierTaskGenerator {
     override fun generate(request: ReplierTaskRequest): Flow<ReplierTaskUpdate> =
             flow {
+                val promptContext = contextProvider.contextFor(request)
                 llmClient.chatCompletionStream(
-                                messages = promptBuilder.buildMessages(request),
+                                messages = promptBuilder.buildMessages(request, promptContext),
                                 config = config
                         )
                         .collect { event ->

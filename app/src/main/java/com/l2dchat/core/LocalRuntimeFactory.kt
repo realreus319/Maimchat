@@ -16,8 +16,10 @@ import com.l2dchat.core.reply.PlannerPromptBuilder
 import com.l2dchat.core.reply.PlannerSessionStore
 import com.l2dchat.core.reply.PlannerTriggerProcessor
 import com.l2dchat.core.reply.ToolCallingPlannerTriggerProcessor
+import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
 import com.l2dchat.core.tools.LlmReplierTaskGenerator
 import com.l2dchat.core.tools.LocalToolRegistryFactory
+import com.l2dchat.core.tools.ReplierPromptContextProvider
 import com.l2dchat.core.tools.ReplierTaskManager
 import com.l2dchat.core.tools.ToolExecutionContext
 import com.l2dchat.core.tools.ToolExecutionMode
@@ -43,6 +45,8 @@ object LocalRuntimeFactory {
             plannerSessionStoreFactory: (RoutingKey) -> PlannerSessionStore = {
                 NoopPlannerSessionStore
             },
+            replierPromptContextProvider: ReplierPromptContextProvider =
+                    EmptyReplierPromptContextProvider,
             environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
             motionController: MotionController = NoopMotionController,
             gson: Gson = Gson()
@@ -62,7 +66,8 @@ object LocalRuntimeFactory {
                         generator =
                                 LlmReplierTaskGenerator(
                                         llmClient = llmConfig.replierClient,
-                                        config = llmConfig.replierConfig
+                                        config = llmConfig.replierConfig,
+                                        contextProvider = replierPromptContextProvider
                                 )
                 )
         val taskIdFactory: (ToolExecutionContext) -> String = { context ->

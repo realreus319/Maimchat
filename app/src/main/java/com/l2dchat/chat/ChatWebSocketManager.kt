@@ -22,6 +22,9 @@ import com.l2dchat.core.storage.ChatHistoryStore
 import com.l2dchat.core.storage.RoomChatHistoryStore
 import com.l2dchat.core.storage.RoomPlannerSessionStore
 import com.l2dchat.core.storage.RoomPerceptionStore
+import com.l2dchat.core.storage.RoomReplierPromptContextProvider
+import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
+import com.l2dchat.core.tools.ReplierPromptContextProvider
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import kotlinx.coroutines.CoroutineScope
@@ -87,6 +90,7 @@ class ChatWebSocketManager {
                     agentNameProvider = { receiverModelName },
                     perceptionStoreFactory = { localPerceptionStoreFor() },
                     plannerSessionStoreFactory = { localPlannerSessionStoreFor() },
+                    replierPromptContextProvider = { localReplierPromptContextProviderFor() },
                     localRuntimeLlmConfigProvider = { localLlmSettings.toRuntimeConfig() },
                     environmentStateProvider = environmentStateProvider,
                     motionController = localMotionController
@@ -748,6 +752,15 @@ class ChatWebSocketManager {
         val context = appContext ?: return NoopPlannerSessionStore
         val database = ChatDatabase.getInstance(context.applicationContext)
         return RoomPlannerSessionStore(database.plannerStateDao())
+    }
+
+    private fun localReplierPromptContextProviderFor(): ReplierPromptContextProvider {
+        val context = appContext ?: return EmptyReplierPromptContextProvider
+        val database = ChatDatabase.getInstance(context.applicationContext)
+        return RoomReplierPromptContextProvider(
+                historyStore = historyStoreFor(context),
+                stateDao = database.runtimeStateDao()
+        )
     }
 
     private fun historyContextId(modelKey: String?): String =

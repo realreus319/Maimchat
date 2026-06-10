@@ -541,7 +541,9 @@ Progress:
   replier model.
 - Done: `ReplierTool` moves an unfinished task to `BACKGROUND` when planner-side
   waiting is cancelled, allowing a later decision turn to adopt or kill it.
-- Pending: full persona/history/mood/impression context injection.
+- Done: `ReplierPromptContextProvider` and `RoomReplierPromptContextProvider`
+  inject Room-backed persona, prompt templates, recent chat history, mood state,
+  user impression, and memory entries into replier prompts.
 
 ## Phase 7: Decision Tools And Tool Registry
 
@@ -781,6 +783,20 @@ Acceptance:
 - Prompt templates can be overridden.
 - Replier prompt includes history, mood, and impression when available.
 
+Progress:
+
+- Done: `RuntimeStateDao` can query agent config, prompt templates, memory,
+  impression, and mood state for a local runtime routing key.
+- Done: `RoomReplierPromptContextProvider` bridges Room state and
+  `RoomChatHistoryStore` into `ReplierPromptContext`, preserving backend-aligned
+  `replier_system` and `replier_user` prompt template names.
+- Done: `ReplierPromptBuilder` supports backend-style `replier_user`
+  placeholders including `persona_prompt`, `current_time`, `mood_state`,
+  `impression_text`, `history_text`, `history_section`, `content`,
+  `reply_guidance`, `guidance_section`, and `current_trigger`.
+- Pending: default packaged agent assets, prompt import/export UI, encrypted
+  editable agent config, and memory/impression update tools.
+
 ## Phase 10: UI And Service Migration
 
 Goal: make local runtime the normal product experience.
@@ -942,12 +958,12 @@ Planner:
 Replier:
 
 - [x] `replier` validates content.
-- [ ] Replier prompt includes persona.
-- [ ] Replier prompt includes current message.
-- [ ] Replier prompt includes history.
-- [ ] Replier prompt includes mood.
-- [ ] Replier prompt includes impression.
-- [ ] Replier prompt includes live image blocks when requested.
+- [x] Replier prompt includes persona.
+- [x] Replier prompt includes current message.
+- [x] Replier prompt includes history.
+- [x] Replier prompt includes mood.
+- [x] Replier prompt includes impression.
+- [x] Replier prompt includes live image blocks when requested.
 - [x] Streaming updates task preview.
 - [x] Cancellation works.
 - [x] Backgrounding works.

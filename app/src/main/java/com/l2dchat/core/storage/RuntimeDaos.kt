@@ -160,6 +160,21 @@ interface RuntimeStateDao {
     )
     suspend fun queryMediaBlocksForMessage(messageId: String): List<MediaBlockEntity>
 
+    @Query("SELECT * FROM agent_configs WHERE agent_id = :agentId LIMIT 1")
+    suspend fun queryAgentConfig(agentId: String): AgentConfigEntity?
+
+    @Query(
+            """
+            SELECT * FROM prompt_templates
+            WHERE name = :name
+              AND (agent_id = :agentId OR agent_id IS NULL)
+            ORDER BY CASE WHEN agent_id = :agentId THEN 0 ELSE 1 END,
+                     updated_at_ms DESC
+            LIMIT 1
+            """
+    )
+    suspend fun queryPromptTemplate(name: String, agentId: String): PromptTemplateEntity?
+
     @Query(
             """
             SELECT * FROM memories
@@ -170,4 +185,29 @@ interface RuntimeStateDao {
             """
     )
     suspend fun queryMemories(contextId: String, agentId: String, limit: Int): List<MemoryEntity>
+
+    @Query(
+            """
+            SELECT * FROM impressions
+            WHERE context_id = :contextId
+              AND agent_id = :agentId
+              AND subject_id = :subjectId
+            LIMIT 1
+            """
+    )
+    suspend fun queryImpression(
+            contextId: String,
+            agentId: String,
+            subjectId: String
+    ): ImpressionEntity?
+
+    @Query(
+            """
+            SELECT * FROM mood_state
+            WHERE context_id = :contextId
+              AND agent_id = :agentId
+            LIMIT 1
+            """
+    )
+    suspend fun queryMoodState(contextId: String, agentId: String): MoodStateEntity?
 }

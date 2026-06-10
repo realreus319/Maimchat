@@ -80,6 +80,33 @@ class LlmReplierTaskGeneratorTest {
     }
 
     @Test
+    fun `generator injects prompt context before streaming`() {
+        val response = LlmResponse(message = LlmMessage.assistant("done"), model = "fake")
+        val client = FakeStreamClient(events = listOf(LlmStreamEvent.Completed(response)))
+        val generator =
+                LlmReplierTaskGenerator(
+                        llmClient = client,
+                        config = LlmGenerationConfig(model = "fake"),
+                        promptBuilder = ReplierPromptBuilder(systemPrompt = "system"),
+                        contextProvider =
+                                object : ReplierPromptContextProvider {
+                                    override suspend fun contextFor(
+                                            request: ReplierTaskRequest
+                                    ): ReplierPromptContext =
+                                            ReplierPromptContext(
+                                                    personaPrompt = "你是小倩。",
+                                                    moodState = "平静"
+                                            )
+                                }
+                )
+
+        runBlocking { generator.generate(request("answer")).toList() }
+
+        assertTrue(client.lastMessages.last().textContent().contains("你是小倩。"))
+        assertTrue(client.lastMessages.last().textContent().contains("平静"))
+    }
+
+    @Test
     fun `generator rejects tool calls from replier model`() {
         val client =
                 FakeStreamClient(

@@ -16,6 +16,8 @@ import com.l2dchat.core.perception.PerceptionStore
 import com.l2dchat.core.reply.NoopPlannerSessionStore
 import com.l2dchat.core.reply.PlannerSessionStore
 import com.l2dchat.core.reply.ReplySink
+import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
+import com.l2dchat.core.tools.ReplierPromptContextProvider
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +33,9 @@ class LocalTransport(
         plannerSessionStoreFactory: (RoutingKey) -> PlannerSessionStore = {
             NoopPlannerSessionStore
         },
+        replierPromptContextProvider: () -> ReplierPromptContextProvider = {
+            EmptyReplierPromptContextProvider
+        },
         localRuntimeLlmConfigProvider: () -> LocalRuntimeLlmConfig? = { null },
         environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
         motionController: MotionController = NoopMotionController,
@@ -40,6 +45,7 @@ class LocalTransport(
                     llmConfig = localRuntimeLlmConfigProvider(),
                     perceptionStoreFactory = perceptionStoreFactory,
                     plannerSessionStoreFactory = plannerSessionStoreFactory,
+                    replierPromptContextProvider = replierPromptContextProvider(),
                     environmentStateProvider = environmentStateProvider,
                     motionController = motionController
             )

@@ -75,6 +75,96 @@ class ReplierPromptBuilderTest {
         assertEquals("https://example.test/live.png", (parts[2] as LlmImageUrlPart).url)
     }
 
+    @Test
+    fun `builder injects persona mood impression memory and history context`() {
+        val messages =
+                ReplierPromptBuilder(systemPrompt = "system").buildMessages(
+                        request(content = "answer the user"),
+                        ReplierPromptContext(
+                                personaPrompt = "你是小倩。",
+                                moodState = "开心",
+                                impressionText = "Alice：熟悉的用户。",
+                                memoryText = "- Alice 喜欢咖啡",
+                                historyMessages =
+                                        listOf(
+                                                ReplierPromptHistoryMessage(
+                                                        text = "你好",
+                                                        senderName = "Alice"
+                                                ),
+                                                ReplierPromptHistoryMessage(
+                                                        text = "你好，我是小倩。",
+                                                        senderName = "小倩",
+                                                        isAssistant = true
+                                                )
+                                        ),
+                                currentTimeText = "2026-06-10 12:00:00",
+                                agentDisplayName = "小倩"
+                        )
+                )
+
+        val text = messages[1].textContent()
+
+        assertTrue(text.contains("[persona]"))
+        assertTrue(text.contains("你是小倩。"))
+        assertTrue(text.contains("[mood]"))
+        assertTrue(text.contains("开心"))
+        assertTrue(text.contains("[impression]"))
+        assertTrue(text.contains("Alice：熟悉的用户。"))
+        assertTrue(text.contains("[memory]"))
+        assertTrue(text.contains("- Alice 喜欢咖啡"))
+        assertTrue(text.contains("[history]"))
+        assertTrue(text.contains("Alice: 你好"))
+        assertTrue(text.contains("小倩(你): 你好，我是小倩。"))
+        assertTrue(text.contains("[current_trigger]"))
+    }
+
+    @Test
+    fun `builder renders replier user template placeholders`() {
+        val messages =
+                ReplierPromptBuilder(systemPrompt = "system").buildMessages(
+                        request(content = "planner thoughts", replyGuidance = "keep it short"),
+                        ReplierPromptContext(
+                                userPromptTemplate =
+                                        """
+                                        persona={persona_prompt}
+                                        mood={mood_state}
+                                        impression={impression_text}
+                                        history={history_text}
+                                        content={content}
+                                        guidance={reply_guidance}
+                                        section={guidance_section}
+                                        trigger={current_trigger}
+                                        time={current_time}
+                                        """
+                                                .trimIndent(),
+                                personaPrompt = "你是小倩。",
+                                moodState = "平静",
+                                impressionText = "Alice：初次聊天。",
+                                historyMessages =
+                                        listOf(
+                                                ReplierPromptHistoryMessage(
+                                                        text = "早上好",
+                                                        senderName = "Alice"
+                                                )
+                                        ),
+                                currentTimeText = "2026-06-10 12:00:00"
+                        )
+                )
+
+        val text = messages[1].textContent()
+
+        assertTrue(text.contains("persona=你是小倩。"))
+        assertTrue(text.contains("mood=平静"))
+        assertTrue(text.contains("impression=Alice：初次聊天。"))
+        assertTrue(text.contains("history=Alice: 早上好"))
+        assertTrue(text.contains("content=planner thoughts"))
+        assertTrue(text.contains("guidance=keep it short"))
+        assertTrue(text.contains("补充说明：\nkeep it short"))
+        assertTrue(text.contains("trigger=[msg_trigger]"))
+        assertTrue(text.contains("hello"))
+        assertTrue(text.contains("time=2026-06-10 12:00:00"))
+    }
+
     private fun request(
             content: String,
             replyGuidance: String? = null,
