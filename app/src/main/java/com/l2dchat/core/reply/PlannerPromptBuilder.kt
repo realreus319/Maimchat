@@ -8,12 +8,16 @@ import com.l2dchat.core.llm.LlmTextPart
 import com.l2dchat.core.trigger.Trigger
 
 class PlannerPromptBuilder(
-        private val systemPrompt: String = DEFAULT_SYSTEM_PROMPT
+        private val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
+        private val contextProvider: PlannerPromptContextProvider = EmptyPlannerPromptContextProvider
 ) {
     fun buildMessages(context: PlannerTurnContext): List<LlmMessage> {
         val sessionMessage = context.trigger.toSessionMessage(context.triggerText)
         val userText = sessionMessage["content"]?.toString().orEmpty()
-        val userParts = contentPartsFrom(sessionMessage["content_blocks"], fallbackText = userText)
+        val promptContextPart = promptContextPart(contextProvider.blocksFor(context))
+        val userParts =
+                listOfNotNull(promptContextPart) +
+                        contentPartsFrom(sessionMessage["content_blocks"], fallbackText = userText)
         val metadata =
                 sessionMessage.filterKeys {
                     it != "role" && it != "content" && it != "content_blocks"
@@ -25,6 +29,30 @@ class PlannerPromptBuilder(
                         content = userParts,
                         metadata = metadata
                 )
+        )
+    }
+
+    private fun promptContextPart(blocks: List<PlannerPromptContextBlock>): LlmTextPart? {
+        if (blocks.isEmpty()) {
+            return null
+        }
+        return LlmTextPart(
+                buildString {
+                    append("[planner_context]\n")
+                    blocks.forEachIndexed { index, block ->
+                        if (index > 0) {
+                            append('\n')
+                        }
+                        append('[')
+                        append(block.name)
+                        append("]\n")
+                        append(block.content.trim())
+                        append("\n[/")
+                        append(block.name)
+                        append("]\n")
+                    }
+                    append("[/planner_context]")
+                }
         )
     }
 
@@ -67,4 +95,25 @@ class PlannerPromptBuilder(
         const val DEFAULT_SYSTEM_PROMPT: String =
                 "You are Maimchat's local chat planner. Reply directly to the user in the same language when possible. Keep the response concise unless the user asks for detail."
     }
+}
+
+data class PlannerPromptContextBlock(
+        val name: String,
+        val content: String
+) {
+    init {
+        require(name.matches(Regex("[A-Za-z0-9_]+"))) {
+            "Planner prompt context block name must be alphanumeric or underscore"
+        }
+        require(content.isNotBlank()) { "Planner prompt context block content must not be blank" }
+    }
+}
+
+fun interface PlannerPromptContextProvider {
+    fun blocksFor(context: PlannerTurnContext): List<PlannerPromptContextBlock>
+}
+
+object EmptyPlannerPromptContextProvider : PlannerPromptContextProvider {
+    override fun blocksFor(context: PlannerTurnContext): List<PlannerPromptContextBlock> =
+            emptyList()
 }

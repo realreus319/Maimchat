@@ -41,6 +41,9 @@ class LocalChatRuntime(
         },
         private val plannerProcessorFactory: (RoutingKey) -> PlannerTriggerProcessor = {
             fixedReplyPlannerProcessor()
+        },
+        private val decisionPlannerProcessorFactory: (RoutingKey) -> PlannerTriggerProcessor? = {
+            null
         }
 ) {
     private val inboundBuilder = InboundBuilder()
@@ -51,6 +54,7 @@ class LocalChatRuntime(
             ReplyLayerFactory(
                     scope = scope,
                     processorFactory = plannerProcessorFactory,
+                    decisionProcessorFactory = decisionPlannerProcessorFactory,
                     replySinkFactory = { PlannerReplySink { reply -> handlePlannerReply(reply) } },
                     sessionStoreFactory = plannerSessionStoreFactory,
                     onError = { _, trigger, throwable ->

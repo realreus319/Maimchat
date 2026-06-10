@@ -57,7 +57,8 @@ data class ReplierTaskSnapshot(
         val state: ReplierTaskState,
         val previewText: String = "",
         val replyText: String? = null,
-        val errorMessage: String? = null
+        val errorMessage: String? = null,
+        val backgrounded: Boolean = false
 ) {
     val isTerminal: Boolean
         get() =
@@ -65,6 +66,18 @@ data class ReplierTaskSnapshot(
                         state == ReplierTaskState.CANCELLED ||
                         state == ReplierTaskState.FAILED
 }
+
+data class ReplierTaskSummary(
+        val taskId: String,
+        val routingKey: RoutingKey,
+        val triggerMessageId: String,
+        val triggerText: String,
+        val state: ReplierTaskState,
+        val previewText: String,
+        val replyText: String?,
+        val errorMessage: String?,
+        val backgrounded: Boolean
+)
 
 sealed interface ReplierTaskUpdate {
     data class TextDelta(val text: String) : ReplierTaskUpdate
@@ -115,7 +128,8 @@ class ReplierTask(
                 if (current.state != ReplierTaskState.GENERATING) {
                     return@synchronized false
                 }
-                mutableSnapshot.value = current.copy(state = ReplierTaskState.BACKGROUND)
+                mutableSnapshot.value =
+                        current.copy(state = ReplierTaskState.BACKGROUND, backgrounded = true)
                 true
             }
 

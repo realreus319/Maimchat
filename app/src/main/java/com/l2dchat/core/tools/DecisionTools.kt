@@ -189,6 +189,7 @@ private fun ReplierTaskSnapshot.toJson(error: String? = errorMessage): JsonObjec
         JsonObject().apply {
             addProperty("taskId", taskId)
             addProperty("state", state.name)
+            addProperty("backgrounded", backgrounded)
             addProperty("previewText", previewText)
             replyText?.let { addProperty("replyText", it) }
             error?.let { addProperty("error", it) }

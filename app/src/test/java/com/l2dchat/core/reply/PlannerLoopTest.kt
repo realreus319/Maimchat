@@ -32,6 +32,42 @@ class PlannerLoopTest {
     }
 
     @Test
+    fun `factory wires decision processor into created loops`() {
+        val firstStarted = CompletableDeferred<Unit>()
+        val decisionDone = CompletableDeferred<String>()
+
+        runBlocking {
+            val factory =
+                    ReplyLayerFactory(
+                            scope = this,
+                            processorFactory = {
+                                PlannerTriggerProcessor { context ->
+                                    if (context.trigger.messageId == "first") {
+                                        firstStarted.complete(Unit)
+                                        awaitCancellation()
+                                    } else {
+                                        context.sendReply("normal ${context.trigger.messageId}")
+                                    }
+                                }
+                            },
+                            decisionProcessorFactory = {
+                                PlannerTriggerProcessor { context ->
+                                    context.sendReply("decision ${context.trigger.messageId}")
+                                    decisionDone.complete(context.trigger.messageId)
+                                }
+                            }
+                    )
+            factory.submitTrigger(trigger("first"))
+            withTimeout(1_000L) { firstStarted.await() }
+
+            factory.submitTrigger(trigger("second"))
+
+            assertEquals("second", withTimeout(1_000L) { decisionDone.await() })
+            factory.shutdown()
+        }
+    }
+
+    @Test
     fun `loop processes queued triggers by priority and timestamp`() {
         val order = mutableListOf<String>()
         val done = CompletableDeferred<List<String>>()

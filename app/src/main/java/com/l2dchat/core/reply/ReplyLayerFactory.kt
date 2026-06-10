@@ -10,6 +10,9 @@ class ReplyLayerFactory(
         private val processorFactory: (RoutingKey) -> PlannerTriggerProcessor = {
             NoopPlannerTriggerProcessor
         },
+        private val decisionProcessorFactory: (RoutingKey) -> PlannerTriggerProcessor? = {
+            null
+        },
         private val replySinkFactory: (RoutingKey) -> PlannerReplySink = { PlannerReplySink {} },
         private val sessionStoreFactory: (RoutingKey) -> PlannerSessionStore = {
             NoopPlannerSessionStore
@@ -43,6 +46,7 @@ class ReplyLayerFactory(
                                     routingKey = routingKey,
                                     scope = scope,
                                     processor = processorFactory(routingKey),
+                                    decisionProcessor = decisionProcessorFactory(routingKey),
                                     replySink = replySinkFactory(routingKey),
                                     sessionStore = sessionStoreFactory(routingKey),
                                     onError = onError

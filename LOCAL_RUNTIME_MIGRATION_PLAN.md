@@ -614,8 +614,10 @@ Progress:
 - Done: `PlannerLoop` marks an interrupted next `MSG` as a decision turn when a
   decision processor is configured, sets `DECIDING` state for that turn, and
   returns later triggers to normal processing.
-- Pending: decision prompt context that lists background task ids/previews and
-  richer fork-continuation behavior after kill/adopt.
+- Done: `ReplyLayerFactory` and `LocalChatRuntime` can wire a dedicated decision
+  processor into planner loops, and decision prompts can include per-routing-key
+  background replier task ids, states, trigger text, and previews.
+- Pending: richer fork-continuation behavior after kill/adopt.
 
 ## Phase 8: Live2D And Environment Integration
 

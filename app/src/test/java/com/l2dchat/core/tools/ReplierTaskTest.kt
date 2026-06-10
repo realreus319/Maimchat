@@ -66,13 +66,19 @@ class ReplierTaskTest {
 
             assertTrue(task.moveToBackground())
             assertEquals(ReplierTaskState.BACKGROUND, task.snapshot.state)
+            assertTrue(task.snapshot.backgrounded)
             assertEquals(listOf("task-1"), manager.activeTaskIds())
 
             release.complete(Unit)
 
             val completed = withTimeout(1_000L) { task.waitForCompletion() }
             assertEquals(ReplierTaskState.COMPLETED, completed.state)
+            assertTrue(completed.backgrounded)
             assertEquals("hi", completed.replyText)
+            val backgroundSummary = manager.backgroundTaskSummaries(routingKey).single()
+            assertEquals("task-1", backgroundSummary.taskId)
+            assertEquals(ReplierTaskState.COMPLETED, backgroundSummary.state)
+            assertEquals("hi", backgroundSummary.replyText)
         }
     }
 
