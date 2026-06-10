@@ -8,6 +8,7 @@ import com.l2dchat.chat.Seg
 import com.l2dchat.chat.SenderInfo
 import com.l2dchat.chat.UserInfo
 import com.l2dchat.core.context.RoutingKey
+import com.l2dchat.core.environment.EnvironmentTriggerSubmission
 import com.l2dchat.core.inbound.InboundBuilder
 import com.l2dchat.core.inbound.InboundMessage
 import com.l2dchat.core.perception.PerceptionDispatcher
@@ -21,6 +22,7 @@ import com.l2dchat.core.reply.PlannerTriggerProcessor
 import com.l2dchat.core.reply.ReplyLayerFactory
 import com.l2dchat.core.reply.ReplySink
 import com.l2dchat.core.trigger.Trigger
+import com.l2dchat.core.trigger.TriggerType
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +52,8 @@ class LocalChatRuntime(
     private val perceptionProcessor = PerceptionProcessor()
     private val pendingLock = Any()
     private val pendingReplies = linkedMapOf<PendingTriggerKey, PendingRuntimeReply>()
+    private val environmentReplyTargetLock = Any()
+    private val environmentReplyTargets = linkedMapOf<RoutingKey, RuntimeReplyTarget>()
     private val replyLayerFactory =
             ReplyLayerFactory(
                     scope = scope,
@@ -115,6 +119,25 @@ class LocalChatRuntime(
         }
     }
 
+    suspend fun submitEnvironmentTrigger(
+            submission: EnvironmentTriggerSubmission,
+            fallbackPlatform: String,
+            fallbackAgentName: String?,
+            replySink: ReplySink
+    ): Boolean {
+        registerEnvironmentReplyTarget(
+                routingKey = submission.routingKey,
+                target =
+                        RuntimeReplyTarget(
+                                fallbackPlatform = fallbackPlatform,
+                                fallbackAgentName = fallbackAgentName,
+                                replySink = replySink
+                        )
+        )
+        replyLayerFactory.submitTrigger(submission.toTrigger())
+        return true
+    }
+
     suspend fun stopAndDrain() {
         perceptionDispatcher.stopAndDrain()
         replyLayerFactory.shutdown()
@@ -156,7 +179,11 @@ class LocalChatRuntime(
     }
 
     private suspend fun handlePlannerReply(reply: PlannerReply) {
-        val pending = removePending(reply.trigger.toPendingKey()) ?: return
+        val pending = removePending(reply.trigger.toPendingKey())
+        if (pending == null) {
+            handleUnboundPlannerReply(reply)
+            return
+        }
         try {
             pending.replySink.send(
                     createReply(
@@ -173,8 +200,33 @@ class LocalChatRuntime(
         }
     }
 
+    private suspend fun handleUnboundPlannerReply(reply: PlannerReply) {
+        if (reply.trigger.triggerType != TriggerType.ENV) {
+            return
+        }
+        val target =
+                synchronized(environmentReplyTargetLock) {
+                    environmentReplyTargets[reply.routingKey]
+                } ?: return
+        target.replySink.send(
+                createEnvironmentReply(
+                        trigger = reply.trigger,
+                        fallbackPlatform = target.fallbackPlatform,
+                        fallbackAgentName = target.fallbackAgentName,
+                        replyText = reply.text
+                )
+        )
+    }
+
     private fun removePending(key: PendingTriggerKey): PendingRuntimeReply? =
             synchronized(pendingLock) { pendingReplies.remove(key) }
+
+    private fun registerEnvironmentReplyTarget(
+            routingKey: RoutingKey,
+            target: RuntimeReplyTarget
+    ) {
+        synchronized(environmentReplyTargetLock) { environmentReplyTargets[routingKey] = target }
+    }
 
     private fun failPending(cause: Throwable) {
         val pending =
@@ -196,6 +248,12 @@ class LocalChatRuntime(
             )
 
     private data class PendingTriggerKey(val routingKey: RoutingKey, val messageId: String)
+
+    private data class RuntimeReplyTarget(
+            val fallbackPlatform: String,
+            val fallbackAgentName: String?,
+            val replySink: ReplySink
+    )
 
     private data class PendingRuntimeReply(
             val inbound: MessageBase,
@@ -223,6 +281,61 @@ class LocalChatRuntime(
                 fallbackAgentName = fallbackAgentName,
                 inboundText = perception.parsedMessage.text
         )
+    }
+
+    private fun createEnvironmentReply(
+            trigger: Trigger,
+            fallbackPlatform: String,
+            fallbackAgentName: String?,
+            replyText: String
+    ): MessageBase {
+        val platform = fallbackPlatform.ifBlank { "android" }
+        val agentName = fallbackAgentName?.takeIf { it.isNotBlank() } ?: "Maimchat"
+        val assistantUser =
+                UserInfo(
+                        platform = platform,
+                        userId =
+                                trigger.metadataString("agent_user_id")
+                                        ?: trigger.agentId.takeIf { it.isNotBlank() }
+                                        ?: "local_agent",
+                        userNickname =
+                                trigger.metadataString("agent_user_name")
+                                        ?: agentName
+                )
+        val receiverUser =
+                UserInfo(
+                        platform = platform,
+                        userId = trigger.metadataString("receiver_user_id") ?: "local_user",
+                        userNickname =
+                                trigger.metadataString("receiver_user_name")
+                                        ?: trigger.metadataString("receiver_user_nickname")
+                                        ?: "用户"
+                )
+        val messageInfo =
+                BaseMessageInfo(
+                        platform = platform,
+                        messageId = generateMessageId(),
+                        time = System.currentTimeMillis() / 1000.0,
+                        senderInfo = SenderInfo(userInfo = assistantUser),
+                        receiverInfo = ReceiverInfo(userInfo = receiverUser),
+                        userInfo = assistantUser,
+                        formatInfo =
+                                FormatInfo(
+                                        contentFormat = listOf("text"),
+                                        acceptFormat = listOf("text", "image", "emoji", "voice")
+                                ),
+                        additionalConfig =
+                                mapOf(
+                                        "message_type" to "chat",
+                                        "runtime" to "local",
+                                        "migration_phase" to "env_trigger",
+                                        "trigger_type" to trigger.triggerType.wireValue,
+                                        "trigger_message_id" to trigger.messageId,
+                                        "environment_source" to
+                                                trigger.payload["source"].toString()
+                                )
+                )
+        return MessageBase(messageInfo, Seg("text", replyText), replyText)
     }
 
     private fun createReply(
@@ -290,6 +403,11 @@ class LocalChatRuntime(
 
     private fun generateMessageId(): String =
             "local_${System.currentTimeMillis()}_${(Math.random() * 1000).toInt()}"
+
+    private fun Trigger.metadataString(key: String): String? {
+        val metadata = payload["metadata"] as? Map<*, *> ?: return null
+        return metadata[key]?.toString()?.takeIf { it.isNotBlank() }
+    }
 
     companion object {
         private fun fixedReplyPlannerProcessor(): PlannerTriggerProcessor =
