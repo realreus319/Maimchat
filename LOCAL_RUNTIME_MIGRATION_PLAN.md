@@ -607,6 +607,9 @@ Progress:
 - Done: `wait_for`, `adopt_background_reply`, and `kill_background_reply` operate
   on `ReplierTaskManager`; adopt returns planner-managed `replyText`, while kill
   cancels running background tasks.
+- Done: `ToolCallingPlannerTriggerProcessor` can run in normal or decision tool
+  mode, exposing only the matching tool definitions and passing the mode into
+  tool execution.
 - Pending: planner decision/fork loop wiring that creates a decision-mode turn
   after foreground interruption.
 

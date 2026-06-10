@@ -11,7 +11,15 @@ import com.l2dchat.core.llm.LlmToolCall
 import com.l2dchat.core.llm.LlmToolDefinition
 import com.l2dchat.core.llm.LlmToolExecutor
 import com.l2dchat.core.llm.LlmToolResult
+import com.l2dchat.core.tools.AdoptBackgroundReplyTool
+import com.l2dchat.core.tools.DecisionTools
+import com.l2dchat.core.tools.KillBackgroundReplyTool
+import com.l2dchat.core.tools.ReplierTaskGenerator
+import com.l2dchat.core.tools.ReplierTaskManager
+import com.l2dchat.core.tools.ReplierTaskRequest
+import com.l2dchat.core.tools.ReplierTaskUpdate
 import com.l2dchat.core.tools.ReplierTool
+import com.l2dchat.core.tools.ToolExecutionMode
 import com.l2dchat.core.tools.ToolRegistry
 import com.l2dchat.core.trigger.Trigger
 import com.l2dchat.core.trigger.TriggerPriority
@@ -19,6 +27,7 @@ import com.l2dchat.core.trigger.TriggerType
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -110,6 +119,65 @@ class ToolCallingPlannerTriggerProcessorTest {
         }
     }
 
+    @Test
+    fun `processor can execute decision mode background adoption tools`() {
+        val replyDone = CompletableDeferred<PlannerReply>()
+        val client =
+                ExecutingToolClient(
+                        toolCalls =
+                                listOf(
+                                        LlmToolCall(
+                                                id = "call-1",
+                                                name = AdoptBackgroundReplyTool.NAME,
+                                                argumentsJson = """{"task_id":"task-1"}"""
+                                        )
+                                ),
+                        finalText = "final text that should not be sent"
+                )
+
+        runBlocking {
+            val taskManager =
+                    ReplierTaskManager(
+                            scope = this,
+                            generator =
+                                    ReplierTaskGenerator {
+                                        flow { emit(ReplierTaskUpdate.Completed("background reply")) }
+                                    }
+                    )
+            taskManager.startTask(replierTaskRequest("task-1"))
+            val loop =
+                    PlannerLoop(
+                            routingKey = routingKey,
+                            scope = this,
+                            processor =
+                                    ToolCallingPlannerTriggerProcessor(
+                                            llmClient = client,
+                                            config = LlmGenerationConfig(model = "fake"),
+                                            toolRegistry =
+                                                    ToolRegistry(
+                                                            listOf(ReplierTool()) +
+                                                                    DecisionTools.defaultTools(taskManager)
+                                                    ),
+                                            toolMode = ToolExecutionMode.DECISION
+                                    ),
+                            replySink = PlannerReplySink { replyDone.complete(it) }
+                    )
+            loop.start()
+            loop.submitTrigger(trigger("new message"))
+
+            assertEquals("background reply", withTimeout(1_000L) { replyDone.await() }.text)
+            assertEquals(
+                    listOf(AdoptBackgroundReplyTool.NAME, KillBackgroundReplyTool.NAME),
+                    client.toolDefinitions.single().map { it.name }
+            )
+            val resultContent =
+                    JsonParser.parseString(client.toolResults.single().content).asJsonObject
+            assertEquals("COMPLETED", resultContent["state"].asString)
+            assertEquals(true, resultContent["adopted"].asBoolean)
+            loop.shutdown()
+        }
+    }
+
     private fun trigger(text: String): Trigger =
             Trigger(
                     contextId = routingKey.contextId,
@@ -119,6 +187,14 @@ class ToolCallingPlannerTriggerProcessorTest {
                     priority = TriggerPriority.NORMAL,
                     timestampSeconds = 1.0,
                     payload = mapOf("text" to text)
+            )
+
+    private fun replierTaskRequest(taskId: String): ReplierTaskRequest =
+            ReplierTaskRequest(
+                    taskId = taskId,
+                    routingKey = routingKey,
+                    trigger = trigger("old message"),
+                    content = "old message"
             )
 
     private class ExecutingToolClient(

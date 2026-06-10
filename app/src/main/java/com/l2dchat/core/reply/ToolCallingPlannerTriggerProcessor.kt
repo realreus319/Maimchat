@@ -4,33 +4,37 @@ import com.l2dchat.core.llm.LlmClient
 import com.l2dchat.core.llm.LlmGenerationConfig
 import com.l2dchat.core.llm.LlmToolExecutor
 import com.l2dchat.core.tools.ToolExecutionContext
+import com.l2dchat.core.tools.ToolExecutionMode
 import com.l2dchat.core.tools.ToolRegistry
 
 class ToolCallingPlannerTriggerProcessor(
         private val llmClient: LlmClient,
         private val config: LlmGenerationConfig,
         private val toolRegistry: ToolRegistry,
-        private val promptBuilder: PlannerPromptBuilder = PlannerPromptBuilder()
+        private val promptBuilder: PlannerPromptBuilder = PlannerPromptBuilder(),
+        private val toolMode: ToolExecutionMode = ToolExecutionMode.NORMAL
 ) : PlannerTriggerProcessor {
     init {
-        require(toolRegistry.definitions.isNotEmpty()) {
-            "ToolCallingPlannerTriggerProcessor requires at least one tool"
+        require(toolRegistry.definitionsFor(toolMode).isNotEmpty()) {
+            "ToolCallingPlannerTriggerProcessor requires at least one ${toolMode.name.lowercase()} tool"
         }
     }
 
     override suspend fun process(context: PlannerTurnContext) {
         var replySent = false
+        val toolDefinitions = toolRegistry.definitionsFor(toolMode)
         val toolContext =
                 ToolExecutionContext(
                         loopId = context.loopId,
                         routingKey = context.routingKey,
                         trigger = context.trigger,
-                        foregroundEpoch = context.foregroundEpoch
+                        foregroundEpoch = context.foregroundEpoch,
+                        mode = toolMode
                 )
         val response =
                 llmClient.chatCompletionWithTools(
                         messages = promptBuilder.buildMessages(context),
-                        tools = toolRegistry.definitions,
+                        tools = toolDefinitions,
                         config = config,
                         toolExecutor =
                                 LlmToolExecutor { toolCall ->
