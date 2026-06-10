@@ -524,8 +524,12 @@ Progress:
   `include_action`, and `live_image`.
 - Done: `ReplierTool` validates nonblank content, returns structured tool JSON
   containing `replyText` and `sent=false`, and never sends directly.
-- Pending: `ReplierTask`, streaming generation, backgrounding, and full replier
-  prompt builder with persona/history/mood/impression/live image context.
+- Done: `ReplierTask` and `ReplierTaskManager` cover `PENDING`, `GENERATING`,
+  `BACKGROUND`, `COMPLETED`, `CANCELLED`, and `FAILED` lifecycle states,
+  streaming preview updates, wait, cancel, and background transitions.
+- Pending: wiring `ReplierTool` to task-backed LLM generation, interruption-driven
+  backgrounding, and full replier prompt builder with
+  persona/history/mood/impression/live image context.
 
 ## Phase 7: Decision Tools And Tool Registry
 
@@ -847,9 +851,9 @@ Replier:
 - [ ] Replier prompt includes mood.
 - [ ] Replier prompt includes impression.
 - [ ] Replier prompt includes live image blocks when requested.
-- [ ] Streaming updates task preview.
-- [ ] Cancellation works.
-- [ ] Backgrounding works.
+- [x] Streaming updates task preview.
+- [x] Cancellation works.
+- [x] Backgrounding works.
 - [x] Planner-managed mode returns text but does not send directly.
 
 Decision mode:
