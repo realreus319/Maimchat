@@ -17,7 +17,8 @@ class ReplyLayerFactory(
         private val sessionStoreFactory: (RoutingKey) -> PlannerSessionStore = {
             NoopPlannerSessionStore
         },
-        private val onError: (RoutingKey, Trigger, Throwable) -> Unit = { _, _, _ -> }
+        private val onError: (RoutingKey, Trigger, Throwable) -> Unit = { _, _, _ -> },
+        private val onCancelled: (RoutingKey, Trigger) -> Unit = { _, _ -> }
 ) : TriggerSink {
     private val lock = Any()
     private val loops = linkedMapOf<RoutingKey, PlannerLoop>()
@@ -49,7 +50,8 @@ class ReplyLayerFactory(
                                     decisionProcessor = decisionProcessorFactory(routingKey),
                                     replySink = replySinkFactory(routingKey),
                                     sessionStore = sessionStoreFactory(routingKey),
-                                    onError = onError
+                                    onError = onError,
+                                    onCancelled = onCancelled
                             )
                             .also { it.start() }
                 }

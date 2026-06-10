@@ -22,7 +22,8 @@ class PlannerLoop(
         private val replySink: PlannerReplySink = PlannerReplySink {},
         private val sessionStore: PlannerSessionStore = NoopPlannerSessionStore,
         private val clockMillis: () -> Long = { System.currentTimeMillis() },
-        private val onError: (RoutingKey, Trigger, Throwable) -> Unit = { _, _, _ -> }
+        private val onError: (RoutingKey, Trigger, Throwable) -> Unit = { _, _, _ -> },
+        private val onCancelled: (RoutingKey, Trigger) -> Unit = { _, _ -> }
 ) {
     val loopId: String = routingKey.toString()
 
@@ -176,6 +177,7 @@ class PlannerLoop(
                         turnProcessor.process(context)
                     } catch (throwable: CancellationException) {
                         finalState = PlannerSessionState.CANCELLED
+                        onCancelled(routingKey, trigger)
                         throw throwable
                     } catch (throwable: Throwable) {
                         finalState = PlannerSessionState.FAILED

@@ -10,7 +10,11 @@ import com.l2dchat.core.perception.ParsedMessage
 import com.l2dchat.core.perception.PerceptionStore
 import com.l2dchat.core.reply.PlannerTriggerProcessor
 import com.l2dchat.core.reply.ReplySink
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -135,6 +139,57 @@ class LocalChatRuntimeTest {
     }
 
     @Test
+    fun `interrupted pending message completes false while decision reply sends current message`() {
+        val emitted = mutableListOf<MessageBase>()
+        val firstStarted = CompletableDeferred<Unit>()
+
+        runBlocking {
+            val runtime =
+                    LocalChatRuntime(
+                            scope = this,
+                            plannerProcessorFactory = {
+                                PlannerTriggerProcessor { context ->
+                                    if (context.trigger.messageId == "first-id") {
+                                        firstStarted.complete(Unit)
+                                        awaitCancellation()
+                                    } else {
+                                        context.sendReply("normal reply")
+                                    }
+                                }
+                            },
+                            decisionPlannerProcessorFactory = {
+                                PlannerTriggerProcessor { context ->
+                                    context.sendReply("decision reply to ${context.trigger.messageId}")
+                                }
+                            }
+                    )
+            val firstHandled =
+                    async {
+                        runtime.handleMessage(
+                                inbound = buildMessage(content = "first", messageId = "first-id"),
+                                fallbackPlatform = "fallback",
+                                fallbackAgentName = "Maimchat",
+                                replySink = collectingSink(emitted)
+                        )
+                    }
+            withTimeout(1_000L) { firstStarted.await() }
+
+            val secondHandled =
+                    runtime.handleMessage(
+                            inbound = buildMessage(content = "second", messageId = "second-id"),
+                            fallbackPlatform = "fallback",
+                            fallbackAgentName = "Maimchat",
+                            replySink = collectingSink(emitted)
+                    )
+
+            assertFalse(withTimeout(1_000L) { firstHandled.await() })
+            assertTrue(secondHandled)
+            assertEquals(listOf("decision reply to second-id"), emitted.map { it.rawMessage })
+            runtime.stopAndDrain()
+        }
+    }
+
+    @Test
     fun `createReply uses fallback agent when receiver is missing`() {
         val reply =
                 LocalChatRuntime().createReply(
@@ -156,6 +211,7 @@ class LocalChatRuntimeTest {
 
     private fun buildMessage(
             content: String,
+            messageId: String = "inbound-id",
             messageType: String? = "chat",
             receiver: ReceiverInfo? =
                     ReceiverInfo(
@@ -172,7 +228,7 @@ class LocalChatRuntimeTest {
                 messageInfo =
                         BaseMessageInfo(
                                 platform = "test_platform",
-                                messageId = "inbound-id",
+                                messageId = messageId,
                                 senderInfo =
                                         SenderInfo(
                                                 userInfo =

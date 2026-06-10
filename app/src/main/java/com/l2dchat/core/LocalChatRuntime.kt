@@ -59,6 +59,9 @@ class LocalChatRuntime(
                     sessionStoreFactory = plannerSessionStoreFactory,
                     onError = { _, trigger, throwable ->
                         removePending(trigger.toPendingKey())?.completion?.completeExceptionally(throwable)
+                    },
+                    onCancelled = { _, trigger ->
+                        removePending(trigger.toPendingKey())?.completion?.complete(false)
                     }
             )
     private val perceptionDispatcher =

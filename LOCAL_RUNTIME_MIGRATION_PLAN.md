@@ -617,6 +617,9 @@ Progress:
 - Done: `ReplyLayerFactory` and `LocalChatRuntime` can wire a dedicated decision
   processor into planner loops, and decision prompts can include per-routing-key
   background replier task ids, states, trigger text, and previews.
+- Done: interrupted planner turns notify `LocalChatRuntime`, so the cancelled
+  inbound `handleMessage()` completes `false` instead of hanging while the next
+  decision turn continues.
 - Pending: richer fork-continuation behavior after kill/adopt.
 
 ## Phase 8: Live2D And Environment Integration
