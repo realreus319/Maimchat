@@ -353,6 +353,7 @@ fun ChatWithModelScreen(
             isResetting = true
             try {
                 lifecycleManager?.setInteractionCallback(null)
+                lifecycleManager?.setMotionPlaybackCallback(null)
                 lifecycleManager?.destroy()
                 lifecycleManager = null
                 lifecycleStateName = null
@@ -391,6 +392,25 @@ fun ChatWithModelScreen(
                             }
                         }
                 )
+                newManager.setMotionPlaybackCallback(
+                        object : Live2DModelLifecycleManager.MotionPlaybackCallback {
+                            override fun onMotionFinished(
+                                    group: String?,
+                                    index: Int?,
+                                    filePath: String?,
+                                    loop: Boolean,
+                                    timestampMillis: Long
+                            ) {
+                                chatManager.reportMotionFinished(
+                                        group = group,
+                                        index = index,
+                                        filePath = filePath,
+                                        loop = loop,
+                                        timestampMillis = timestampMillis
+                                )
+                            }
+                        }
+                )
                 if (newManager.initialize()) {
                     lifecycleManager = newManager
                     lifecycleStateName = newManager.getCurrentState().name
@@ -410,6 +430,7 @@ fun ChatWithModelScreen(
     DisposableEffect(modelKey) {
         onDispose {
             lifecycleManager?.setInteractionCallback(null)
+            lifecycleManager?.setMotionPlaybackCallback(null)
             lifecycleManager?.destroy()
             chatManager.updateEnvironmentState(
                     appVisible = false,

@@ -384,6 +384,34 @@ class ChatServiceClient(context: Context) : ServiceConnection {
         )
     }
 
+    fun reportMotionFinished(
+            group: String? = null,
+            index: Int? = null,
+            filePath: String? = null,
+            loop: Boolean = false,
+            timestampMillis: Long = System.currentTimeMillis()
+    ) {
+        if (group.isNullOrBlank() && filePath.isNullOrBlank()) return
+        sendCommand(
+                ChatServiceProtocol.MSG_REPORT_MOTION_FINISHED,
+                Bundle().apply {
+                    group?.trim()?.takeIf { it.isNotEmpty() }
+                            ?.let { putString(ChatServiceProtocol.EXTRA_ENV_MOTION_GROUP, it) }
+                    index?.takeIf { it >= 0 }
+                            ?.let { putInt(ChatServiceProtocol.EXTRA_ENV_MOTION_INDEX, it) }
+                    filePath?.trim()?.takeIf { it.isNotEmpty() }
+                            ?.let {
+                                putString(ChatServiceProtocol.EXTRA_ENV_MOTION_FILE_PATH, it)
+                            }
+                    putBoolean(ChatServiceProtocol.EXTRA_ENV_MOTION_LOOP, loop)
+                    putLong(
+                            ChatServiceProtocol.EXTRA_ENV_MOTION_FINISHED_AT_MILLIS,
+                            timestampMillis.coerceAtLeast(0L)
+                    )
+                }
+        )
+    }
+
     fun setActiveModel(modelName: String?) {
         val trimmed = modelName?.trim().takeUnless { it.isNullOrEmpty() }
         _activeModel.value = trimmed
@@ -633,6 +661,8 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                 ChatServiceProtocol.MSG_START_LOCAL_RUNTIME -> "MSG_START_LOCAL_RUNTIME"
                 ChatServiceProtocol.MSG_UPDATE_ENVIRONMENT_STATE ->
                         "MSG_UPDATE_ENVIRONMENT_STATE"
+                ChatServiceProtocol.MSG_REPORT_MOTION_FINISHED ->
+                        "MSG_REPORT_MOTION_FINISHED"
                 ChatServiceProtocol.MSG_EVENT_CONNECTION_STATE -> "MSG_EVENT_CONNECTION_STATE"
                 ChatServiceProtocol.MSG_EVENT_NEW_MESSAGE -> "MSG_EVENT_NEW_MESSAGE"
                 ChatServiceProtocol.MSG_EVENT_SNAPSHOT -> "MSG_EVENT_SNAPSHOT"

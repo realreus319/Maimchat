@@ -454,6 +454,32 @@ class ChatConnectionService : Service() {
         )
     }
 
+    private fun handleMotionFinished(data: Bundle) {
+        manager.reportMotionFinished(
+                group = data.optionalString(ChatServiceProtocol.EXTRA_ENV_MOTION_GROUP),
+                index =
+                        if (data.containsKey(ChatServiceProtocol.EXTRA_ENV_MOTION_INDEX)) {
+                            data.getInt(ChatServiceProtocol.EXTRA_ENV_MOTION_INDEX)
+                                    .takeIf { it >= 0 }
+                        } else {
+                            null
+                        },
+                filePath = data.optionalString(ChatServiceProtocol.EXTRA_ENV_MOTION_FILE_PATH),
+                loop =
+                        if (data.containsKey(ChatServiceProtocol.EXTRA_ENV_MOTION_LOOP)) {
+                            data.getBoolean(ChatServiceProtocol.EXTRA_ENV_MOTION_LOOP)
+                        } else {
+                            false
+                        },
+                timestampMillis =
+                        data.optionalLong(
+                                        ChatServiceProtocol
+                                                .EXTRA_ENV_MOTION_FINISHED_AT_MILLIS
+                                )
+                                ?: System.currentTimeMillis()
+        )
+    }
+
     private fun persistConnectionConfig() {
         val editor = getSharedPreferences(CHAT_PREFS, MODE_PRIVATE).edit()
         if (lastKnownUrl != null) editor.putString(KEY_LAST_URL, lastKnownUrl)
@@ -655,6 +681,8 @@ class ChatConnectionService : Service() {
                 ChatServiceProtocol.MSG_SET_ACTIVE_MODEL -> service.handleSetActiveModel(msg.data)
                 ChatServiceProtocol.MSG_UPDATE_ENVIRONMENT_STATE ->
                         service.handleEnvironmentStateUpdate(msg.data)
+                ChatServiceProtocol.MSG_REPORT_MOTION_FINISHED ->
+                        service.handleMotionFinished(msg.data)
                 else -> super.handleMessage(msg)
             }
         }

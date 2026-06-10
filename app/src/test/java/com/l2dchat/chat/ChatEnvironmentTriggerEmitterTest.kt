@@ -137,6 +137,45 @@ class ChatEnvironmentTriggerEmitterTest {
         assertEquals("live2d_interaction", submissions.single().metadata["event_type"])
     }
 
+    @Test
+    fun `motion finished emits live2d trigger metadata`() {
+        var now = 30_000L
+        val emitter = ChatEnvironmentTriggerEmitter(clockMillis = { now })
+        val context = triggerContext()
+
+        val submissions =
+                emitter.onMotionFinished(
+                        ChatEnvironmentMotionFinished(
+                                group = "TapBody",
+                                index = 1,
+                                filePath = "mao/TapBody_01.motion3.json",
+                                timestampMillis = 30_100L
+                        ),
+                        context
+                )
+
+        assertEquals(1, submissions.size)
+        val submission = submissions.single()
+        assertEquals("android_live2d", submission.source)
+        assertEquals("motion_finished", submission.metadata["event_type"])
+        assertEquals("TapBody", submission.metadata["motion_group"])
+        assertEquals(1, submission.metadata["motion_index"])
+        assertEquals("mao/TapBody_01.motion3.json", submission.metadata["motion_file_path"])
+        assertEquals(30_100L, submission.metadata["motion_finished_at_millis"])
+
+        now += 600L
+        val repeat =
+                emitter.onMotionFinished(
+                        ChatEnvironmentMotionFinished(
+                                group = "TapBody",
+                                index = 1,
+                                timestampMillis = 30_700L
+                        ),
+                        context
+                )
+        assertEquals(1, repeat.size)
+    }
+
     private fun triggerContext(): ChatEnvironmentTriggerContext =
             ChatEnvironmentTriggerContext(
                     routingKey = RoutingKey(contextId = "room-shizuku", agentId = "shizuku"),

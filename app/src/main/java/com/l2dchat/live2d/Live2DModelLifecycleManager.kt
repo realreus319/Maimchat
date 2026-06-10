@@ -9,6 +9,8 @@ import android.util.Log
 import com.live2d.demo.full.LAppDelegate
 import com.live2d.demo.full.LAppLive2DManager
 import com.live2d.sdk.cubism.framework.CubismFramework
+import com.live2d.sdk.cubism.framework.motion.IBeganMotionCallback
+import com.live2d.sdk.cubism.framework.motion.IFinishedMotionCallback
 import java.lang.reflect.Field
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -132,12 +134,24 @@ private constructor(
         fun onInteraction(type: String, x: Float?, y: Float?, timestampMillis: Long)
     }
 
+    interface MotionPlaybackCallback {
+        fun onMotionFinished(
+                group: String?,
+                index: Int?,
+                filePath: String?,
+                loop: Boolean,
+                timestampMillis: Long
+        )
+    }
+
     private val state = AtomicReference(LifecycleState.CREATED)
     private val isInstanceInitialized = AtomicBoolean(false)
     private val isGLContextReady = AtomicBoolean(false)
     private val isDestroyed = AtomicBoolean(false)
     private var stateCallback: StateCallback? = null
     @Volatile private var interactionCallback: InteractionCallback? = null
+    @Volatile private var motionPlaybackCallback: MotionPlaybackCallback? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val gestureLogTag = "${TAG}_Gesture"
     private var lastMoveInteractionReportMillis = 0L
 
@@ -150,6 +164,10 @@ private constructor(
 
     fun setInteractionCallback(cb: InteractionCallback?) {
         interactionCallback = cb
+    }
+
+    fun setMotionPlaybackCallback(cb: MotionPlaybackCallback?) {
+        motionPlaybackCallback = cb
     }
 
     fun initialize(): Boolean {
@@ -297,6 +315,7 @@ private constructor(
         try {
             setState(LifecycleState.DESTROYING, "清理中")
             interactionCallback = null
+            motionPlaybackCallback = null
             glSurfaceView?.onPause()
             renderer?.cleanup()
             renderer = null
@@ -350,6 +369,27 @@ private constructor(
         )
     }
 
+    private fun finishedMotionCallback(
+            group: String?,
+            index: Int?,
+            filePath: String?,
+            loop: Boolean,
+            afterFinished: (() -> Unit)? = null
+    ): IFinishedMotionCallback =
+            IFinishedMotionCallback {
+                afterFinished?.invoke()
+                val timestamp = System.currentTimeMillis()
+                mainHandler.post {
+                    motionPlaybackCallback?.onMotionFinished(
+                            group,
+                            index,
+                            filePath,
+                            loop,
+                            timestamp
+                    )
+                }
+            }
+
     private fun centerOf(first: Float, second: Float): Float = (first + second) * 0.5f
 
     fun updateBackgroundTexture(path: String?) {
@@ -393,7 +433,16 @@ private constructor(
                 try {
                     val m = LAppLive2DManager.getInstance()?.getModel(0)
                     if (m != null) {
-                        invokeStartMotionReflect(m, group, index, priority, loop, loop, null, null)
+                        invokeStartMotionReflect(
+                                m,
+                                group,
+                                index,
+                                priority,
+                                loop,
+                                loop,
+                                finishedMotionCallback(group, index, null, loop),
+                                null
+                        )
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "播放动作失败: ${e.message}", e)
@@ -434,7 +483,7 @@ private constructor(
                                         com.live2d.demo.LAppDefine.Priority.FORCE.getPriority(),
                                         loop,
                                         loop,
-                                        null,
+                                        finishedMotionCallback(group, idx, motionFilePath, loop),
                                         null
                                 )
                         if (motionId >= 0) motionPlayed = true
@@ -463,7 +512,12 @@ private constructor(
                                                             .getPriority(),
                                                     loop,
                                                     loop,
-                                                    null,
+                                                    finishedMotionCallback(
+                                                            g,
+                                                            i,
+                                                            motionFilePath,
+                                                            loop
+                                                    ),
                                                     null
                                             )
                                     if (id >= 0) {
@@ -640,7 +694,9 @@ private constructor(
                                     com.live2d.demo.LAppDefine.Priority.FORCE.getPriority(),
                                     loop,
                                     loop,
-                                    { if (poseDisabled) enablePose(model) },
+                                    finishedMotionCallback(groupName, index, null, loop) {
+                                        if (poseDisabled) enablePose(model)
+                                    },
                                     null
                             )
                     if (motionId < 0) {
@@ -688,8 +744,8 @@ private constructor(
             priority: Int,
             loop: Boolean,
             loopFadeIn: Boolean,
-            finished: Any?,
-            began: Any?
+            finished: IFinishedMotionCallback?,
+            began: IBeganMotionCallback?
     ): Int {
         return try {
             val clazz = model.javaClass
@@ -701,12 +757,8 @@ private constructor(
                             Int::class.javaPrimitiveType,
                             Boolean::class.javaPrimitiveType,
                             Boolean::class.javaPrimitiveType,
-                            Class.forName(
-                                    "com.live2d.sdk.cubism.framework.motion.IFinishedMotionCallback"
-                            ),
-                            Class.forName(
-                                    "com.live2d.sdk.cubism.framework.motion.IBeganMotionCallback"
-                            )
+                            IFinishedMotionCallback::class.java,
+                            IBeganMotionCallback::class.java
                     )
             (method.invoke(model, group, index, priority, loop, loopFadeIn, finished, began) as?
                     Int)
@@ -720,12 +772,8 @@ private constructor(
                                 String::class.java,
                                 Int::class.javaPrimitiveType,
                                 Int::class.javaPrimitiveType,
-                                Class.forName(
-                                        "com.live2d.sdk.cubism.framework.motion.IFinishedMotionCallback"
-                                ),
-                                Class.forName(
-                                        "com.live2d.sdk.cubism.framework.motion.IBeganMotionCallback"
-                                )
+                                IFinishedMotionCallback::class.java,
+                                IBeganMotionCallback::class.java
                         )
                 (m2.invoke(model, group, index, priority, finished, began) as? Int) ?: -1
             } catch (e: Exception) {

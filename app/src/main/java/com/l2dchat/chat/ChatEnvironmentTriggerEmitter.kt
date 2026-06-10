@@ -15,6 +15,14 @@ data class ChatEnvironmentTriggerContext(
         val agentName: String? = null
 )
 
+data class ChatEnvironmentMotionFinished(
+        val group: String? = null,
+        val index: Int? = null,
+        val filePath: String? = null,
+        val loop: Boolean = false,
+        val timestampMillis: Long? = null
+)
+
 class ChatEnvironmentTriggerEmitter(
         private val clockMillis: () -> Long = { System.currentTimeMillis() },
         private val minIntervalsMillis: Map<String, Long> = DEFAULT_MIN_INTERVALS_MILLIS
@@ -98,6 +106,40 @@ class ChatEnvironmentTriggerEmitter(
             }
         }
         return submissions
+    }
+
+    fun onMotionFinished(
+            motion: ChatEnvironmentMotionFinished,
+            context: ChatEnvironmentTriggerContext
+    ): List<EnvironmentTriggerSubmission> {
+        val group = motion.group.cleanOrNull()
+        val index = motion.index?.takeIf { it >= 0 }
+        val filePath = motion.filePath.cleanOrNull()
+        if (group == null && filePath == null) return emptyList()
+        val timestamp = motion.timestampMillis?.takeIf { it >= 0L } ?: clockMillis()
+        val displayName =
+                when {
+                    group != null && index != null -> "$group[$index]"
+                    filePath != null -> filePath
+                    group != null -> group
+                    else -> "unknown"
+                }
+        return emit(
+                context = context,
+                eventType = EVENT_MOTION_FINISHED,
+                signature = signatureOf(group, index, filePath, motion.loop, timestamp),
+                text = "Live2D 动作播放结束：$displayName。",
+                source = SOURCE_ANDROID_LIVE2D,
+                priority = TriggerPriority.LOW,
+                metadata =
+                        mapOf(
+                                "motion_group" to group,
+                                "motion_index" to index,
+                                "motion_file_path" to filePath,
+                                "motion_loop" to motion.loop,
+                                "motion_finished_at_millis" to timestamp
+                        )
+        )
     }
 
     private fun emitInteraction(
@@ -249,6 +291,7 @@ class ChatEnvironmentTriggerEmitter(
         const val EVENT_BACKGROUND_CHANGED = "background_changed"
         const val EVENT_LIVE2D_INTERACTION = "live2d_interaction"
         const val EVENT_VISUAL_SNAPSHOT_READY = "visual_snapshot_ready"
+        const val EVENT_MOTION_FINISHED = "motion_finished"
 
         const val SOURCE_ANDROID_APP = "android_app"
         const val SOURCE_ANDROID_WALLPAPER = "android_wallpaper"
@@ -261,7 +304,8 @@ class ChatEnvironmentTriggerEmitter(
                         EVENT_WALLPAPER_VISIBLE to 30_000L,
                         EVENT_BACKGROUND_CHANGED to 5_000L,
                         EVENT_LIVE2D_INTERACTION to 500L,
-                        EVENT_VISUAL_SNAPSHOT_READY to 10_000L
+                        EVENT_VISUAL_SNAPSHOT_READY to 10_000L,
+                        EVENT_MOTION_FINISHED to 500L
                 )
     }
 }

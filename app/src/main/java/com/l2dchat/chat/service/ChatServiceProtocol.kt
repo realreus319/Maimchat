@@ -14,6 +14,7 @@ object ChatServiceProtocol {
     const val MSG_CLEAR_MESSAGES_EPHEMERAL = 10
     const val MSG_START_LOCAL_RUNTIME = 11
     const val MSG_UPDATE_ENVIRONMENT_STATE = 12
+    const val MSG_REPORT_MOTION_FINISHED = 13
 
     // Service -> Client events
     const val MSG_EVENT_CONNECTION_STATE = 101
@@ -60,6 +61,12 @@ object ChatServiceProtocol {
     const val EXTRA_ENV_VISUAL_SNAPSHOT_HEIGHT = "extra_env_visual_snapshot_height"
     const val EXTRA_ENV_VISUAL_SNAPSHOT_CAPTURED_AT_MILLIS =
             "extra_env_visual_snapshot_captured_at_millis"
+    const val EXTRA_ENV_MOTION_GROUP = "extra_env_motion_group"
+    const val EXTRA_ENV_MOTION_INDEX = "extra_env_motion_index"
+    const val EXTRA_ENV_MOTION_FILE_PATH = "extra_env_motion_file_path"
+    const val EXTRA_ENV_MOTION_LOOP = "extra_env_motion_loop"
+    const val EXTRA_ENV_MOTION_FINISHED_AT_MILLIS =
+            "extra_env_motion_finished_at_millis"
 
     // Event extras
     const val EXTRA_CONNECTION_STATE = "extra_connection_state"

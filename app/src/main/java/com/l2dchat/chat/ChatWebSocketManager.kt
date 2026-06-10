@@ -210,6 +210,30 @@ class ChatWebSocketManager {
         environmentStateProvider.update(update)
         emitEnvironmentUpdateTriggers(update)
     }
+    fun reportMotionFinished(
+            group: String? = null,
+            index: Int? = null,
+            filePath: String? = null,
+            loop: Boolean = false,
+            timestampMillis: Long = System.currentTimeMillis()
+    ) {
+        val transport = localEnvironmentTransport() ?: return
+        submitEnvironmentTriggers(
+                transport = transport,
+                submissions =
+                        environmentTriggerEmitter.onMotionFinished(
+                                motion =
+                                        ChatEnvironmentMotionFinished(
+                                                group = group,
+                                                index = index,
+                                                filePath = filePath,
+                                                loop = loop,
+                                                timestampMillis = timestampMillis
+                                        ),
+                                context = environmentTriggerContext()
+                        )
+        )
+    }
     fun setReceiverInfo(userId: String?, userNickname: String?) {
         receiverUserIdOverride = userId?.ifBlank { null }
         receiverUserNicknameOverride = userNickname?.ifBlank { null }

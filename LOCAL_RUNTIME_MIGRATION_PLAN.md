@@ -731,8 +731,10 @@ Progress:
   touch/drag interactions are reported directly through `WallpaperChatCoordinator`
   / `ChatServiceClient`, so wallpaper events can initiate local ENV planner turns
   instead of only being observed later through persisted state.
-- Pending: image/content-block capable `look_at`, idle timer triggers, and
-  motion finished triggers.
+- Done: app-side Live2D motion completion is reported from the SDK finish
+  callback through `ChatServiceClient` into local ENV planner turns, preserving
+  group/index, file path, loop flag, and completion timestamp metadata.
+- Pending: image/content-block capable `look_at` and idle timer triggers.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood
 
