@@ -407,7 +407,12 @@ Progress:
 - Done: `LocalChatRuntime` now routes perception triggers into `ReplyLayerFactory`/`PlannerLoop`; the temporary fixed reply is emitted by a planner processor and converted back through `PlannerReplySink`.
 - Done: `PlannerSessionStore` and `RoomPlannerSessionStore` persist planner rounds plus trigger/user/assistant session messages for each processed turn.
 - Done: `PlannerPromptBuilder` and `LlmPlannerTriggerProcessor` can build a trigger prompt, call a fake/provider-neutral LLM client, and send final assistant content when no tool call is returned.
-- Pending: native tool-calling processor, tool task/session message persistence, and decision/fork replier adoption.
+- Done: `ToolCallingPlannerTriggerProcessor` calls `LlmClient.chatCompletionWithTools()`,
+  executes registered tools, sends planner-managed `replier` output through the
+  existing `ReplySink`, and falls back to final assistant text when no tool reply
+  was sent.
+- Pending: JSON fallback for non-tool providers, tool task/session message persistence,
+  and decision/fork replier adoption.
 
 ## Phase 5: LLM Client
 
@@ -512,6 +517,16 @@ Acceptance:
 - Planner sends the returned text through `ReplySink`.
 - Streaming task can be moved to background by interruption.
 
+Progress:
+
+- Done: minimal planner-managed `ReplierTool` schema covers `content`,
+  `reply_guidance`, `style_override`, `emotion_hint`, `is_progress_update`,
+  `include_action`, and `live_image`.
+- Done: `ReplierTool` validates nonblank content, returns structured tool JSON
+  containing `replyText` and `sent=false`, and never sends directly.
+- Pending: `ReplierTask`, streaming generation, backgrounding, and full replier
+  prompt builder with persona/history/mood/impression/live image context.
+
 ## Phase 7: Decision Tools And Tool Registry
 
 Goal: complete the minimum tool system required for planner parity.
@@ -567,6 +582,16 @@ Acceptance:
 - If a new user message arrives during reply generation, current reply can be backgrounded.
 - Planner can adopt old background reply.
 - Planner can kill old background reply and respond to the new message.
+
+Progress:
+
+- Done: core `Tool`, `ToolExecutionContext`, `ToolExecutionResult`, and
+  `ToolRegistry` are in place for normal planner tool execution.
+- Done: `ToolRegistry` exposes provider-neutral `LlmToolDefinition`s and converts
+  unknown tools, malformed JSON, and argument validation failures into LLM tool
+  error results.
+- Pending: decision-mode gating and background reply decision tools
+  (`wait_for`, `adopt_background_reply`, `kill_background_reply`).
 
 ## Phase 8: Live2D And Environment Integration
 
@@ -809,13 +834,13 @@ Planner:
 - [x] `ENV` and `SYS` triggers queue.
 - [x] Foreground epoch blocks stale sends.
 - [x] Planner session is persisted.
-- [ ] Native tool calling works.
+- [x] Native tool calling works.
 - [ ] JSON fallback works for providers without tool calling.
 - [x] Final assistant text fallback sends only when no tool reply was sent.
 
 Replier:
 
-- [ ] `replier` validates content.
+- [x] `replier` validates content.
 - [ ] Replier prompt includes persona.
 - [ ] Replier prompt includes current message.
 - [ ] Replier prompt includes history.
@@ -825,7 +850,7 @@ Replier:
 - [ ] Streaming updates task preview.
 - [ ] Cancellation works.
 - [ ] Backgrounding works.
-- [ ] Planner-managed mode returns text but does not send directly.
+- [x] Planner-managed mode returns text but does not send directly.
 
 Decision mode:
 
@@ -847,7 +872,7 @@ Reply delivery:
 
 Tools:
 
-- [ ] `replier`
+- [x] `replier`
 - [ ] `wait_for`
 - [ ] `adopt_background_reply`
 - [ ] `kill_background_reply`
