@@ -65,7 +65,7 @@ class ReplierTool(
                                                             mapOf(
                                                                     "type" to "string",
                                                                     "description" to
-                                                                            "Optional live image reference or identifier."
+                                                                            "Optional direct live image reference, such as look_at.liveImage, to attach to replier generation."
                                                             )
                                             )
                             )

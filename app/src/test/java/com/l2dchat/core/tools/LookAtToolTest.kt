@@ -23,7 +23,7 @@ class LookAtToolTest {
     private val routingKey = RoutingKey(contextId = "room-a", agentId = "agent-a")
 
     @Test
-    fun `returns visual metadata without image content blocks`() {
+    fun `returns visual metadata without image content blocks by default`() {
         val tool = LookAtTool(provider())
 
         val result =
@@ -57,6 +57,74 @@ class LookAtToolTest {
         assertFalse(json.has("contentBlocks"))
         assertFalse(result.llmContent.contains("image_url"))
         assertTrue(json["message"].asString.contains("metadata"))
+    }
+
+    @Test
+    fun `include image returns content blocks for direct image snapshot`() {
+        val imageReference = "data:image/png;base64,abc123"
+        val tool =
+                LookAtTool(
+                        provider(
+                                visualSnapshot =
+                                        EnvironmentVisualSnapshot(
+                                                reference = imageReference,
+                                                mimeType = "image/png",
+                                                width = 320,
+                                                height = 180,
+                                                capturedAtMillis = 990L
+                                        )
+                        )
+                )
+
+        val result =
+                runBlocking {
+                    tool.execute(
+                            context(),
+                            JsonParser.parseString(
+                                            """
+                                            {
+                                              "include_image": true,
+                                              "image_detail": "low"
+                                            }
+                                            """
+                                    )
+                                    .asJsonObject
+                    )
+                }
+
+        assertFalse(result.isError)
+        val json = JsonParser.parseString(result.llmContent).asJsonObject
+        assertEquals(imageReference, json["liveImage"].asString)
+        val blocks = json["contentBlocks"].asJsonArray
+        assertEquals(2, blocks.size())
+        assertEquals("text", blocks[0].asJsonObject["type"].asString)
+        val imageBlock = blocks[1].asJsonObject
+        assertEquals("image_url", imageBlock["type"].asString)
+        val imageUrl = imageBlock["image_url"].asJsonObject
+        assertEquals(imageReference, imageUrl["url"].asString)
+        assertEquals("low", imageUrl["detail"].asString)
+        assertEquals(true, result.metadata["has_image_content"])
+        assertEquals(imageReference, result.metadata["live_image"])
+    }
+
+    @Test
+    fun `include image does not attach synthetic snapshot reference`() {
+        val tool = LookAtTool(provider())
+
+        val result =
+                runBlocking {
+                    tool.execute(
+                            context(),
+                            JsonParser.parseString("""{"include_image": true}""").asJsonObject
+                    )
+                }
+
+        assertFalse(result.isError)
+        val json = JsonParser.parseString(result.llmContent).asJsonObject
+        assertFalse(json.has("contentBlocks"))
+        assertFalse(json.has("liveImage"))
+        assertTrue(json["message"].asString.contains("no permission-safe direct image content"))
+        assertEquals(false, result.metadata["has_image_content"])
     }
 
     @Test
@@ -109,7 +177,16 @@ class LookAtToolTest {
         assertTrue(rejected.result.llmContent.contains("decision mode"))
     }
 
-    private fun provider(): EnvironmentStateProvider =
+    private fun provider(
+            visualSnapshot: EnvironmentVisualSnapshot? =
+                    EnvironmentVisualSnapshot(
+                            reference = "snapshot-1",
+                            mimeType = "image/png",
+                            width = 320,
+                            height = 180,
+                            capturedAtMillis = 990L
+                    )
+    ): EnvironmentStateProvider =
             EnvironmentStateProvider { context ->
                 EnvironmentState(
                         contextId = context.routingKey.contextId,
@@ -133,14 +210,7 @@ class LookAtToolTest {
                                         EnvironmentChatBubble(text = "old", fromUser = true),
                                         EnvironmentChatBubble(text = "latest", fromUser = false)
                                 ),
-                        visualSnapshot =
-                                EnvironmentVisualSnapshot(
-                                        reference = "snapshot-1",
-                                        mimeType = "image/png",
-                                        width = 320,
-                                        height = 180,
-                                        capturedAtMillis = 990L
-                                )
+                        visualSnapshot = visualSnapshot
                 )
             }
 

@@ -11,6 +11,7 @@ import com.l2dchat.core.environment.EnvironmentStateProvider
 import com.l2dchat.core.environment.EnvironmentSurfaceState
 import com.l2dchat.core.environment.EnvironmentVisualSnapshot
 import com.l2dchat.core.llm.LlmToolDefinition
+import java.util.Locale
 
 class LookAtTool(
         private val stateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
@@ -20,7 +21,7 @@ class LookAtTool(
             LlmToolDefinition(
                     name = NAME,
                     description =
-                            "Inspect current visual environment metadata. This first Android version returns metadata only and does not attach screenshot pixels.",
+                            "Inspect current visual environment metadata. Can return an image content block only when a permission-safe direct image reference is already available.",
                     parameters =
                             mapOf(
                                     "type" to "object",
@@ -53,6 +54,22 @@ class LookAtTool(
                                                             lookAtBooleanParameter(
                                                                     "Whether to include recent visible chat bubble text. Defaults to false."
                                                             ),
+                                                    "include_image" to
+                                                            lookAtBooleanParameter(
+                                                                    "Whether to include an image content block when the current visual snapshot has a direct data/http(s) image reference. Defaults to false."
+                                                            ),
+                                                    "image_detail" to
+                                                            mapOf(
+                                                                    "type" to "string",
+                                                                    "enum" to
+                                                                            listOf(
+                                                                                    "auto",
+                                                                                    "low",
+                                                                                    "high"
+                                                                            ),
+                                                                    "description" to
+                                                                            "Optional image detail hint for compatible multimodal providers."
+                                                            ),
                                                     "max_recent_bubbles" to
                                                             mapOf(
                                                                     "type" to "integer",
@@ -72,6 +89,7 @@ class LookAtTool(
         val options = LookAtOptions.from(arguments)
         val state = stateProvider.currentState(context)
         val response = state.toLookAtResponse(options)
+        val hasImageContent = response.liveImage != null
         return ToolExecutionResult(
                 llmContent = gson.toJson(response),
                 metadata =
@@ -79,35 +97,48 @@ class LookAtTool(
                                 "tool" to NAME,
                                 "context_id" to state.contextId,
                                 "agent_id" to state.agentId,
-                                "has_visual_snapshot" to (state.visualSnapshot != null)
+                                "has_visual_snapshot" to (state.visualSnapshot != null),
+                                "has_image_content" to hasImageContent,
+                                "live_image" to response.liveImage
                         )
         )
     }
 
-    private fun EnvironmentState.toLookAtResponse(options: LookAtOptions): LookAtResponse =
-            LookAtResponse(
-                    contextId = contextId,
-                    agentId = agentId,
-                    focus = options.focus,
-                    model = model.takeIf { options.includeModel },
-                    surface = surface.takeIf { options.includeSurface },
-                    lastInteraction = lastInteraction.takeIf { options.includeLastInteraction },
-                    visualSnapshot =
-                            visualSnapshot.takeIf { options.includeSnapshotMetadata },
-                    recentBubbles =
-                            if (options.includeRecentBubbles) {
-                                recentBubbles.takeLast(options.maxRecentBubbles)
-                            } else {
-                                null
-                            },
-                    message = lookAtMessage(options)
-            )
+    private fun EnvironmentState.toLookAtResponse(options: LookAtOptions): LookAtResponse {
+        val liveImage = visualSnapshot?.directImageReference()?.takeIf { options.includeImage }
+        val message = lookAtMessage(options, liveImage)
+        return LookAtResponse(
+                contextId = contextId,
+                agentId = agentId,
+                focus = options.focus,
+                model = model.takeIf { options.includeModel },
+                surface = surface.takeIf { options.includeSurface },
+                lastInteraction = lastInteraction.takeIf { options.includeLastInteraction },
+                visualSnapshot = visualSnapshot.takeIf { options.includeSnapshotMetadata },
+                recentBubbles =
+                        if (options.includeRecentBubbles) {
+                            recentBubbles.takeLast(options.maxRecentBubbles)
+                        } else {
+                            null
+                        },
+                contentBlocks = lookAtContentBlocks(message, liveImage, options.imageDetail),
+                liveImage = liveImage,
+                message = message
+        )
+    }
 
-    private fun EnvironmentState.lookAtMessage(options: LookAtOptions): String =
-            if (options.includeSnapshotMetadata && visualSnapshot != null) {
-                "Visual snapshot metadata is available. This tool version does not attach image pixels."
-            } else {
-                "No visual snapshot metadata is available from this tool result."
+    private fun EnvironmentState.lookAtMessage(
+            options: LookAtOptions,
+            liveImage: String?
+    ): String =
+            when {
+                liveImage != null ->
+                        "Visual snapshot image content is available in contentBlocks and liveImage."
+                options.includeImage && visualSnapshot != null ->
+                        "Visual snapshot metadata is available, but no permission-safe direct image content is available."
+                options.includeSnapshotMetadata && visualSnapshot != null ->
+                        "Visual snapshot metadata is available. Pass include_image=true to request image content when a safe direct image reference exists."
+                else -> "No visual snapshot metadata is available from this tool result."
             }
 
     private data class LookAtResponse(
@@ -119,6 +150,8 @@ class LookAtTool(
             val lastInteraction: EnvironmentInteraction?,
             val visualSnapshot: EnvironmentVisualSnapshot?,
             val recentBubbles: List<EnvironmentChatBubble>?,
+            val contentBlocks: List<Map<String, Any>>?,
+            val liveImage: String?,
             val message: String
     )
 
@@ -129,6 +162,8 @@ class LookAtTool(
             val includeLastInteraction: Boolean,
             val includeSnapshotMetadata: Boolean,
             val includeRecentBubbles: Boolean,
+            val includeImage: Boolean,
+            val imageDetail: String?,
             val maxRecentBubbles: Int
     ) {
         companion object {
@@ -146,6 +181,15 @@ class LookAtTool(
                                     ),
                             includeRecentBubbles =
                                     arguments.booleanOrDefault("include_recent_bubbles", false),
+                            includeImage = arguments.booleanOrDefault("include_image", false),
+                            imageDetail =
+                                    arguments.stringOrNull("image_detail")?.let { detail ->
+                                        val normalized = detail.trim().lowercase(Locale.ROOT)
+                                        require(normalized in IMAGE_DETAIL_VALUES) {
+                                            "image_detail must be one of auto, low, high"
+                                        }
+                                        normalized
+                                    },
                             maxRecentBubbles =
                                     arguments.intOrDefault(
                                             name = "max_recent_bubbles",
@@ -161,6 +205,36 @@ class LookAtTool(
         const val NAME: String = "look_at"
         private const val DEFAULT_MAX_RECENT_BUBBLES = 3
         private const val MAX_RECENT_BUBBLES = 20
+        private val IMAGE_DETAIL_VALUES = setOf("auto", "low", "high")
+    }
+}
+
+private fun lookAtContentBlocks(
+        message: String,
+        liveImage: String?,
+        imageDetail: String?
+): List<Map<String, Any>>? {
+    val imageUrl = liveImage ?: return null
+    val imagePayload =
+            linkedMapOf<String, Any>("url" to imageUrl).apply {
+                imageDetail?.let { put("detail", it) }
+            }
+    return listOf(
+            mapOf("type" to "text", "text" to message),
+            mapOf("type" to "image_url", "image_url" to imagePayload)
+    )
+}
+
+private fun EnvironmentVisualSnapshot.directImageReference(): String? {
+    val reference = reference.trim().takeIf { it.isNotBlank() } ?: return null
+    val lowerReference = reference.lowercase(Locale.ROOT)
+    val lowerMimeType = mimeType?.trim()?.lowercase(Locale.ROOT)
+    if (lowerMimeType != null && !lowerMimeType.startsWith("image/")) return null
+    return when {
+        lowerReference.startsWith("data:image/") -> reference
+        lowerReference.startsWith("https://") -> reference
+        lowerReference.startsWith("http://") -> reference
+        else -> null
     }
 }
 

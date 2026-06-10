@@ -738,7 +738,10 @@ Progress:
   surface remains visible in local runtime mode; chat messages, replies,
   Live2D interactions, model/background updates, visual snapshots, and surface
   visibility changes reset the idle window.
-- Pending: image/content-block capable `look_at`.
+- Done: `look_at` can return `contentBlocks` and `liveImage` when explicitly
+  requested and the current visual snapshot already exposes a permission-safe
+  direct image reference; synthetic app/wallpaper snapshot identifiers remain
+  metadata-only.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood
 
