@@ -115,6 +115,28 @@ class ChatEnvironmentTriggerEmitterTest {
         )
     }
 
+    @Test
+    fun `wallpaper interaction uses wallpaper source`() {
+        val emitter = ChatEnvironmentTriggerEmitter(clockMillis = { 20_000L })
+        val submissions =
+                emitter.onEnvironmentUpdate(
+                        ChatEnvironmentUpdate(
+                                interaction =
+                                        ChatEnvironmentInteraction(
+                                                type = "wallpaper_touch",
+                                                x = 4f,
+                                                y = 5f,
+                                                timestampMillis = 20_000L
+                                        )
+                        ),
+                        triggerContext()
+                )
+
+        assertEquals(1, submissions.size)
+        assertEquals("android_wallpaper", submissions.single().source)
+        assertEquals("live2d_interaction", submissions.single().metadata["event_type"])
+    }
+
     private fun triggerContext(): ChatEnvironmentTriggerContext =
             ChatEnvironmentTriggerContext(
                     routingKey = RoutingKey(contextId = "room-shizuku", agentId = "shizuku"),

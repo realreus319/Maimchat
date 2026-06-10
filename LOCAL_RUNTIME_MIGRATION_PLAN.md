@@ -727,9 +727,12 @@ Progress:
   app/wallpaper visibility, background changes, app-side Live2D interactions,
   and visual snapshot metadata updates into deduplicated environment planner
   turns with routing/reply metadata.
-- Pending: image/content-block capable `look_at`, idle timer triggers, motion
-  finished triggers, and direct wallpaper-to-service interaction trigger
-  delivery beyond the persisted state read path.
+- Done: wallpaper visibility, surface metadata, background changes, and
+  touch/drag interactions are reported directly through `WallpaperChatCoordinator`
+  / `ChatServiceClient`, so wallpaper events can initiate local ENV planner turns
+  instead of only being observed later through persisted state.
+- Pending: image/content-block capable `look_at`, idle timer triggers, and
+  motion finished triggers.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood
 

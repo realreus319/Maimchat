@@ -109,6 +109,12 @@ class ChatEnvironmentTriggerEmitter(
         val x = interaction.x?.takeIf { it.isFinite() }
         val y = interaction.y?.takeIf { it.isFinite() }
         val timestamp = interaction.timestampMillis?.takeIf { it >= 0L } ?: clockMillis()
+        val source =
+                if (type.startsWith("wallpaper_")) {
+                    SOURCE_ANDROID_WALLPAPER
+                } else {
+                    SOURCE_ANDROID_LIVE2D
+                }
         val position =
                 if (x != null && y != null) {
                     "，位置 x=${x.oneDecimal()}, y=${y.oneDecimal()}"
@@ -120,7 +126,7 @@ class ChatEnvironmentTriggerEmitter(
                 eventType = EVENT_LIVE2D_INTERACTION,
                 signature = signatureOf(type, x?.oneDecimal(), y?.oneDecimal(), timestamp),
                 text = "检测到 Live2D 交互：$type$position。",
-                source = SOURCE_ANDROID_LIVE2D,
+                source = source,
                 priority = TriggerPriority.NORMAL,
                 metadata =
                         mapOf(

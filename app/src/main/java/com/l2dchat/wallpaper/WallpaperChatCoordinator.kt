@@ -22,6 +22,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 /** 管理桌面小部件与壁纸后台的聊天调度，复用独立进程的聊天服务以共享 WebSocket 连接，并将最新对话同步到小部件。 */
 object WallpaperChatCoordinator {
     private val logger = L2DLogger.module(LogModule.WALLPAPER)
+    private const val ENVIRONMENT_VISUAL_SNAPSHOT_MIME_TYPE =
+            "application/vnd.l2dchat.environment-snapshot+json"
     private const val CHAT_PREFS = "chat_prefs"
     private const val KEY_LAST_URL = "last_url"
     private const val KEY_NICKNAME = "nickname"
@@ -61,6 +63,84 @@ object WallpaperChatCoordinator {
 
     suspend fun warmUp(context: Context) {
         ensureClient(context.applicationContext)
+    }
+
+    fun reportEnvironmentState(
+            context: Context,
+            wallpaperVisible: Boolean? = null,
+            surfaceWidth: Int? = null,
+            surfaceHeight: Int? = null,
+            backgroundPath: String? = null,
+            hasBackgroundPath: Boolean = false,
+            timestampMillis: Long = System.currentTimeMillis()
+    ) {
+        val appContext = context.applicationContext
+        val surfaceReported = surfaceWidth != null || surfaceHeight != null
+        if (wallpaperVisible == null && !surfaceReported && !hasBackgroundPath) return
+        scope.launch {
+            try {
+                val client = ensureClient(appContext)
+                client.ensureBound()
+                val width = surfaceWidth?.takeIf { it > 0 }
+                val height = surfaceHeight?.takeIf { it > 0 }
+                val snapshotReference =
+                        if (width != null && height != null) {
+                            buildWallpaperVisualSnapshotReference(
+                                    context = appContext,
+                                    visible = wallpaperVisible,
+                                    width = width,
+                                    height = height
+                            )
+                        } else {
+                            null
+                        }
+                client.updateEnvironmentState(
+                        wallpaperVisible = wallpaperVisible,
+                        backgroundPath = backgroundPath,
+                        hasBackgroundPath = hasBackgroundPath,
+                        visualSnapshotReference = snapshotReference,
+                        visualSnapshotMimeType =
+                                if (snapshotReference != null) {
+                                    ENVIRONMENT_VISUAL_SNAPSHOT_MIME_TYPE
+                                } else {
+                                    null
+                                },
+                        visualSnapshotWidth = width,
+                        visualSnapshotHeight = height,
+                        visualSnapshotCapturedAtMillis =
+                                if (snapshotReference != null) timestampMillis else null,
+                        hasVisualSnapshot = surfaceReported
+                )
+            } catch (t: Throwable) {
+                logger.warn("壁纸环境状态上报失败", t)
+            }
+        }
+    }
+
+    fun reportEnvironmentInteraction(
+            context: Context,
+            type: String,
+            x: Float?,
+            y: Float?,
+            timestampMillis: Long = System.currentTimeMillis()
+    ) {
+        val cleanType = type.trim()
+        if (cleanType.isEmpty()) return
+        val appContext = context.applicationContext
+        scope.launch {
+            try {
+                val client = ensureClient(appContext)
+                client.ensureBound()
+                client.updateEnvironmentInteraction(
+                        type = cleanType,
+                        x = x?.takeIf { it.isFinite() },
+                        y = y?.takeIf { it.isFinite() },
+                        timestampMillis = timestampMillis
+                )
+            } catch (t: Throwable) {
+                logger.warn("壁纸环境交互上报失败", t)
+            }
+        }
     }
 
     fun updateWidgetPreview(context: Context, message: String, fromUser: Boolean) {
@@ -165,6 +245,29 @@ object WallpaperChatCoordinator {
                 logger.warn("Listener dispatch failed", t)
             }
         }
+    }
+
+    private fun buildWallpaperVisualSnapshotReference(
+            context: Context,
+            visible: Boolean?,
+            width: Int,
+            height: Int
+    ): String {
+        val prefs = context.getSharedPreferences(WallpaperComm.PREF_WALLPAPER, Context.MODE_PRIVATE)
+        val fingerprint =
+                listOf(
+                                "android_wallpaper",
+                                prefs.getString(WallpaperComm.PREF_WALLPAPER_MODEL_FOLDER, null)
+                                        .orEmpty(),
+                                prefs.getString(WallpaperComm.PREF_WALLPAPER_BG_PATH, null)
+                                        .orEmpty(),
+                                visible?.toString().orEmpty(),
+                                width.toString(),
+                                height.toString()
+                        )
+                        .joinToString("|")
+                        .hashCode()
+        return "android_wallpaper:${Integer.toHexString(fingerprint)}"
     }
 
     private suspend fun ensureConnection(context: Context, client: ChatServiceClient): Boolean {

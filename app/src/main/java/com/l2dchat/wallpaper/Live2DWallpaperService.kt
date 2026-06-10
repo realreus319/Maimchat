@@ -450,22 +450,25 @@ class Live2DWallpaperService : WallpaperService() {
         }
 
         private fun persistWallpaperVisibility(visible: Boolean) {
+            val timestamp = System.currentTimeMillis()
             prefs.edit()
                     .putBoolean(WallpaperComm.PREF_WALLPAPER_VISIBLE, visible)
-                    .putLong(
-                            WallpaperComm.PREF_WALLPAPER_VISIBLE_UPDATED_AT,
-                            System.currentTimeMillis()
-                    )
+                    .putLong(WallpaperComm.PREF_WALLPAPER_VISIBLE_UPDATED_AT, timestamp)
                     .apply()
+            WallpaperChatCoordinator.reportEnvironmentState(
+                    context = this@Live2DWallpaperService.applicationContext,
+                    wallpaperVisible = visible,
+                    surfaceWidth = currentSurfaceWidth.takeIf { it > 0 },
+                    surfaceHeight = currentSurfaceHeight.takeIf { it > 0 },
+                    timestampMillis = timestamp
+            )
         }
 
         private fun persistWallpaperSurface(width: Int, height: Int) {
+            val timestamp = System.currentTimeMillis()
             val editor =
                     prefs.edit()
-                            .putLong(
-                                    WallpaperComm.PREF_WALLPAPER_SURFACE_UPDATED_AT,
-                                    System.currentTimeMillis()
-                            )
+                            .putLong(WallpaperComm.PREF_WALLPAPER_SURFACE_UPDATED_AT, timestamp)
             if (width > 0 && height > 0) {
                 editor.putInt(WallpaperComm.PREF_WALLPAPER_SURFACE_WIDTH, width)
                 editor.putInt(WallpaperComm.PREF_WALLPAPER_SURFACE_HEIGHT, height)
@@ -474,6 +477,13 @@ class Live2DWallpaperService : WallpaperService() {
                 editor.remove(WallpaperComm.PREF_WALLPAPER_SURFACE_HEIGHT)
             }
             editor.apply()
+            WallpaperChatCoordinator.reportEnvironmentState(
+                    context = this@Live2DWallpaperService.applicationContext,
+                    wallpaperVisible = engineVisible,
+                    surfaceWidth = width,
+                    surfaceHeight = height,
+                    timestampMillis = timestamp
+            )
         }
 
         private fun persistWallpaperInteraction(
@@ -491,13 +501,11 @@ class Live2DWallpaperService : WallpaperService() {
                 return
             }
             if (throttle) lastMoveInteractionPersistMillis = elapsed
+            val timestamp = System.currentTimeMillis()
             val editor =
                     prefs.edit()
                             .putString(WallpaperComm.PREF_WALLPAPER_INTERACTION_TYPE, type)
-                            .putLong(
-                                    WallpaperComm.PREF_WALLPAPER_INTERACTION_TIMESTAMP,
-                                    System.currentTimeMillis()
-                            )
+                            .putLong(WallpaperComm.PREF_WALLPAPER_INTERACTION_TIMESTAMP, timestamp)
             val cleanX = x?.takeIf { it.isFinite() }
             val cleanY = y?.takeIf { it.isFinite() }
             if (cleanX == null) editor.remove(WallpaperComm.PREF_WALLPAPER_INTERACTION_X)
@@ -505,12 +513,24 @@ class Live2DWallpaperService : WallpaperService() {
             if (cleanY == null) editor.remove(WallpaperComm.PREF_WALLPAPER_INTERACTION_Y)
             else editor.putFloat(WallpaperComm.PREF_WALLPAPER_INTERACTION_Y, cleanY)
             editor.apply()
+            WallpaperChatCoordinator.reportEnvironmentInteraction(
+                    context = this@Live2DWallpaperService.applicationContext,
+                    type = type,
+                    x = cleanX,
+                    y = cleanY,
+                    timestampMillis = timestamp
+            )
         }
 
         private fun centerOf(first: Float, second: Float): Float = (first + second) * 0.5f
 
         private fun loadBackgroundAsync(path: String?, force: Boolean = false) {
             lastRequestedBackgroundPath = path
+            WallpaperChatCoordinator.reportEnvironmentState(
+                    context = this@Live2DWallpaperService.applicationContext,
+                    backgroundPath = path?.takeIf { it.isNotBlank() },
+                    hasBackgroundPath = true
+            )
             if (path.isNullOrBlank()) {
                 logger.info("Clearing wallpaper background (empty path)")
                 lastAppliedBackgroundPath = null
