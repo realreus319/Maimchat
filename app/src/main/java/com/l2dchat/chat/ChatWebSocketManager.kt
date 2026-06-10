@@ -40,6 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1011,6 +1012,12 @@ class ChatWebSocketManager {
     fun disconnect() {
         cancelIdleEnvironmentTimer()
         activeTransport.stop("用户断开", userInitiated = true)
+    }
+
+    fun shutdown() {
+        cancelIdleEnvironmentTimer()
+        activeTransport.stop("管理器销毁", userInitiated = false)
+        scope.cancel()
     }
 
     fun getConnectionStateDescription(): String =

@@ -25,7 +25,10 @@ import com.l2dchat.core.tools.ReplierPromptContextProvider
 import com.l2dchat.core.tools.ReplierTaskRequest
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -51,9 +54,9 @@ class LocalTransport(
         environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
         motionController: MotionController = NoopMotionController,
         runtimeStateDaoProvider: () -> RuntimeStateDao? = { null },
-        private val runtimeFactory: () -> LocalChatRuntime = {
+        private val runtimeFactory: (CoroutineScope) -> LocalChatRuntime = { runtimeScope ->
             LocalRuntimeFactory.create(
-                    scope = scope,
+                    scope = runtimeScope,
                     llmConfig = localRuntimeLlmConfigProvider(),
                     perceptionStoreFactory = perceptionStoreFactory,
                     plannerSessionStoreFactory = plannerSessionStoreFactory,
@@ -83,8 +86,12 @@ class LocalTransport(
     override val mode: RuntimeMode = RuntimeMode.LOCAL
 
     private val logger = L2DLogger.module(LogModule.CHAT)
+    private val runtimeLock = Any()
     private var running = false
-    private var runtime: LocalChatRuntime = runtimeFactory()
+    private var runtimeJob: Job? = null
+    private var runtimeScope: CoroutineScope? = null
+    private var runtimeGeneration: Long = 0L
+    private var runtime: LocalChatRuntime? = null
     private val replySink =
             object : ReplySink {
                 override suspend fun send(message: MessageBase) {
@@ -93,8 +100,13 @@ class LocalTransport(
             }
 
     fun start() {
-        val wasRunning = running
-        running = true
+        val wasRunning =
+                synchronized(runtimeLock) {
+                    val previous = running
+                    ensureRuntimeLocked()
+                    running = true
+                    previous
+                }
         callbacks.onStateChanged(ConnectionState.CONNECTED)
         if (!wasRunning) {
             logger.info("本地聊天运行时已启动")
@@ -102,36 +114,57 @@ class LocalTransport(
     }
 
     fun rebuildRuntime(reason: String = "runtime configuration changed") {
-        val previous = runtime
-        runtime = runtimeFactory()
-        previous.cancel()
+        val previous =
+                synchronized(runtimeLock) {
+                    val snapshot = clearRuntimeLocked()
+                    if (running) {
+                        ensureRuntimeLocked()
+                    }
+                    snapshot
+                }
+        previous.runtime?.cancel()
+        previous.job?.cancel()
         logger.info("本地聊天运行时已重建：$reason")
-        if (running) {
+        if (previous.wasRunning) {
             callbacks.onStateChanged(ConnectionState.CONNECTED)
         }
     }
 
     override fun stop(reason: String, userInitiated: Boolean) {
-        if (running) {
+        val previous =
+                synchronized(runtimeLock) {
+                    val wasRunning = running
+                    val snapshot = clearRuntimeLocked()
+                    running = false
+                    snapshot.copy(wasRunning = wasRunning)
+                }
+        previous.runtime?.cancel()
+        previous.job?.cancel()
+        if (previous.wasRunning) {
             logger.info("本地聊天运行时已停止：$reason")
         }
-        running = false
         callbacks.onStateChanged(ConnectionState.DISCONNECTED)
     }
 
     override fun send(message: MessageBase): Boolean {
-        if (!running) {
+        if (!isRunning()) {
             start()
         }
-        scope.launch {
+        val work = currentRuntimeWork()
+        work.scope.launch {
             try {
                 delay(120L)
-                runtime.handleMessage(
+                if (!isCurrentRuntimeWork(work.generation)) {
+                    return@launch
+                }
+                work.runtime.handleMessage(
                                 inbound = message,
                                 fallbackPlatform = platformProvider(),
                                 fallbackAgentName = agentNameProvider(),
                                 replySink = replySink
                         )
+            } catch (_: CancellationException) {
+                // Expected when local runtime is stopped, rebuilt, or the service is destroyed.
             } catch (e: Exception) {
                 callbacks.onError("本地运行时处理消息失败：${e.message ?: "未知错误"}", e)
             }
@@ -140,21 +173,89 @@ class LocalTransport(
     }
 
     fun submitEnvironmentTrigger(submission: EnvironmentTriggerSubmission): Boolean {
-        if (!running) {
+        if (!isRunning()) {
             start()
         }
-        scope.launch {
+        val work = currentRuntimeWork()
+        work.scope.launch {
             try {
-                runtime.submitEnvironmentTrigger(
+                if (!isCurrentRuntimeWork(work.generation)) {
+                    return@launch
+                }
+                work.runtime.submitEnvironmentTrigger(
                         submission = submission,
                         fallbackPlatform = platformProvider(),
                         fallbackAgentName = agentNameProvider(),
                         replySink = replySink
                 )
+            } catch (_: CancellationException) {
+                // Expected when local runtime is stopped, rebuilt, or the service is destroyed.
             } catch (e: Exception) {
                 callbacks.onError("本地运行时处理环境触发失败：${e.message ?: "未知错误"}", e)
             }
         }
         return true
     }
+
+    private fun currentRuntimeWork(): RuntimeWork =
+            synchronized(runtimeLock) { ensureRuntimeLocked() }
+
+    private fun isRunning(): Boolean = synchronized(runtimeLock) { running }
+
+    private fun isCurrentRuntimeWork(generation: Long): Boolean =
+            synchronized(runtimeLock) { running && runtimeGeneration == generation }
+
+    private fun ensureRuntimeLocked(): RuntimeWork {
+        val existingRuntime = runtime
+        val existingScope = runtimeScope
+        val existingJob = runtimeJob
+        if (existingRuntime != null && existingScope != null && existingJob?.isActive == true) {
+            return RuntimeWork(
+                    runtime = existingRuntime,
+                    scope = existingScope,
+                    generation = runtimeGeneration
+            )
+        }
+
+        runtimeGeneration += 1
+        val job = newRuntimeJob()
+        val childScope = CoroutineScope(scope.coroutineContext + job)
+        val newRuntime = runtimeFactory(childScope)
+        runtimeJob = job
+        runtimeScope = childScope
+        runtime = newRuntime
+        return RuntimeWork(
+                runtime = newRuntime,
+                scope = childScope,
+                generation = runtimeGeneration
+        )
+    }
+
+    private fun clearRuntimeLocked(): RuntimeSnapshot {
+        val previous =
+                RuntimeSnapshot(
+                        runtime = runtime,
+                        job = runtimeJob,
+                        wasRunning = running
+                )
+        runtime = null
+        runtimeScope = null
+        runtimeJob = null
+        runtimeGeneration += 1
+        return previous
+    }
+
+    private fun newRuntimeJob(): Job = SupervisorJob(scope.coroutineContext[Job])
+
+    private data class RuntimeWork(
+            val runtime: LocalChatRuntime,
+            val scope: CoroutineScope,
+            val generation: Long
+    )
+
+    private data class RuntimeSnapshot(
+            val runtime: LocalChatRuntime?,
+            val job: Job?,
+            val wasRunning: Boolean
+    )
 }

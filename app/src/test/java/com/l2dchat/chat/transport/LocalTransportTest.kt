@@ -11,6 +11,9 @@ import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.environment.EnvironmentTriggerSubmission
 import com.l2dchat.core.LocalChatRuntime
 import com.l2dchat.core.reply.PlannerTriggerProcessor
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -48,9 +51,9 @@ class LocalTransportTest {
                             callbacks = callbacks,
                             platformProvider = { "test_platform" },
                             agentNameProvider = { "Bot" },
-                            runtimeFactory = {
+                            runtimeFactory = { runtimeScope ->
                                 factoryCalls += 1
-                                runtimeFor(replyText)
+                                runtimeFor(replyText, runtimeScope)
                             }
                     )
 
@@ -98,7 +101,9 @@ class LocalTransportTest {
                             callbacks = callbacks,
                             platformProvider = { "test_platform" },
                             agentNameProvider = { "Bot" },
-                            runtimeFactory = { runtimeFor("environment reply") }
+                            runtimeFactory = { runtimeScope ->
+                                runtimeFor("environment reply", runtimeScope)
+                            }
                     )
 
             assertTrue(
@@ -129,8 +134,64 @@ class LocalTransportTest {
         }
     }
 
-    private fun runtimeFor(replyText: String): LocalChatRuntime =
+    @Test
+    fun `stop cancels in flight runtime work without reporting error`() {
+        val states = mutableListOf<ConnectionState>()
+        val incoming = mutableListOf<MessageBase>()
+        val errors = mutableListOf<String>()
+        val generationStarted = CompletableDeferred<Unit>()
+
+        val callbacks =
+                object : ChatTransportCallbacks {
+                    override fun onStateChanged(state: ConnectionState) {
+                        states += state
+                    }
+
+                    override fun onIncomingText(text: String) {
+                        incoming += MessageBase.fromJsonString(text)
+                    }
+
+                    override fun onError(message: String, throwable: Throwable?) {
+                        errors += message
+                    }
+                }
+
+        runBlocking {
+            val transport =
+                    LocalTransport(
+                            scope = this,
+                            callbacks = callbacks,
+                            platformProvider = { "test_platform" },
+                            agentNameProvider = { "Bot" },
+                            runtimeFactory = { runtimeScope ->
+                                LocalChatRuntime(
+                                        scope = runtimeScope,
+                                        plannerProcessorFactory = {
+                                            PlannerTriggerProcessor {
+                                                generationStarted.complete(Unit)
+                                                awaitCancellation()
+                                            }
+                                        }
+                                )
+                            }
+                    )
+
+            transport.start()
+            assertTrue(transport.send(buildMessage("slow", "message-1")))
+            withTimeout(1_000L) { generationStarted.await() }
+
+            transport.stop("service destroyed", userInitiated = false)
+            delay(50L)
+
+            assertTrue(errors.isEmpty())
+            assertTrue(incoming.isEmpty())
+            assertEquals(ConnectionState.DISCONNECTED, states.last())
+        }
+    }
+
+    private fun runtimeFor(replyText: String, scope: CoroutineScope): LocalChatRuntime =
             LocalChatRuntime(
+                    scope = scope,
                     plannerProcessorFactory = {
                         PlannerTriggerProcessor { context -> context.sendReply(replyText) }
                     }

@@ -70,9 +70,9 @@ class ChatConnectionService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         logger.info("ChatConnectionService destroyed")
+        manager.shutdown()
         serviceScope.cancel()
         clients.clear()
-        manager.disconnect()
     }
 
     private fun restoreModelName(): String? {

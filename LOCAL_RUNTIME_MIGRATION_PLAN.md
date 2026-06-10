@@ -1027,8 +1027,12 @@ Android integration:
 - [x] No API key appears in logs.
   Authorization headers are masked, connection logs only expose token presence, and
   `LocalLlmSettings.toString()` redacts `apiKey`.
-- [ ] Runtime survives service restarts where possible.
-- [ ] Long-running generation handles Android lifecycle cancellation.
+- [x] Runtime survives service restarts where possible.
+  `ChatConnectionService` is sticky, reloads persisted chat/local LLM configuration on create, and
+  starts the local runtime without requiring a server URL.
+- [x] Long-running generation handles Android lifecycle cancellation.
+  Local runtime work now runs in a per-runtime child scope; transport stop, rebuild, and service
+  shutdown cancel in-flight planner/replier work instead of leaving background jobs alive.
 
 ## Risks And Decisions
 
