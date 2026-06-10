@@ -482,6 +482,10 @@ Progress:
   HTTP provider, covering planner native tool calls, replier SSE streaming,
   tool-result round-trip messages, API-key header injection, and separate
   planner/replier model requests without requiring an external API key.
+- Done: `RealProviderRuntimeParityTest` provides an opt-in real-provider
+  runtime parity harness. It is skipped by default and runs only when
+  `MAIMCHAT_REAL_PROVIDER_PARITY=1` plus provider endpoint/model environment
+  variables are supplied.
 - Pending: manual real-provider verification.
 
 ## Phase 6: ReplierTool And ReplierTask
@@ -990,6 +994,12 @@ Progress:
   path through the real HTTP client, local planner, `replier` tool,
   streaming replier generation, and planner tool-result continuation using a
   scripted in-process provider.
+- Done: real-provider parity can now be run explicitly with:
+  `MAIMCHAT_REAL_PROVIDER_PARITY=1 MAIMCHAT_REAL_PROVIDER_BASE_URL=... MAIMCHAT_REAL_PROVIDER_PLANNER_MODEL=... MAIMCHAT_REAL_PROVIDER_API_KEY=... ./gradlew :app:testDebugUnitTest --tests com.l2dchat.core.RealProviderRuntimeParityTest --no-daemon`.
+  Set `MAIMCHAT_REAL_PROVIDER_REPLIER_MODEL` to split planner/replier models,
+  `MAIMCHAT_REAL_PROVIDER_TOOL_CHOICE=required` to force tool choice on
+  providers that support it, and `MAIMCHAT_REAL_PROVIDER_EXPECT_REPLIER=1` to
+  require a completed `replier` task.
 - Pending: manual provider parity checks with a configured real LLM endpoint.
 
 ## Implementation Order
