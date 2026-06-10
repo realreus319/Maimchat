@@ -397,6 +397,13 @@ Acceptance:
 - Duplicate foreground `replier` calls in the same turn are rejected.
 - Stale foreground tool calls cannot send.
 
+Progress:
+
+- Done: `PlannerLoopState`, `PlannerLoop`, `PlannerTurnContext`, `PlannerReplySink`, and `ReplyLayerFactory` skeletons are in place.
+- Done: `ReplyLayerFactory` creates one running loop per `(contextId, agentId)` and implements `TriggerSink`.
+- Done: `PlannerLoop` processes queued triggers by priority and timestamp, supports `MSG` interruption through foreground epoch advancement and job cancellation, rejects duplicate foreground replies, and rejects stale foreground sends.
+- Pending: planner session persistence, native tool-calling processor, decision/fork replier adoption, and concrete runtime wiring.
+
 ## Phase 5: LLM Client
 
 Goal: provide a provider-neutral LLM layer.
