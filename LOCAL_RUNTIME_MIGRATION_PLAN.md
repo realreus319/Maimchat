@@ -690,10 +690,14 @@ Progress:
 - Done: metadata-only `look_at` tool returns model, surface, last interaction,
   visual snapshot metadata, and optional recent chat bubbles without attaching
   screenshot pixels or image content blocks.
+- Done: `LocalRuntimeFactory` can build `LocalChatRuntime` with a shared
+  `ReplierTaskManager`, normal and decision registries from
+  `LocalToolRegistryFactory`, native tool-calling or JSON fallback planner
+  processors, and LLM-backed replier task generation.
 - Pending: wire real app, wallpaper, Live2D lifecycle, touch, chat bubble, and
   snapshot producers into an Android-backed provider.
-- Pending: wire `LocalToolRegistryFactory` into the local runtime construction
-  path used by UI/service mode selection.
+- Pending: wire Android UI/service provider settings and real environment/motion
+  adapters into `LocalRuntimeFactory`.
 - Pending: image/content-block capable `look_at` and environment triggers.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood
