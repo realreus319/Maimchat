@@ -834,10 +834,14 @@ Progress:
   `planner_system`, `decision_system`, `replier_system`, and `replier_user`
   prompts, and importing/exporting profile JSON through Android document
   pickers.
-- Pending: verify the role config dialog on emulator/device and wire
-  per-agent provider/model overrides into the actual planner/replier LLM
-  selection. Provider API keys already use encrypted storage through
+- Done: per-agent LLM overrides are applied to the actual local runtime config.
+  The top-level agent `model` overrides both planner and replier models;
+  `settings_json` can override `planner_model`, `replier_model`, `base_url`,
+  `temperature`, `max_tokens`, `timeout_millis`, and `native_tool_calling`.
+  Provider API keys remain in encrypted global storage through
   `LocalLlmSettingsStore`.
+- Pending: verify the role config dialog on emulator/device and add a named
+  provider registry if provider labels such as `openai` should map to base URLs.
 
 ## Phase 10: UI And Service Migration
 

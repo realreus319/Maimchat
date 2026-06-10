@@ -9,10 +9,12 @@ import com.l2dchat.chat.transport.ChatTransportCallbacks
 import com.l2dchat.chat.transport.LocalTransport
 import com.l2dchat.chat.transport.RemoteWebSocketConfig
 import com.l2dchat.chat.transport.RemoteWebSocketTransport
+import com.l2dchat.core.config.AgentLlmSettingsOverride
 import com.l2dchat.core.config.DefaultAgentProfileSeeder
 import com.l2dchat.core.config.LocalLlmSettings
 import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.environment.EnvironmentTriggerSubmission
+import com.l2dchat.core.message.AgentConfigEntity
 import com.l2dchat.core.message.RuntimeMessageMapper
 import com.l2dchat.core.message.VisibleMessageRecord
 import com.l2dchat.core.perception.PerceptionStore
@@ -52,6 +54,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class ChatWebSocketManager {
     companion object {
@@ -114,7 +117,12 @@ class ChatWebSocketManager {
                     },
                     replierPromptContextProvider = { localReplierPromptContextProviderFor() },
                     replierTaskStoreProvider = { localReplierTaskStoreFor() },
-                    localRuntimeLlmConfigProvider = { localLlmSettings.toRuntimeConfig() },
+                    localRuntimeLlmConfigProvider = {
+                        localLlmSettings.toRuntimeConfig(
+                                agentOverride =
+                                        AgentLlmSettingsOverride.fromAgentConfig(activeAgentConfig)
+                        )
+                    },
                     environmentStateProvider = environmentStateProvider,
                     motionController = localMotionController,
                     runtimeStateDaoProvider = { localRuntimeStateDaoForTools() }
@@ -136,6 +144,8 @@ class ChatWebSocketManager {
     private var appContext: Context? = null
     private var historyStore: ChatHistoryStore? = null
     private var historyLoadGeneration: Long = 0L
+    @Volatile private var activeAgentConfig: AgentConfigEntity? = null
+    private var activeAgentConfigLoadGeneration: Long = 0L
     private var receiverUserIdOverride: String? = null
     private var receiverUserNicknameOverride: String? = null
     private var idleTimerJob: Job? = null
@@ -202,6 +212,7 @@ class ChatWebSocketManager {
             activeTransport.stop("切换到本地运行时", userInitiated = true)
             activeTransport = localTransport
         }
+        refreshActiveAgentConfig(appContext, activeModelKey, rebuildRuntime = true)
         localTransport.start()
         scheduleIdleEnvironmentTimer()
     }
@@ -232,6 +243,9 @@ class ChatWebSocketManager {
     fun setActiveModel(context: Context, modelName: String?) {
         receiverModelName = modelName?.ifBlank { null }
         activeModelKey = modelName?.lowercase()?.replace(Regex("[^a-z0-9_-]+"), "_")
+        if (activeAgentConfig?.agentId != activeModelKey) {
+            activeAgentConfig = null
+        }
         val app = context.applicationContext
         appContext = app
         historyStoreFor(app)
@@ -240,6 +254,7 @@ class ChatWebSocketManager {
                 ChatEnvironmentUpdate(modelKey = activeModelKey, modelName = receiverModelName)
         )
         seedDefaultAgentProfile(app, activeModelKey)
+        refreshActiveAgentConfig(app, activeModelKey, rebuildRuntime = isLocalMode())
         activeModelKey?.let { loadHistory(app, it) }
         emitModelChangedEnvironmentTrigger()
         noteIdleActivity()
@@ -850,6 +865,46 @@ class ChatWebSocketManager {
                 )
             } catch (e: Exception) {
                 logger.error("写入默认本地角色配置失败", e)
+            }
+        }
+    }
+
+    private fun refreshActiveAgentConfig(
+            context: Context?,
+            modelKey: String?,
+            rebuildRuntime: Boolean
+    ) {
+        val agentId = historyAgentId(modelKey)
+        val app = context?.applicationContext
+        val generation = ++activeAgentConfigLoadGeneration
+        if (agentId == null || app == null) {
+            val hadConfig = activeAgentConfig != null
+            activeAgentConfig = null
+            if (hadConfig && rebuildRuntime && activeTransport.mode == RuntimeMode.LOCAL) {
+                localTransport.rebuildRuntime("角色 LLM 配置清空")
+            }
+            return
+        }
+
+        scope.launch(Dispatchers.IO) {
+            val config =
+                    try {
+                        ChatDatabase.getInstance(app).runtimeStateDao().queryAgentConfig(agentId)
+                    } catch (e: Exception) {
+                        logger.error("读取本地角色 LLM 配置失败", e)
+                        null
+                    }
+            withContext(Dispatchers.Main) {
+                if (generation != activeAgentConfigLoadGeneration || activeModelKey != agentId) {
+                    return@withContext
+                }
+                if (activeAgentConfig == config) {
+                    return@withContext
+                }
+                activeAgentConfig = config
+                if (rebuildRuntime && activeTransport.mode == RuntimeMode.LOCAL) {
+                    localTransport.rebuildRuntime("角色 LLM 配置更新")
+                }
             }
         }
     }
