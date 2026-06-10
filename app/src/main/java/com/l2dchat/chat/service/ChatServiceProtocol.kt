@@ -13,6 +13,7 @@ object ChatServiceProtocol {
     const val MSG_SET_ACTIVE_MODEL = 9
     const val MSG_CLEAR_MESSAGES_EPHEMERAL = 10
     const val MSG_START_LOCAL_RUNTIME = 11
+    const val MSG_UPDATE_ENVIRONMENT_STATE = 12
 
     // Service -> Client events
     const val MSG_EVENT_CONNECTION_STATE = 101
@@ -39,6 +40,15 @@ object ChatServiceProtocol {
     const val EXTRA_LOCAL_LLM_TEMPERATURE = "extra_local_llm_temperature"
     const val EXTRA_LOCAL_LLM_MAX_TOKENS = "extra_local_llm_max_tokens"
     const val EXTRA_LOCAL_LLM_TIMEOUT_MILLIS = "extra_local_llm_timeout_millis"
+    const val EXTRA_ENV_MODEL_KEY = "extra_env_model_key"
+    const val EXTRA_ENV_MODEL_NAME = "extra_env_model_name"
+    const val EXTRA_ENV_MODEL_FOLDER_PATH = "extra_env_model_folder_path"
+    const val EXTRA_ENV_MODEL_FILE = "extra_env_model_file"
+    const val EXTRA_ENV_MODEL_LIFECYCLE_STATE = "extra_env_model_lifecycle_state"
+    const val EXTRA_ENV_MOTION_FILES = "extra_env_motion_files"
+    const val EXTRA_ENV_APP_VISIBLE = "extra_env_app_visible"
+    const val EXTRA_ENV_WALLPAPER_VISIBLE = "extra_env_wallpaper_visible"
+    const val EXTRA_ENV_BACKGROUND_PATH = "extra_env_background_path"
 
     // Event extras
     const val EXTRA_CONNECTION_STATE = "extra_connection_state"

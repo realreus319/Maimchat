@@ -271,6 +271,49 @@ class ChatServiceClient(context: Context) : ServiceConnection {
         }
     }
 
+    fun updateEnvironmentState(
+            modelKey: String? = null,
+            modelName: String? = null,
+            modelFolderPath: String? = null,
+            modelFile: String? = null,
+            lifecycleState: String? = null,
+            motionFiles: List<String> = emptyList(),
+            appVisible: Boolean? = null,
+            wallpaperVisible: Boolean? = null,
+            backgroundPath: String? = null
+    ) {
+        sendCommand(
+                ChatServiceProtocol.MSG_UPDATE_ENVIRONMENT_STATE,
+                Bundle().apply {
+                    putString(ChatServiceProtocol.EXTRA_ENV_MODEL_KEY, modelKey.orEmpty())
+                    putString(ChatServiceProtocol.EXTRA_ENV_MODEL_NAME, modelName.orEmpty())
+                    putString(
+                            ChatServiceProtocol.EXTRA_ENV_MODEL_FOLDER_PATH,
+                            modelFolderPath.orEmpty()
+                    )
+                    putString(ChatServiceProtocol.EXTRA_ENV_MODEL_FILE, modelFile.orEmpty())
+                    putString(
+                            ChatServiceProtocol.EXTRA_ENV_MODEL_LIFECYCLE_STATE,
+                            lifecycleState.orEmpty()
+                    )
+                    putStringArrayList(
+                            ChatServiceProtocol.EXTRA_ENV_MOTION_FILES,
+                            ArrayList(motionFiles)
+                    )
+                    appVisible?.let {
+                        putBoolean(ChatServiceProtocol.EXTRA_ENV_APP_VISIBLE, it)
+                    }
+                    wallpaperVisible?.let {
+                        putBoolean(ChatServiceProtocol.EXTRA_ENV_WALLPAPER_VISIBLE, it)
+                    }
+                    putString(
+                            ChatServiceProtocol.EXTRA_ENV_BACKGROUND_PATH,
+                            backgroundPath.orEmpty()
+                    )
+                }
+        )
+    }
+
     fun setActiveModel(modelName: String?) {
         val trimmed = modelName?.trim().takeUnless { it.isNullOrEmpty() }
         _activeModel.value = trimmed
@@ -518,6 +561,8 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                 ChatServiceProtocol.MSG_CLEAR_MESSAGES -> "MSG_CLEAR_MESSAGES"
                 ChatServiceProtocol.MSG_CLEAR_MESSAGES_EPHEMERAL -> "MSG_CLEAR_MESSAGES_EPHEMERAL"
                 ChatServiceProtocol.MSG_START_LOCAL_RUNTIME -> "MSG_START_LOCAL_RUNTIME"
+                ChatServiceProtocol.MSG_UPDATE_ENVIRONMENT_STATE ->
+                        "MSG_UPDATE_ENVIRONMENT_STATE"
                 ChatServiceProtocol.MSG_EVENT_CONNECTION_STATE -> "MSG_EVENT_CONNECTION_STATE"
                 ChatServiceProtocol.MSG_EVENT_NEW_MESSAGE -> "MSG_EVENT_NEW_MESSAGE"
                 ChatServiceProtocol.MSG_EVENT_SNAPSHOT -> "MSG_EVENT_SNAPSHOT"

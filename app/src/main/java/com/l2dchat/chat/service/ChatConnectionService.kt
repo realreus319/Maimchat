@@ -11,6 +11,7 @@ import android.os.Message
 import android.os.Messenger
 import android.os.Process
 import android.os.RemoteException
+import com.l2dchat.chat.ChatEnvironmentUpdate
 import com.l2dchat.chat.ChatWebSocketManager
 import com.l2dchat.chat.ChatWebSocketManager.ChatMessage
 import com.l2dchat.chat.ChatWebSocketManager.ConnectionState
@@ -339,6 +340,64 @@ class ChatConnectionService : Service() {
         sendSnapshot()
     }
 
+    private fun handleEnvironmentStateUpdate(data: Bundle) {
+        manager.updateEnvironmentState(
+                ChatEnvironmentUpdate(
+                        modelKey =
+                                data.optionalString(ChatServiceProtocol.EXTRA_ENV_MODEL_KEY),
+                        modelName =
+                                data.optionalString(ChatServiceProtocol.EXTRA_ENV_MODEL_NAME),
+                        modelFolderPath =
+                                data.optionalString(
+                                        ChatServiceProtocol.EXTRA_ENV_MODEL_FOLDER_PATH
+                                ),
+                        modelFile =
+                                data.optionalString(ChatServiceProtocol.EXTRA_ENV_MODEL_FILE),
+                        lifecycleState =
+                                data.optionalString(
+                                        ChatServiceProtocol.EXTRA_ENV_MODEL_LIFECYCLE_STATE
+                                ),
+                        motionFiles =
+                                if (data.containsKey(ChatServiceProtocol.EXTRA_ENV_MOTION_FILES)) {
+                                    data.getStringArrayList(
+                                                    ChatServiceProtocol.EXTRA_ENV_MOTION_FILES
+                                            )
+                                            ?: emptyList()
+                                } else {
+                                    null
+                                },
+                        appVisible =
+                                if (data.containsKey(ChatServiceProtocol.EXTRA_ENV_APP_VISIBLE)) {
+                                    data.getBoolean(ChatServiceProtocol.EXTRA_ENV_APP_VISIBLE)
+                                } else {
+                                    null
+                                },
+                        hasAppVisible =
+                                data.containsKey(ChatServiceProtocol.EXTRA_ENV_APP_VISIBLE),
+                        wallpaperVisible =
+                                if (
+                                        data.containsKey(
+                                                ChatServiceProtocol.EXTRA_ENV_WALLPAPER_VISIBLE
+                                        )
+                                ) {
+                                    data.getBoolean(
+                                            ChatServiceProtocol.EXTRA_ENV_WALLPAPER_VISIBLE
+                                    )
+                                } else {
+                                    null
+                                },
+                        hasWallpaperVisible =
+                                data.containsKey(ChatServiceProtocol.EXTRA_ENV_WALLPAPER_VISIBLE),
+                        backgroundPath =
+                                data.optionalString(
+                                        ChatServiceProtocol.EXTRA_ENV_BACKGROUND_PATH
+                                ),
+                        hasBackgroundPath =
+                                data.containsKey(ChatServiceProtocol.EXTRA_ENV_BACKGROUND_PATH)
+                )
+        )
+    }
+
     private fun persistConnectionConfig() {
         val editor = getSharedPreferences(CHAT_PREFS, MODE_PRIVATE).edit()
         if (lastKnownUrl != null) editor.putString(KEY_LAST_URL, lastKnownUrl)
@@ -538,6 +597,8 @@ class ChatConnectionService : Service() {
                 ChatServiceProtocol.MSG_CLEAR_MESSAGES_EPHEMERAL ->
                         service.handleClearMessages(false)
                 ChatServiceProtocol.MSG_SET_ACTIVE_MODEL -> service.handleSetActiveModel(msg.data)
+                ChatServiceProtocol.MSG_UPDATE_ENVIRONMENT_STATE ->
+                        service.handleEnvironmentStateUpdate(msg.data)
                 else -> super.handleMessage(msg)
             }
         }
@@ -562,3 +623,6 @@ class ChatConnectionService : Service() {
         private const val KEY_LOCAL_LLM_TIMEOUT_MILLIS = "local_llm_timeout_millis"
     }
 }
+
+private fun Bundle.optionalString(key: String): String? =
+        getString(key)?.trim()?.takeIf { it.isNotEmpty() }

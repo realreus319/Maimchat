@@ -143,6 +143,7 @@ fun ChatWithModelScreen(
     var isResetting by remember(modelKey) { mutableStateOf(false) }
     var lifecycleManager by
             remember(modelKey) { mutableStateOf<Live2DModelLifecycleManager?>(null) }
+    var lifecycleStateName by remember(modelKey) { mutableStateOf<String?>(null) }
     var resetCounter by remember(modelKey) { mutableStateOf(0) }
 
     val cropLauncher =
@@ -260,6 +261,20 @@ fun ChatWithModelScreen(
         lifecycleManager?.updateBackgroundTexture(wallpaperBgPath.takeIf { it.isNotBlank() })
     }
 
+    LaunchedEffect(currentModel, lifecycleStateName, wallpaperBgPath) {
+        val model = currentModel
+        chatManager.updateEnvironmentState(
+                modelKey = model?.folderPath,
+                modelName = model?.name,
+                modelFolderPath = model?.folderPath,
+                modelFile = model?.modelFile,
+                lifecycleState = lifecycleStateName,
+                motionFiles = model?.motionFiles.orEmpty(),
+                appVisible = true,
+                backgroundPath = wallpaperBgPath.takeIf { it.isNotBlank() }
+        )
+    }
+
     DisposableEffect(Unit) { onDispose { backgroundBitmap?.takeIf { !it.isRecycled }?.recycle() } }
 
     LaunchedEffect(currentModel) {
@@ -312,6 +327,7 @@ fun ChatWithModelScreen(
             try {
                 lifecycleManager?.destroy()
                 lifecycleManager = null
+                lifecycleStateName = null
                 resetCubismFramework()
                 delay(200)
                 val newManager = Live2DModelLifecycleManager.create(context, currentModel!!)
@@ -320,12 +336,19 @@ fun ChatWithModelScreen(
                             override fun onStateChanged(
                                     newState: Live2DModelLifecycleManager.LifecycleState,
                                     message: String?
-                            ) {}
-                            override fun onError(error: String, exception: Throwable?) {}
+                            ) {
+                                scope.launch { lifecycleStateName = newState.name }
+                            }
+                            override fun onError(error: String, exception: Throwable?) {
+                                scope.launch {
+                                    lifecycleStateName = newManager.getCurrentState().name
+                                }
+                            }
                         }
                 )
                 if (newManager.initialize()) {
                     lifecycleManager = newManager
+                    lifecycleStateName = newManager.getCurrentState().name
                     chatManager.setMotionCommandCallback { command ->
                         newManager.playMotionCommand(command)
                     }

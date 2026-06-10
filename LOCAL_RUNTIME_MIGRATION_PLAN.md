@@ -705,8 +705,14 @@ Progress:
   motion standard messages, `ChatServiceClient` dispatches those messages to the
   Live2D playback callback, and `ChatWithModelScreen` can play either
   group/index or file-path motion commands.
-- Pending: wire real app, wallpaper, Live2D lifecycle, touch, chat bubble, and
-  snapshot producers into an Android-backed provider.
+- Done: `ChatEnvironmentStateProvider` is wired through
+  `ChatWebSocketManager`, `ChatConnectionService`, `ChatServiceClient`, and
+  `ChatWithModelScreen`, so `get_world_state` and metadata-only `look_at` can
+  read selected model metadata, Live2D lifecycle state, motion file lists,
+  app/background surface state, and recent chat bubbles from Android runtime
+  state.
+- Pending: wire touch interaction, wallpaper visibility, and snapshot producers
+  into the Android-backed provider.
 - Pending: image/content-block capable `look_at` and environment triggers.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood

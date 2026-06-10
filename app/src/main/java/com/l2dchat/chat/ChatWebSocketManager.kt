@@ -56,6 +56,7 @@ class ChatWebSocketManager {
                     onBufferOverflow = BufferOverflow.DROP_OLDEST
             )
     val errors: SharedFlow<String> = _errors.asSharedFlow()
+    private val environmentStateProvider = ChatEnvironmentStateProvider()
     private val localMotionController =
             ChatMotionController { command -> emitMotionMessage(command) }
     private val transportCallbacks =
@@ -81,6 +82,7 @@ class ChatWebSocketManager {
                     perceptionStoreFactory = { localPerceptionStoreFor() },
                     plannerSessionStoreFactory = { localPlannerSessionStoreFor() },
                     localRuntimeLlmConfigProvider = { localLlmSettings.toRuntimeConfig() },
+                    environmentStateProvider = environmentStateProvider,
                     motionController = localMotionController
             )
     private val remoteTransport =
@@ -190,10 +192,17 @@ class ChatWebSocketManager {
     fun setActiveModel(context: Context, modelName: String?) {
         receiverModelName = modelName?.ifBlank { null }
         activeModelKey = modelName?.lowercase()?.replace(Regex("[^a-z0-9_-]+"), "_")
+        environmentStateProvider.update(
+                ChatEnvironmentUpdate(modelKey = activeModelKey, modelName = receiverModelName)
+        )
         val app = context.applicationContext
         appContext = app
         historyStoreFor(app)
         activeModelKey?.let { loadHistory(app, it) }
+    }
+
+    fun updateEnvironmentState(update: ChatEnvironmentUpdate) {
+        environmentStateProvider.update(update)
     }
     fun setReceiverInfo(userId: String?, userNickname: String?) {
         receiverUserIdOverride = userId?.ifBlank { null }
@@ -357,6 +366,7 @@ class ChatWebSocketManager {
         if (list.any { it.id == message.id }) return
         list.add(message)
         _messages.value = list
+        syncEnvironmentRecentMessages()
         appendVisibleHistory(message)
         val key = activeModelKey
         val ctx = appContext
@@ -433,6 +443,7 @@ class ChatWebSocketManager {
     fun clearMessages() {
         _messages.value = emptyList()
         _standardMessages.value = emptyList()
+        environmentStateProvider.clearRecentMessages()
         lastServerMessageTime = 0L
         val key = activeModelKey
         val ctx = appContext
@@ -444,6 +455,7 @@ class ChatWebSocketManager {
     fun clearMessagesEphemeral() {
         _messages.value = emptyList()
         _standardMessages.value = emptyList()
+        environmentStateProvider.clearRecentMessages()
         lastServerMessageTime = 0L
     }
     fun loadHistory(context: Context, modelKey: String) {
@@ -531,6 +543,7 @@ class ChatWebSocketManager {
     ) {
         _messages.value = visibleMessages
         _standardMessages.value = standardMessages
+        syncEnvironmentRecentMessages()
         synchronizeCachedMessagePlatforms(this.platform)
         lastServerMessageTime =
                 _standardMessages.value
@@ -725,6 +738,18 @@ class ChatWebSocketManager {
                                 null
                             }
             )
+
+    private fun syncEnvironmentRecentMessages() {
+        environmentStateProvider.updateRecentMessages(
+                _messages.value.map { message ->
+                    ChatEnvironmentMessage(
+                            text = message.content,
+                            fromUser = message.isFromUser,
+                            timestampMillis = message.timestamp
+                    )
+                }
+        )
+    }
 
     private fun MessageBase.historyIdentity(): String =
             messageInfo.messageId?.takeIf { it.isNotBlank() }
