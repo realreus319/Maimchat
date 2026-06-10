@@ -23,6 +23,47 @@ import org.junit.Test
 
 class LocalTransportTest {
     @Test
+    fun `send starts runtime without explicit start`() {
+        val states = mutableListOf<ConnectionState>()
+        val incoming = mutableListOf<MessageBase>()
+
+        val callbacks =
+                object : ChatTransportCallbacks {
+                    override fun onStateChanged(state: ConnectionState) {
+                        states += state
+                    }
+
+                    override fun onIncomingText(text: String) {
+                        incoming += MessageBase.fromJsonString(text)
+                    }
+
+                    override fun onError(message: String, throwable: Throwable?) {
+                        throw AssertionError(message, throwable)
+                    }
+                }
+
+        runBlocking {
+            val transport =
+                    LocalTransport(
+                            scope = this,
+                            callbacks = callbacks,
+                            platformProvider = { "test_platform" },
+                            agentNameProvider = { "Bot" },
+                            runtimeFactory = { runtimeScope ->
+                                runtimeFor("local reply", runtimeScope)
+                            }
+                    )
+
+            assertTrue(transport.send(buildMessage("hello", "message-1")))
+            withTimeout(1_000L) { incoming.awaitSize(1) }
+
+            assertEquals(listOf(ConnectionState.CONNECTING, ConnectionState.CONNECTED), states)
+            assertEquals("local reply", incoming.single().rawMessage)
+            transport.stop("done")
+        }
+    }
+
+    @Test
     fun `rebuildRuntime swaps the runtime used for later sends`() {
         val states = mutableListOf<ConnectionState>()
         val incoming = mutableListOf<MessageBase>()

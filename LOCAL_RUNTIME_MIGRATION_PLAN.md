@@ -958,6 +958,10 @@ Progress:
 - Done: headless `pixel_6_api_34` emulator booted with `sg kvm`; debug APK
   installed and launched; `:app:connectedDebugAndroidTest` passed
   `MainActivitySmokeTest` on-device.
+- Done: `MainActivitySmokeTest` now asserts the empty Live2D-model startup state
+  and model selection entry are visible on a fresh emulator.
+- Done: `LocalTransportTest` covers sending a user message without explicitly
+  starting the local transport, locking the no-WebSocket lazy-start path.
 - Pending: manual chat/provider parity checks with an actual Live2D model and
   configured LLM endpoint.
 
