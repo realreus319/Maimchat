@@ -48,6 +48,7 @@ class LocalChatRuntimeTest {
             assertEquals("user-id", reply.messageInfo.receiverInfo?.userInfo?.userId)
             assertEquals("chat", reply.messageInfo.additionalConfig?.get("message_type"))
             assertEquals("local", reply.messageInfo.additionalConfig?.get("runtime"))
+            assertEquals("local_reply", reply.messageInfo.additionalConfig?.get("migration_phase"))
             assertTrue(reply.rawMessage.orEmpty().contains("你好"))
             runtime.stopAndDrain()
         }

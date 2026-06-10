@@ -994,13 +994,17 @@ Decision mode:
 
 Reply delivery:
 
-- [ ] `ReplySink` creates assistant `MessageBase`.
-- [ ] Assistant message is added to `standardMessages`.
-- [ ] Assistant visible message is added to `messages`.
-- [ ] UI receives update.
-- [ ] Wallpaper receives update.
-- [ ] Widget receives update if active.
-- [ ] History persists.
+- Done: `LocalTransport` routes `ReplySink` output back through
+  `ChatWebSocketManager.handleIncomingMessage()`, so local replies reuse the
+  same standard-message, visible-message, service broadcast, wallpaper/widget,
+  and Room history path as remote replies.
+- [x] `ReplySink` creates assistant `MessageBase`.
+- [x] Assistant message is added to `standardMessages`.
+- [x] Assistant visible message is added to `messages`.
+- [x] UI receives update.
+- [x] Wallpaper receives update.
+- [x] Widget receives update if active.
+- [x] History persists.
 
 Tools:
 
@@ -1015,8 +1019,8 @@ Tools:
 
 Android integration:
 
-- [ ] Local mode starts without server URL.
-- [ ] Remote WebSocket mode still works.
+- [x] Local mode starts without server URL.
+- [x] Remote WebSocket mode still works.
 - [ ] API key is stored securely.
 - [ ] No API key appears in logs.
 - [ ] Runtime survives service restarts where possible.

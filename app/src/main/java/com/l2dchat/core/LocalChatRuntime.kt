@@ -382,7 +382,7 @@ class LocalChatRuntime(
                                 mapOf(
                                         "message_type" to "chat",
                                         "runtime" to "local",
-                                        "migration_phase" to "fixed_reply"
+                                        "migration_phase" to "local_reply"
                                 )
                 )
         return MessageBase(messageInfo, Seg("text", replyText), replyText)
