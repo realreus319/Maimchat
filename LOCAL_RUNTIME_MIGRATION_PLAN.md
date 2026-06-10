@@ -448,6 +448,15 @@ Acceptance:
 - Planner and replier can use different models/configs.
 - Cancellation works when a new message interrupts generation.
 
+Progress:
+
+- Done: provider-neutral `core.llm` message, content part, tool definition, tool call,
+  response, stream event, generation config, and client contracts are in place.
+- Done: fake-client contract tests cover assistant tool calls, tool result messages,
+  streaming completion events, and tool executor wiring shape.
+- Pending: `OpenAiCompatibleClient`, encrypted provider settings, and planner/replier
+  model config selection.
+
 ## Phase 6: ReplierTool And ReplierTask
 
 Goal: port the actual reply-generation behavior.
