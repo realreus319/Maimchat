@@ -282,7 +282,8 @@ Progress:
 - Done: compatibility mirror from Room-backed flow state back to existing visible/standard message APIs.
 - Done: scoped history clearing by model context and optional agent id.
 - Done: planner round/session messages and replier tool task snapshots persist into Room.
-- Pending: memory tables and higher-level `ChatContext` query API.
+- Done: memory/impression/mood tables plus a higher-level `ChatContext` query
+  facade expose Room-backed history and runtime state.
 
 ## Phase 3: Inbound And Perception
 
@@ -345,7 +346,8 @@ Progress:
 - Done: `LocalChatRuntime.handleMessage()` now routes perception triggers into `ReplyLayerFactory` and `PlannerLoop`.
 - Done: live local runtime can inject `RoomPerceptionStore`, so parsed standard messages and media blocks are persisted before trigger submission.
 - Done: planner round/session messages and replier tool task snapshots persist into Room.
-- Pending: memory tables and higher-level `ChatContext` query API.
+- Done: `ChatContext` exposes Room-backed conversation history, memories,
+  impressions, prompt templates, agent config, and mood state for prompt builders.
 
 ## Phase 4: PlannerLoop Core
 

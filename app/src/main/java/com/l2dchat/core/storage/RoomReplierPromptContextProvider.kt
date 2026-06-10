@@ -1,8 +1,7 @@
 package com.l2dchat.core.storage
 
-import com.l2dchat.chat.MessageBase
-import com.l2dchat.chat.Seg
-import com.l2dchat.chat.UserInfo
+import com.l2dchat.core.context.ChatContext
+import com.l2dchat.core.context.ChatContextMessage
 import com.l2dchat.core.message.AgentConfigEntity
 import com.l2dchat.core.message.MoodStateEntity
 import com.l2dchat.core.tools.ReplierPromptContext
@@ -24,36 +23,35 @@ class RoomReplierPromptContextProvider(
     override suspend fun contextFor(request: ReplierTaskRequest): ReplierPromptContext {
         val routingKey = request.routingKey
         val agentId = routingKey.agentId
-        val contextId = routingKey.contextId
-        val agentConfig = stateDao.queryAgentConfig(agentId)
-        val systemTemplate = stateDao.queryPromptTemplate(REPLIER_SYSTEM_TEMPLATE, agentId)
-        val userTemplate = stateDao.queryPromptTemplate(REPLIER_USER_TEMPLATE, agentId)
+        val chatContext = ChatContext(routingKey, historyStore, stateDao)
+        val agentConfig = chatContext.getAgentConfig()
+        val systemTemplate = chatContext.getPromptTemplate(REPLIER_SYSTEM_TEMPLATE)
+        val userTemplate = chatContext.getPromptTemplate(REPLIER_USER_TEMPLATE)
         val subjectId = subjectIdFor(request)
 
         val historyMessages =
-                queryHistory(request)
-                        .asReversed()
-                        .filterNot { it.messageInfo.messageId == request.trigger.messageId }
+                chatContext
+                        .getConversationHistoryForTrigger(
+                                triggerMessageId = request.trigger.messageId,
+                                limit = historyLimit
+                        )
+                        .filterNot { it.messageId == request.trigger.messageId }
                         .mapNotNull { it.toPromptHistoryMessage(agentId, agentConfig) }
         val memoryText =
-                stateDao.queryMemories(contextId = contextId, agentId = agentId, limit = memoryLimit)
+                chatContext
+                        .getMemories(limit = memoryLimit)
                         .mapNotNull { it.content.trim().takeIf { content -> content.isNotBlank() } }
                         .joinToString("\n") { "- $it" }
                         .takeIf { it.isNotBlank() }
         val impressionText =
                 subjectId?.let {
-                    stateDao.queryImpression(
-                                    contextId = contextId,
-                                    agentId = agentId,
-                                    subjectId = it
-                            )
+                    chatContext
+                            .getImpression(it)
                             ?.content
                             ?.trim()
                             ?.takeIf { content -> content.isNotBlank() }
                 }
-        val moodText =
-                stateDao.queryMoodState(contextId = contextId, agentId = agentId)
-                        ?.toPromptText()
+        val moodText = chatContext.getMoodState()?.toPromptText()
 
         return ReplierPromptContext(
                 systemPrompt = systemTemplate?.body?.trim()?.takeIf { it.isNotBlank() },
@@ -68,64 +66,24 @@ class RoomReplierPromptContextProvider(
         )
     }
 
-    private suspend fun queryHistory(request: ReplierTaskRequest): List<MessageBase> {
-        val contextId = request.routingKey.contextId
-        val agentId = request.routingKey.agentId
-        val byAnchor =
-                historyStore.queryStandardHistoryUntilMessage(
-                        contextId = contextId,
-                        agentId = agentId,
-                        messageId = request.trigger.messageId,
-                        limit = historyLimit
-                )
-        return byAnchor.ifEmpty {
-            historyStore.queryRecentStandardMessages(
-                    contextId = contextId,
-                    agentId = agentId,
-                    limit = historyLimit
-            )
-        }
-    }
-
-    private fun MessageBase.toPromptHistoryMessage(
+    private fun ChatContextMessage.toPromptHistoryMessage(
             agentId: String,
             agentConfig: AgentConfigEntity?
     ): ReplierPromptHistoryMessage? {
-        val text = promptText().takeIf { it.isNotBlank() } ?: return null
-        val sender = messageInfo.senderInfo?.userInfo
-        val assistant = sender?.userId?.takeIf { it.isNotBlank() } == agentId
+        val text = text.takeIf { it.isNotBlank() } ?: return null
+        val assistant = isAssistant || senderUserId == agentId
         return ReplierPromptHistoryMessage(
                 text = text,
                 senderName =
                         if (assistant) {
-                            sender.displayName()
+                            senderDisplayName
                                     ?: agentConfig?.displayName?.trim()?.takeIf { it.isNotBlank() }
                         } else {
-                            sender.displayName()
+                            senderDisplayName
                         },
                 isAssistant = assistant
         )
     }
-
-    private fun MessageBase.promptText(): String =
-            rawMessage?.trim()?.takeIf { it.isNotBlank() }
-                    ?: messageSegment.flattenText().trim()
-
-    private fun Seg.flattenText(): String =
-            when (type) {
-                "seglist" -> {
-                    @Suppress("UNCHECKED_CAST")
-                    val segments = data as? List<Seg> ?: return ""
-                    segments.joinToString("\n") { it.flattenText() }
-                }
-                "text" -> data.toString()
-                else -> data.toString()
-            }
-
-    private fun UserInfo?.displayName(): String? =
-            this?.userCardname?.trim()?.takeIf { it.isNotBlank() }
-                    ?: this?.userNickname?.trim()?.takeIf { it.isNotBlank() }
-                    ?: this?.userId?.trim()?.takeIf { it.isNotBlank() }
 
     private fun AgentConfigEntity?.toPersonaPrompt(): String? {
         if (this == null) return null
