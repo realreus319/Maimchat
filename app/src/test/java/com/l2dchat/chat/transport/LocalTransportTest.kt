@@ -69,7 +69,157 @@ class LocalTransportTest {
 
             assertEquals(listOf("first runtime", "second runtime"), incoming.map { it.rawMessage })
             assertEquals(2, factoryCalls)
-            assertEquals(ConnectionState.CONNECTED, states.last())
+            assertEquals(
+                    listOf(
+                            ConnectionState.CONNECTING,
+                            ConnectionState.CONNECTED,
+                            ConnectionState.CONNECTING,
+                            ConnectionState.CONNECTED
+                    ),
+                    states
+            )
+            transport.stop("done")
+        }
+    }
+
+    @Test
+    fun `start reports error when runtime factory fails`() {
+        val states = mutableListOf<ConnectionState>()
+        val errors = mutableListOf<String>()
+
+        val callbacks =
+                object : ChatTransportCallbacks {
+                    override fun onStateChanged(state: ConnectionState) {
+                        states += state
+                    }
+
+                    override fun onIncomingText(text: String) {
+                        throw AssertionError("unexpected incoming text: $text")
+                    }
+
+                    override fun onError(message: String, throwable: Throwable?) {
+                        errors += message
+                    }
+                }
+
+        runBlocking {
+            val transport =
+                    LocalTransport(
+                            scope = this,
+                            callbacks = callbacks,
+                            platformProvider = { "test_platform" },
+                            agentNameProvider = { "Bot" },
+                            runtimeFactory = { throw IllegalStateException("factory boom") }
+                    )
+
+            transport.start()
+
+            assertEquals(listOf(ConnectionState.CONNECTING, ConnectionState.ERROR), states)
+            assertEquals(listOf("本地运行时启动失败：factory boom"), errors)
+        }
+    }
+
+    @Test
+    fun `rebuildRuntime reports error when replacement runtime fails`() {
+        val states = mutableListOf<ConnectionState>()
+        val errors = mutableListOf<String>()
+        var factoryCalls = 0
+
+        val callbacks =
+                object : ChatTransportCallbacks {
+                    override fun onStateChanged(state: ConnectionState) {
+                        states += state
+                    }
+
+                    override fun onIncomingText(text: String) {
+                        throw AssertionError("unexpected incoming text: $text")
+                    }
+
+                    override fun onError(message: String, throwable: Throwable?) {
+                        errors += message
+                    }
+                }
+
+        runBlocking {
+            val transport =
+                    LocalTransport(
+                            scope = this,
+                            callbacks = callbacks,
+                            platformProvider = { "test_platform" },
+                            agentNameProvider = { "Bot" },
+                            runtimeFactory = { runtimeScope ->
+                                factoryCalls += 1
+                                if (factoryCalls == 2) {
+                                    throw IllegalStateException("rebuild boom")
+                                }
+                                runtimeFor("first runtime", runtimeScope)
+                            }
+                    )
+
+            transport.start()
+            transport.rebuildRuntime("test failure")
+
+            assertEquals(2, factoryCalls)
+            assertEquals(
+                    listOf(
+                            ConnectionState.CONNECTING,
+                            ConnectionState.CONNECTED,
+                            ConnectionState.CONNECTING,
+                            ConnectionState.ERROR
+                    ),
+                    states
+            )
+            assertEquals(listOf("本地运行时重建失败：rebuild boom"), errors)
+        }
+    }
+
+    @Test
+    fun `send reports error when runtime processing fails`() {
+        val states = mutableListOf<ConnectionState>()
+        val incoming = mutableListOf<MessageBase>()
+        val errors = mutableListOf<String>()
+
+        val callbacks =
+                object : ChatTransportCallbacks {
+                    override fun onStateChanged(state: ConnectionState) {
+                        states += state
+                    }
+
+                    override fun onIncomingText(text: String) {
+                        incoming += MessageBase.fromJsonString(text)
+                    }
+
+                    override fun onError(message: String, throwable: Throwable?) {
+                        errors += message
+                    }
+                }
+
+        runBlocking {
+            val transport =
+                    LocalTransport(
+                            scope = this,
+                            callbacks = callbacks,
+                            platformProvider = { "test_platform" },
+                            agentNameProvider = { "Bot" },
+                            runtimeFactory = { runtimeScope ->
+                                LocalChatRuntime(
+                                        scope = runtimeScope,
+                                        plannerProcessorFactory = {
+                                            PlannerTriggerProcessor {
+                                                throw IllegalStateException("planner boom")
+                                            }
+                                        }
+                                )
+                            }
+                    )
+
+            transport.start()
+            assertTrue(transport.send(buildMessage("hello", "message-1")))
+            withTimeout(1_000L) { errors.awaitSize(1) }
+
+            assertTrue(incoming.isEmpty())
+            assertEquals(ConnectionState.ERROR, states.last())
+            assertEquals(listOf("本地运行时处理消息失败：planner boom"), errors)
             transport.stop("done")
         }
     }

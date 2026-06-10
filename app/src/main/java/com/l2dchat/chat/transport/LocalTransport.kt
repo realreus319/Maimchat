@@ -136,14 +136,12 @@ class LocalTransport(
         }
         var previous: RuntimeSnapshot? = null
         try {
-            previous =
-                    synchronized(runtimeLock) {
-                        val snapshot = clearRuntimeLocked()
-                        if (running) {
-                            ensureRuntimeLocked()
-                        }
-                        snapshot
-                    }
+            synchronized(runtimeLock) {
+                previous = clearRuntimeLocked()
+                if (running) {
+                    ensureRuntimeLocked()
+                }
+            }
         } catch (e: Exception) {
             previous?.runtime?.cancel()
             previous?.job?.cancel()
@@ -252,7 +250,13 @@ class LocalTransport(
         runtimeGeneration += 1
         val job = newRuntimeJob()
         val childScope = CoroutineScope(scope.coroutineContext + job)
-        val newRuntime = runtimeFactory(childScope)
+        val newRuntime =
+                try {
+                    runtimeFactory(childScope)
+                } catch (throwable: Throwable) {
+                    job.cancel()
+                    throw throwable
+                }
         runtimeJob = job
         runtimeScope = childScope
         runtime = newRuntime
