@@ -527,9 +527,12 @@ Progress:
 - Done: `ReplierTask` and `ReplierTaskManager` cover `PENDING`, `GENERATING`,
   `BACKGROUND`, `COMPLETED`, `CANCELLED`, and `FAILED` lifecycle states,
   streaming preview updates, wait, cancel, and background transitions.
-- Pending: wiring `ReplierTool` to task-backed LLM generation, interruption-driven
-  backgrounding, and full replier prompt builder with
-  persona/history/mood/impression/live image context.
+- Done: `ReplierTool` can optionally create a `ReplierTask`, wait for completion,
+  return the generated task reply text to the planner, and convert task failures
+  into LLM tool error results.
+- Pending: LLM-backed replier generator, interruption-driven backgrounding, and
+  full replier prompt builder with persona/history/mood/impression/live image
+  context.
 
 ## Phase 7: Decision Tools And Tool Registry
 

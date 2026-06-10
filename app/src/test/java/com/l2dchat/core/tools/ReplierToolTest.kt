@@ -6,6 +6,7 @@ import com.l2dchat.core.llm.LlmToolCall
 import com.l2dchat.core.trigger.Trigger
 import com.l2dchat.core.trigger.TriggerPriority
 import com.l2dchat.core.trigger.TriggerType
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -87,6 +88,85 @@ class ReplierToolTest {
         assertTrue(execution.result.isError)
         assertEquals(null, execution.result.replyText)
         assertEquals("replier.content must not be blank", execution.toLlmToolResult().content)
+    }
+
+    @Test
+    fun `replier can return task generated reply text`() {
+        val taskManager =
+                ReplierTaskManager(
+                        scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()),
+                        generator =
+                                ReplierTaskGenerator {
+                                    flow { emit(ReplierTaskUpdate.Completed("generated reply")) }
+                                }
+                )
+        val registry =
+                ToolRegistry(
+                        listOf(
+                                ReplierTool(
+                                        taskManager = taskManager,
+                                        taskIdFactory = { "task-1" }
+                                )
+                        )
+                )
+
+        val execution =
+                runBlocking {
+                    registry.execute(
+                            context,
+                            LlmToolCall(
+                                    id = "call-1",
+                                    name = ReplierTool.NAME,
+                                    argumentsJson = """{"content":"seed reply"}"""
+                            )
+                    )
+                }
+
+        assertFalse(execution.result.isError)
+        assertEquals("generated reply", execution.result.replyText)
+        val content = JsonParser.parseString(execution.toLlmToolResult().content).asJsonObject
+        assertEquals("task-1", content["taskId"].asString)
+        assertEquals("COMPLETED", content["state"].asString)
+        assertEquals("generated reply", content["replyText"].asString)
+    }
+
+    @Test
+    fun `replier returns tool error when task generation fails`() {
+        val taskManager =
+                ReplierTaskManager(
+                        scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()),
+                        generator =
+                                ReplierTaskGenerator {
+                                    flow { throw IllegalStateException("provider failed") }
+                                }
+                )
+        val registry =
+                ToolRegistry(
+                        listOf(
+                                ReplierTool(
+                                        taskManager = taskManager,
+                                        taskIdFactory = { "task-1" }
+                                )
+                        )
+                )
+
+        val execution =
+                runBlocking {
+                    registry.execute(
+                            context,
+                            LlmToolCall(
+                                    id = "call-1",
+                                    name = ReplierTool.NAME,
+                                    argumentsJson = """{"content":"seed reply"}"""
+                            )
+                    )
+                }
+
+        assertTrue(execution.result.isError)
+        val content = JsonParser.parseString(execution.toLlmToolResult().content).asJsonObject
+        assertEquals("task-1", content["taskId"].asString)
+        assertEquals("FAILED", content["state"].asString)
+        assertEquals("provider failed", content["error"].asString)
     }
 
     @Test
