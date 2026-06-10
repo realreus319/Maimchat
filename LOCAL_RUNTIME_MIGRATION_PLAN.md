@@ -684,11 +684,14 @@ Progress:
   calls a `MotionController`, reports accepted/rejected motion queue state as
   planner-readable JSON, and includes a Live2D adapter over
   `Live2DModelLifecycleManager.playMotionByGroup()` / `playMotionByFile()`.
+- Done: metadata-only `look_at` tool returns model, surface, last interaction,
+  visual snapshot metadata, and optional recent chat bubbles without attaching
+  screenshot pixels or image content blocks.
 - Pending: wire real app, wallpaper, Live2D lifecycle, touch, chat bubble, and
   snapshot producers into an Android-backed provider.
 - Pending: wire `trigger_motion` into the local planner registry from UI/service
   runtime construction.
-- Pending: `look_at` and environment triggers.
+- Pending: image/content-block capable `look_at` and environment triggers.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood
 
@@ -925,7 +928,7 @@ Tools:
 - [x] `adopt_background_reply`
 - [x] `kill_background_reply`
 - [x] `get_world_state`
-- [ ] `look_at`
+- [x] `look_at`
 - [x] `trigger_motion`
 - [ ] memory/impression tools
 
