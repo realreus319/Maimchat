@@ -920,7 +920,11 @@ Progress:
 - Done: local runtime settings validation no longer blocks fixed local runtime
   fallback when Endpoint/Planner are both empty; provider fields are required
   only after Endpoint, API key, Planner, or Replier input is present.
-- Pending: parity verification against the old backend.
+- Done: `scripts/run_runtime_parity.sh` provides one entrypoint for local
+  provider parity, opt-in real-provider parity, and opt-in old-backend LLM e2e
+  comparison.
+- Pending: run old-backend parity with a configured `/home/tcmofashi/chatbot/l2d_backend`
+  LLM environment.
 
 Acceptance:
 
@@ -1000,7 +1004,14 @@ Progress:
   `MAIMCHAT_REAL_PROVIDER_TOOL_CHOICE=required` to force tool choice on
   providers that support it, and `MAIMCHAT_REAL_PROVIDER_EXPECT_REPLIER=1` to
   require a completed `replier` task.
+- Done: `./scripts/run_runtime_parity.sh` runs the deterministic Maimchat local
+  provider parity test by default. It can also run the old backend full LLM e2e
+  test with `MAIMCHAT_OLD_BACKEND_PARITY=1`, using
+  `/home/tcmofashi/chatbot/l2d_backend/tests/e2e/chat_v1/test_llm_multiturn_e2e.py`
+  unless `MAIMCHAT_OLD_BACKEND_PYTEST_ARGS` overrides it.
 - Pending: manual provider parity checks with a configured real LLM endpoint.
+- Pending: manual old-backend parity checks with a configured old backend LLM
+  environment.
 
 ## Implementation Order
 
