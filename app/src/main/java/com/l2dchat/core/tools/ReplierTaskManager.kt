@@ -2,10 +2,15 @@ package com.l2dchat.core.tools
 
 import com.l2dchat.core.context.RoutingKey
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.launch
 
 class ReplierTaskManager(
         private val scope: CoroutineScope,
-        private val generator: ReplierTaskGenerator
+        private val generator: ReplierTaskGenerator,
+        private val taskStore: ReplierTaskStore = NoopReplierTaskStore,
+        private val clockMillis: () -> Long = { System.currentTimeMillis() }
 ) {
     private val lock = Any()
     private val tasks = linkedMapOf<String, ReplierTask>()
@@ -21,8 +26,9 @@ class ReplierTaskManager(
                                     scope = scope,
                                     generator = generator
                             )
-                            .also { tasks[request.taskId] = it }
+                        .also { tasks[request.taskId] = it }
                 }
+        observeTask(task, createdAtMillis = clockMillis())
         return task.start()
     }
 
@@ -54,6 +60,22 @@ class ReplierTaskManager(
 
     suspend fun cancel(taskId: String): ReplierTaskSnapshot? =
             getTask(taskId)?.cancel()
+
+    private fun observeTask(task: ReplierTask, createdAtMillis: Long) {
+        scope.launch {
+            task.snapshots
+                    .takeWhile { snapshot ->
+                        taskStore.upsertTaskSnapshot(
+                                request = task.request,
+                                snapshot = snapshot,
+                                createdAtMillis = createdAtMillis,
+                                updatedAtMillis = clockMillis()
+                        )
+                        !snapshot.isTerminal
+                    }
+                    .collect()
+        }
+    }
 
     private fun ReplierTask.toSummary(snapshot: ReplierTaskSnapshot): ReplierTaskSummary =
             ReplierTaskSummary(

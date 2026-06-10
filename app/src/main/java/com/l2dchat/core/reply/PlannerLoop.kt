@@ -167,6 +167,7 @@ class PlannerLoop(
                         routingKey = routingKey,
                         trigger = trigger,
                         foregroundEpoch = ownerEpoch,
+                        roundId = activeRound.roundId,
                         sendReplyDelegate = ::sendReply
                 )
         val job =

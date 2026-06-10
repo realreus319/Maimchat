@@ -47,6 +47,7 @@ class JsonFallbackPlannerTriggerProcessor(
                         routingKey = context.routingKey,
                         trigger = context.trigger,
                         foregroundEpoch = context.foregroundEpoch,
+                        roundId = context.roundId,
                         mode = toolMode
                 )
 

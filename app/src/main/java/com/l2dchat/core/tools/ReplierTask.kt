@@ -26,6 +26,7 @@ data class ReplierTaskRequest(
         val taskId: String,
         val routingKey: RoutingKey,
         val trigger: Trigger,
+        val roundId: String = "round_${trigger.messageId}",
         val content: String,
         val replyGuidance: String? = null,
         val styleOverride: String? = null,
@@ -36,6 +37,7 @@ data class ReplierTaskRequest(
 ) {
     init {
         require(taskId.isNotBlank()) { "Replier task id must not be blank" }
+        require(roundId.isNotBlank()) { "Replier task round id must not be blank" }
         require(content.isNotBlank()) { "Replier task content must not be blank" }
         require(replyGuidance == null || replyGuidance.isNotBlank()) {
             "Replier task replyGuidance must not be blank"

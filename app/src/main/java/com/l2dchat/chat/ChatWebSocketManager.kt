@@ -28,11 +28,14 @@ import com.l2dchat.core.storage.RoomPlannerSessionStore
 import com.l2dchat.core.storage.RoomPlannerSystemPromptProvider
 import com.l2dchat.core.storage.RoomPerceptionStore
 import com.l2dchat.core.storage.RoomReplierPromptContextProvider
+import com.l2dchat.core.storage.RoomReplierTaskStore
 import com.l2dchat.core.storage.RuntimeStateDao
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
+import com.l2dchat.core.tools.NoopReplierTaskStore
 import com.l2dchat.core.tools.ReplierPromptContext
 import com.l2dchat.core.tools.ReplierPromptContextProvider
 import com.l2dchat.core.tools.ReplierTaskRequest
+import com.l2dchat.core.tools.ReplierTaskStore
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import kotlinx.coroutines.CoroutineScope
@@ -110,6 +113,7 @@ class ChatWebSocketManager {
                         )
                     },
                     replierPromptContextProvider = { localReplierPromptContextProviderFor() },
+                    replierTaskStoreProvider = { localReplierTaskStoreFor() },
                     localRuntimeLlmConfigProvider = { localLlmSettings.toRuntimeConfig() },
                     environmentStateProvider = environmentStateProvider,
                     motionController = localMotionController,
@@ -773,6 +777,12 @@ class ChatWebSocketManager {
         val context = appContext ?: return NoopPlannerSessionStore
         val database = ChatDatabase.getInstance(context.applicationContext)
         return RoomPlannerSessionStore(database.plannerStateDao())
+    }
+
+    private fun localReplierTaskStoreFor(): ReplierTaskStore {
+        val context = appContext ?: return NoopReplierTaskStore
+        val database = ChatDatabase.getInstance(context.applicationContext)
+        return RoomReplierTaskStore(database.plannerStateDao())
     }
 
     private fun localRuntimeStateDaoForTools(): RuntimeStateDao? {

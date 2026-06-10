@@ -3,10 +3,18 @@ package com.l2dchat.core.storage
 import com.l2dchat.core.message.PlannerMessageEntity
 import com.l2dchat.core.message.PlannerRoundEntity
 import com.l2dchat.core.message.ToolTaskEntity
+import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.reply.PlannerRoundRecord
 import com.l2dchat.core.reply.PlannerSessionMessageRecord
 import com.l2dchat.core.reply.PlannerSessionRole
 import com.l2dchat.core.reply.PlannerSessionState
+import com.l2dchat.core.tools.ReplierTaskRequest
+import com.l2dchat.core.tools.ReplierTaskSnapshot
+import com.l2dchat.core.tools.ReplierTaskState
+import com.l2dchat.core.tools.ReplierTool
+import com.l2dchat.core.trigger.Trigger
+import com.l2dchat.core.trigger.TriggerPriority
+import com.l2dchat.core.trigger.TriggerType
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -52,6 +60,59 @@ class RoomPlannerSessionStoreTest {
         assertEquals("planner-1", message.plannerMessageId)
         assertEquals(PlannerSessionRole.TRIGGER, message.role)
         assertTrue(message.payloadJson.orEmpty().contains("\"message_id\":\"msg-1\""))
+    }
+
+    @Test
+    fun `replier task store upserts tool task snapshots`() {
+        val dao = FakePlannerStateDao()
+        val store = RoomReplierTaskStore(dao)
+
+        runBlocking {
+            store.upsertTaskSnapshot(
+                    request = replierRequest(),
+                    snapshot =
+                            ReplierTaskSnapshot(
+                                    taskId = "task-1",
+                                    state = ReplierTaskState.COMPLETED,
+                                    previewText = "draft reply",
+                                    replyText = "final reply",
+                                    backgrounded = true
+                            ),
+                    createdAtMillis = 100L,
+                    updatedAtMillis = 150L
+            )
+        }
+
+        val task = dao.toolTasks.single()
+        assertEquals("task-1", task.taskId)
+        assertEquals("round-1", task.roundId)
+        assertEquals(ReplierTool.NAME, task.toolName)
+        assertEquals(ReplierTaskState.COMPLETED.name, task.state)
+        assertTrue(task.inputJson.orEmpty().contains("\"content\":\"seed reply\""))
+        assertTrue(task.outputJson.orEmpty().contains("\"reply_text\":\"final reply\""))
+        assertEquals(null, task.error)
+        assertEquals(100L, task.createdAtMillis)
+        assertEquals(150L, task.updatedAtMillis)
+    }
+
+    private fun replierRequest(): ReplierTaskRequest {
+        val routingKey = RoutingKey(contextId = "ctx", agentId = "agent")
+        return ReplierTaskRequest(
+                taskId = "task-1",
+                routingKey = routingKey,
+                trigger =
+                        Trigger(
+                                contextId = routingKey.contextId,
+                                agentId = routingKey.agentId,
+                                messageId = "msg-1",
+                                triggerType = TriggerType.MSG,
+                                priority = TriggerPriority.NORMAL,
+                                timestampSeconds = 1.0,
+                                payload = mapOf("text" to "hello")
+                        ),
+                roundId = "round-1",
+                content = "seed reply"
+        )
     }
 
     private class FakePlannerStateDao : PlannerStateDao {

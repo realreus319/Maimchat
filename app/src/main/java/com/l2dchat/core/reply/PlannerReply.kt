@@ -39,6 +39,7 @@ class PlannerTurnContext internal constructor(
         val routingKey: RoutingKey,
         val trigger: Trigger,
         val foregroundEpoch: Int,
+        val roundId: String = "round_${trigger.messageId}",
         private val sendReplyDelegate: suspend (Int, Trigger, String) -> ReplySendResult
 ) {
     val triggerText: String

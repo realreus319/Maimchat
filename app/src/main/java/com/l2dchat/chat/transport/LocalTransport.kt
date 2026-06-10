@@ -21,8 +21,10 @@ import com.l2dchat.core.reply.PlannerTurnContext
 import com.l2dchat.core.reply.ReplySink
 import com.l2dchat.core.storage.RuntimeStateDao
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
+import com.l2dchat.core.tools.NoopReplierTaskStore
 import com.l2dchat.core.tools.ReplierPromptContextProvider
 import com.l2dchat.core.tools.ReplierTaskRequest
+import com.l2dchat.core.tools.ReplierTaskStore
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import kotlinx.coroutines.CancellationException
@@ -50,6 +52,7 @@ class LocalTransport(
         replierPromptContextProvider: () -> ReplierPromptContextProvider = {
             EmptyReplierPromptContextProvider
         },
+        replierTaskStoreProvider: () -> ReplierTaskStore = { NoopReplierTaskStore },
         localRuntimeLlmConfigProvider: () -> LocalRuntimeLlmConfig? = { null },
         environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
         motionController: MotionController = NoopMotionController,
@@ -77,6 +80,7 @@ class LocalTransport(
                                 override suspend fun contextFor(request: ReplierTaskRequest) =
                                         replierPromptContextProvider().contextFor(request)
                             },
+                    replierTaskStore = replierTaskStoreProvider(),
                     environmentStateProvider = environmentStateProvider,
                     motionController = motionController,
                     runtimeStateDaoProvider = runtimeStateDaoProvider

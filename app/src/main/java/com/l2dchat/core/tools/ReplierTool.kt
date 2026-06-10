@@ -83,6 +83,7 @@ class ReplierTool(
                                 taskId = taskIdFor(context),
                                 routingKey = context.routingKey,
                                 trigger = context.trigger,
+                                roundId = context.roundId,
                                 content = content,
                                 replyGuidance =
                                         arguments.stringOrNull("reply_guidance")?.trimOrNull(),

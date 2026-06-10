@@ -281,7 +281,8 @@ Progress:
 - Done: one-time import from legacy SharedPreferences history.
 - Done: compatibility mirror from Room-backed flow state back to existing visible/standard message APIs.
 - Done: scoped history clearing by model context and optional agent id.
-- Pending: planner/session/tool/memory tables and higher-level `ChatContext` query API.
+- Done: planner round/session messages and replier tool task snapshots persist into Room.
+- Pending: memory tables and higher-level `ChatContext` query API.
 
 ## Phase 3: Inbound And Perception
 
@@ -343,7 +344,8 @@ Progress:
 - Done: `LocalChatRuntime.handleMessage()` now routes chat input through `PerceptionDispatcher` and waits on `TriggerSink` before emitting the current fixed local reply.
 - Done: `LocalChatRuntime.handleMessage()` now routes perception triggers into `ReplyLayerFactory` and `PlannerLoop`.
 - Done: live local runtime can inject `RoomPerceptionStore`, so parsed standard messages and media blocks are persisted before trigger submission.
-- Pending: planner/session/tool/memory tables and higher-level `ChatContext` query API.
+- Done: planner round/session messages and replier tool task snapshots persist into Room.
+- Pending: memory tables and higher-level `ChatContext` query API.
 
 ## Phase 4: PlannerLoop Core
 
@@ -411,9 +413,11 @@ Progress:
   executes registered tools, sends planner-managed `replier` output through the
   existing `ReplySink`, and falls back to final assistant text when no tool reply
   was sent.
-- Pending: tool task/session message persistence and decision/fork replier adoption.
 - Done: JSON fallback planner processor executes tool calls through plain
   `chatCompletion` responses for providers without native tool calling.
+- Done: replier task snapshots are mirrored into Room `tool_tasks` with planner
+  round ids, inputs, outputs, errors, lifecycle state, and runtime injection.
+- Pending: richer decision/fork replier adoption behavior after kill/adopt.
 
 ## Phase 5: LLM Client
 

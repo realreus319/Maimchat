@@ -10,6 +10,7 @@ data class ToolExecutionContext(
         val routingKey: RoutingKey,
         val trigger: Trigger,
         val foregroundEpoch: Int,
+        val roundId: String = "round_${trigger.messageId}",
         val mode: ToolExecutionMode = ToolExecutionMode.NORMAL
 )
 

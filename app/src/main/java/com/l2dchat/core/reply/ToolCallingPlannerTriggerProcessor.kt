@@ -31,6 +31,7 @@ class ToolCallingPlannerTriggerProcessor(
                         routingKey = context.routingKey,
                         trigger = context.trigger,
                         foregroundEpoch = context.foregroundEpoch,
+                        roundId = context.roundId,
                         mode = toolMode
                 )
         val response =

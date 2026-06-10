@@ -6,6 +6,7 @@ import com.l2dchat.core.trigger.TriggerPriority
 import com.l2dchat.core.trigger.TriggerType
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -120,7 +121,40 @@ class ReplierTaskTest {
         }
     }
 
+    @Test
+    fun `manager persists task snapshots to store`() {
+        runBlocking {
+            val store = RecordingReplierTaskStore()
+            val manager =
+                    ReplierTaskManager(
+                            scope = this,
+                            generator =
+                                    ReplierTaskGenerator {
+                                        flow {
+                                            emit(ReplierTaskUpdate.TextDelta("he"))
+                                            emit(ReplierTaskUpdate.Completed("hello"))
+                                        }
+                                    },
+                            taskStore = store
+                    )
+
+            val task = manager.startTask(request("task-1", roundId = "round-1"))
+            val completed = withTimeout(1_000L) { task.waitForCompletion() }
+            withTimeout(1_000L) { store.awaitState(ReplierTaskState.COMPLETED) }
+
+            assertEquals(ReplierTaskState.COMPLETED, completed.state)
+            val persisted = store.snapshots().last()
+            assertEquals("task-1", persisted.request.taskId)
+            assertEquals("round-1", persisted.request.roundId)
+            assertEquals(ReplierTaskState.COMPLETED, persisted.snapshot.state)
+            assertEquals("hello", persisted.snapshot.replyText)
+        }
+    }
+
     private fun request(taskId: String): ReplierTaskRequest =
+            request(taskId = taskId, roundId = "round_msg-1")
+
+    private fun request(taskId: String, roundId: String): ReplierTaskRequest =
             ReplierTaskRequest(
                     taskId = taskId,
                     routingKey = routingKey,
@@ -134,6 +168,38 @@ class ReplierTaskTest {
                                     timestampSeconds = 1.0,
                                     payload = mapOf("text" to "hello")
                             ),
+                    roundId = roundId,
                     content = "hello"
             )
+
+    private class RecordingReplierTaskStore : ReplierTaskStore {
+        private val lock = Any()
+        private val records = mutableListOf<Record>()
+
+        override suspend fun upsertTaskSnapshot(
+                request: ReplierTaskRequest,
+                snapshot: ReplierTaskSnapshot,
+                createdAtMillis: Long,
+                updatedAtMillis: Long
+        ) {
+            synchronized(lock) {
+                records += Record(request, snapshot, createdAtMillis, updatedAtMillis)
+            }
+        }
+
+        fun snapshots(): List<Record> = synchronized(lock) { records.toList() }
+
+        suspend fun awaitState(state: ReplierTaskState) {
+            while (snapshots().none { it.snapshot.state == state }) {
+                delay(10L)
+            }
+        }
+
+        data class Record(
+                val request: ReplierTaskRequest,
+                val snapshot: ReplierTaskSnapshot,
+                val createdAtMillis: Long,
+                val updatedAtMillis: Long
+        )
+    }
 }

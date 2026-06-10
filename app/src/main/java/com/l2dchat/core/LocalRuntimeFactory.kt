@@ -22,8 +22,10 @@ import com.l2dchat.core.storage.RuntimeStateDao
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
 import com.l2dchat.core.tools.LlmReplierTaskGenerator
 import com.l2dchat.core.tools.LocalToolRegistryFactory
+import com.l2dchat.core.tools.NoopReplierTaskStore
 import com.l2dchat.core.tools.ReplierPromptContextProvider
 import com.l2dchat.core.tools.ReplierTaskManager
+import com.l2dchat.core.tools.ReplierTaskStore
 import com.l2dchat.core.tools.ToolExecutionContext
 import com.l2dchat.core.tools.ToolExecutionMode
 import com.l2dchat.core.tools.ToolRegistry
@@ -54,6 +56,7 @@ object LocalRuntimeFactory {
                     EmptyPlannerSystemPromptProvider,
             replierPromptContextProvider: ReplierPromptContextProvider =
                     EmptyReplierPromptContextProvider,
+            replierTaskStore: ReplierTaskStore = NoopReplierTaskStore,
             environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
             motionController: MotionController = NoopMotionController,
             runtimeStateDaoProvider: () -> RuntimeStateDao? = { null },
@@ -76,7 +79,8 @@ object LocalRuntimeFactory {
                                         llmClient = llmConfig.replierClient,
                                         config = llmConfig.replierConfig,
                                         contextProvider = replierPromptContextProvider
-                                )
+                                ),
+                        taskStore = replierTaskStore
                 )
         val taskIdFactory: (ToolExecutionContext) -> String = { context ->
             "replier_" +
