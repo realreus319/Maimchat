@@ -611,8 +611,11 @@ Progress:
 - Done: `ToolCallingPlannerTriggerProcessor` can run in normal or decision tool
   mode, exposing only the matching tool definitions and passing the mode into
   tool execution.
-- Pending: planner decision/fork loop wiring that creates a decision-mode turn
-  after foreground interruption.
+- Done: `PlannerLoop` marks an interrupted next `MSG` as a decision turn when a
+  decision processor is configured, sets `DECIDING` state for that turn, and
+  returns later triggers to normal processing.
+- Pending: decision prompt context that lists background task ids/previews and
+  richer fork-continuation behavior after kill/adopt.
 
 ## Phase 8: Live2D And Environment Integration
 

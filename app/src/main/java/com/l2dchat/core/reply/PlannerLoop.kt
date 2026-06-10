@@ -18,6 +18,7 @@ class PlannerLoop(
         val routingKey: RoutingKey,
         private val scope: CoroutineScope,
         private val processor: PlannerTriggerProcessor = NoopPlannerTriggerProcessor,
+        private val decisionProcessor: PlannerTriggerProcessor? = null,
         private val replySink: PlannerReplySink = PlannerReplySink {},
         private val sessionStore: PlannerSessionStore = NoopPlannerSessionStore,
         private val clockMillis: () -> Long = { System.currentTimeMillis() },
@@ -26,7 +27,7 @@ class PlannerLoop(
     val loopId: String = routingKey.toString()
 
     private val lock = Any()
-    private val triggerQueue = PriorityQueue<Trigger>()
+    private val triggerQueue = PriorityQueue<QueuedPlannerTrigger>()
     private val signal = Channel<Unit>(Channel.UNLIMITED)
 
     private var loopJob: Job? = null
@@ -73,7 +74,12 @@ class PlannerLoop(
                     if (shouldInterrupt) {
                         foregroundEpoch += 1
                     }
-                    triggerQueue.add(trigger)
+                    triggerQueue.add(
+                            QueuedPlannerTrigger(
+                                    trigger = trigger,
+                                    requiresDecision = shouldInterrupt && decisionProcessor != null
+                            )
+                    )
                     currentJob.takeIf { shouldInterrupt }
                 }
 
@@ -84,8 +90,8 @@ class PlannerLoop(
     suspend fun run() {
         try {
             while (scope.isActive) {
-                val trigger = awaitNextTrigger() ?: break
-                processQueuedTrigger(trigger)
+                val queuedTrigger = awaitNextTrigger() ?: break
+                processQueuedTrigger(queuedTrigger)
             }
         } catch (_: CancellationException) {
             // Normal shutdown path.
@@ -114,7 +120,7 @@ class PlannerLoop(
         jobs.forEach { it.cancel() }
     }
 
-    private suspend fun awaitNextTrigger(): Trigger? {
+    private suspend fun awaitNextTrigger(): QueuedPlannerTrigger? {
         while (true) {
             val next =
                     synchronized(lock) {
@@ -132,12 +138,25 @@ class PlannerLoop(
         }
     }
 
-    private suspend fun processQueuedTrigger(trigger: Trigger) {
+    private suspend fun processQueuedTrigger(queuedTrigger: QueuedPlannerTrigger) {
+        val trigger = queuedTrigger.trigger
+        val turnProcessor =
+                if (queuedTrigger.requiresDecision) {
+                    decisionProcessor ?: processor
+                } else {
+                    processor
+                }
+        val stateForTurn =
+                if (queuedTrigger.requiresDecision) {
+                    PlannerLoopState.DECIDING
+                } else {
+                    PlannerLoopState.GENERATING
+                }
         val ownerEpoch =
                 synchronized(lock) {
                     foregroundEpoch += 1
                     foregroundReplySent = false
-                    loopState = PlannerLoopState.GENERATING
+                    loopState = stateForTurn
                     foregroundEpoch
                 }
         val activeRound = createActiveRound(trigger, ownerEpoch)
@@ -154,7 +173,7 @@ class PlannerLoop(
                     var finalState = PlannerSessionState.COMPLETED
                     try {
                         persistRoundStart(activeRound, trigger)
-                        processor.process(context)
+                        turnProcessor.process(context)
                     } catch (throwable: CancellationException) {
                         finalState = PlannerSessionState.CANCELLED
                         throw throwable
@@ -188,7 +207,8 @@ class PlannerLoop(
                     if (currentRound == activeRound) {
                         currentRound = null
                     }
-                    if (loopState == PlannerLoopState.GENERATING) {
+                    if (loopState == PlannerLoopState.GENERATING ||
+                                    loopState == PlannerLoopState.DECIDING) {
                         loopState = PlannerLoopState.IDLE
                     }
                 }
@@ -297,6 +317,14 @@ class PlannerLoop(
                     "message_id" to messageId,
                     "payload" to payload
             )
+
+    private data class QueuedPlannerTrigger(
+            val trigger: Trigger,
+            val requiresDecision: Boolean
+    ) : Comparable<QueuedPlannerTrigger> {
+        override fun compareTo(other: QueuedPlannerTrigger): Int =
+                trigger.compareTo(other.trigger)
+    }
 
     private data class ActivePlannerRound(
             val roundId: String,

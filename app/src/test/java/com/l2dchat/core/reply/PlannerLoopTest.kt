@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -139,6 +140,58 @@ class PlannerLoopTest {
     }
 
     @Test
+    fun `interrupted msg can be processed by decision processor`() {
+        val firstStarted = CompletableDeferred<Unit>()
+        val decisionDone = CompletableDeferred<String>()
+        val decisionState = CompletableDeferred<PlannerLoopState>()
+        val thirdDone = CompletableDeferred<Unit>()
+        val normalProcessed = mutableListOf<String>()
+
+        runBlocking {
+            lateinit var loop: PlannerLoop
+            loop =
+                    PlannerLoop(
+                            routingKey = routingKey,
+                            scope = this,
+                            processor =
+                                    PlannerTriggerProcessor { context ->
+                                        if (context.trigger.messageId == "first") {
+                                            firstStarted.complete(Unit)
+                                            awaitCancellation()
+                                        } else {
+                                            normalProcessed.add(context.trigger.messageId)
+                                            context.sendReply("normal ${context.trigger.messageId}")
+                                            if (context.trigger.messageId == "third") {
+                                                thirdDone.complete(Unit)
+                                            }
+                                        }
+                                    },
+                            decisionProcessor =
+                                    PlannerTriggerProcessor { context ->
+                                        decisionState.complete(loop.state)
+                                        context.sendReply("decision ${context.trigger.messageId}")
+                                        decisionDone.complete(context.trigger.messageId)
+                                    }
+                    )
+            loop.start()
+            loop.submitTrigger(trigger("first"))
+            withTimeout(1_000L) { firstStarted.await() }
+
+            loop.submitTrigger(trigger("second"))
+
+            assertEquals("second", withTimeout(1_000L) { decisionDone.await() })
+            assertEquals(PlannerLoopState.DECIDING, withTimeout(1_000L) { decisionState.await() })
+            waitUntilIdle(loop)
+
+            loop.submitTrigger(trigger("third"))
+
+            withTimeout(1_000L) { thirdDone.await() }
+            assertEquals(listOf("third"), normalProcessed)
+            loop.shutdown()
+        }
+    }
+
+    @Test
     fun `loop persists planner round trigger user and assistant messages`() {
         var now = 1_000L
         val store = RecordingPlannerSessionStore()
@@ -200,6 +253,14 @@ class PlannerLoopTest {
                     timestampSeconds = timestamp,
                     payload = mapOf("text" to messageId)
             )
+
+    private suspend fun waitUntilIdle(loop: PlannerLoop) {
+        withTimeout(1_000L) {
+            while (loop.state != PlannerLoopState.IDLE) {
+                delay(10L)
+            }
+        }
+    }
 
     private class RecordingPlannerSessionStore : PlannerSessionStore {
         val rounds = mutableListOf<PlannerRoundRecord>()
