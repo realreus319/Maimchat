@@ -342,7 +342,8 @@ Progress:
 - Done: `PerceptionDispatcher` and `PerceptionWorker` queue inbound messages per `(contextId, agentId)`, optionally persist parsed messages, and submit triggers through `TriggerSink`.
 - Done: `LocalChatRuntime.handleMessage()` now routes chat input through `PerceptionDispatcher` and waits on `TriggerSink` before emitting the current fixed local reply.
 - Done: `LocalChatRuntime.handleMessage()` now routes perception triggers into `ReplyLayerFactory` and `PlannerLoop`.
-- Pending: Room-backed standard message persistence from the live local runtime path.
+- Done: live local runtime can inject `RoomPerceptionStore`, so parsed standard messages and media blocks are persisted before trigger submission.
+- Pending: planner/session/tool/memory tables and higher-level `ChatContext` query API.
 
 ## Phase 4: PlannerLoop Core
 
@@ -780,7 +781,7 @@ Core routing:
 - [x] User input becomes standard message.
 - [x] Standard message becomes internal message.
 - [x] Internal message has context id and agent id.
-- [ ] Message is persisted before reply generation.
+- [x] Message is persisted before reply generation.
 - [x] Message parser extracts text, command, mention, sender, timestamp.
 - [x] Multimodal blocks are retained.
 - [x] Trigger is created with correct type and priority.

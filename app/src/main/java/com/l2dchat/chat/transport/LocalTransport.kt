@@ -4,6 +4,8 @@ import com.l2dchat.chat.ChatWebSocketManager.ConnectionState
 import com.l2dchat.chat.ChatWebSocketManager.RuntimeMode
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.core.LocalChatRuntime
+import com.l2dchat.core.context.RoutingKey
+import com.l2dchat.core.perception.PerceptionStore
 import com.l2dchat.core.reply.ReplySink
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
@@ -16,7 +18,12 @@ class LocalTransport(
         private val callbacks: ChatTransportCallbacks,
         private val platformProvider: () -> String,
         private val agentNameProvider: () -> String?,
-        private val runtime: LocalChatRuntime = LocalChatRuntime(scope = scope)
+        perceptionStoreFactory: (RoutingKey) -> PerceptionStore? = { null },
+        private val runtime: LocalChatRuntime =
+                LocalChatRuntime(
+                        scope = scope,
+                        perceptionStoreFactory = perceptionStoreFactory
+                )
 ) : ChatTransport {
     override val mode: RuntimeMode = RuntimeMode.LOCAL
 

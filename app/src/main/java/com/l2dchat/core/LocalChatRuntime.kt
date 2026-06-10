@@ -12,6 +12,7 @@ import com.l2dchat.core.inbound.InboundBuilder
 import com.l2dchat.core.inbound.InboundMessage
 import com.l2dchat.core.perception.PerceptionDispatcher
 import com.l2dchat.core.perception.PerceptionProcessor
+import com.l2dchat.core.perception.PerceptionStore
 import com.l2dchat.core.reply.PlannerReply
 import com.l2dchat.core.reply.PlannerReplySink
 import com.l2dchat.core.reply.PlannerTriggerProcessor
@@ -31,7 +32,8 @@ import kotlinx.coroutines.SupervisorJob
  * message and emit a local assistant standard message without a backend.
  */
 class LocalChatRuntime(
-        scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        private val perceptionStoreFactory: (RoutingKey) -> PerceptionStore? = { null }
 ) {
     private val inboundBuilder = InboundBuilder()
     private val perceptionProcessor = PerceptionProcessor()
@@ -54,6 +56,7 @@ class LocalChatRuntime(
             PerceptionDispatcher(
                     scope = scope,
                     triggerSink = replyLayerFactory,
+                    storeFactory = perceptionStoreFactory,
                     onError = { _, message, throwable ->
                         removePending(message.toPendingKey())?.completion?.completeExceptionally(throwable)
                     }

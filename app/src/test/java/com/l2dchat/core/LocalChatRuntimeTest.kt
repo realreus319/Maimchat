@@ -6,6 +6,8 @@ import com.l2dchat.chat.ReceiverInfo
 import com.l2dchat.chat.Seg
 import com.l2dchat.chat.SenderInfo
 import com.l2dchat.chat.UserInfo
+import com.l2dchat.core.perception.ParsedMessage
+import com.l2dchat.core.perception.PerceptionStore
 import com.l2dchat.core.reply.ReplySink
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -60,6 +62,45 @@ class LocalChatRuntimeTest {
             assertEquals(0, runtime.activePerceptionWorkerCount())
             assertEquals(0, runtime.activePlannerLoopCount())
             assertTrue(emitted.isEmpty())
+            runtime.stopAndDrain()
+        }
+    }
+
+    @Test
+    fun `handleMessage persists parsed message before emitting reply`() {
+        val order = mutableListOf<String>()
+        val store =
+                object : PerceptionStore {
+                    override suspend fun persist(parsedMessage: ParsedMessage) {
+                        order.add("persist:${parsedMessage.messageId}")
+                    }
+                }
+        val sink =
+                object : ReplySink {
+                    override suspend fun send(message: MessageBase) {
+                        order.add("reply:${message.rawMessage}")
+                    }
+                }
+
+        runBlocking {
+            val runtime =
+                    LocalChatRuntime(
+                            scope = this,
+                            perceptionStoreFactory = { store }
+                    )
+            val handled =
+                    runtime.handleMessage(
+                            inbound = buildMessage(content = "记录我"),
+                            fallbackPlatform = "fallback",
+                            fallbackAgentName = "Maimchat",
+                            replySink = sink
+                    )
+
+            assertTrue(handled)
+            assertEquals(
+                    listOf("persist:inbound-id", "reply:本地回复运行时已接收：记录我"),
+                    order
+            )
             runtime.stopAndDrain()
         }
     }

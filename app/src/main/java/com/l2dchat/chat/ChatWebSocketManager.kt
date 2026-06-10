@@ -11,9 +11,11 @@ import com.l2dchat.chat.transport.RemoteWebSocketConfig
 import com.l2dchat.chat.transport.RemoteWebSocketTransport
 import com.l2dchat.core.message.RuntimeMessageMapper
 import com.l2dchat.core.message.VisibleMessageRecord
+import com.l2dchat.core.perception.PerceptionStore
 import com.l2dchat.core.storage.ChatDatabase
 import com.l2dchat.core.storage.ChatHistoryStore
 import com.l2dchat.core.storage.RoomChatHistoryStore
+import com.l2dchat.core.storage.RoomPerceptionStore
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import kotlinx.coroutines.CoroutineScope
@@ -68,7 +70,8 @@ class ChatWebSocketManager {
                     scope = scope,
                     callbacks = transportCallbacks,
                     platformProvider = { platform },
-                    agentNameProvider = { receiverModelName }
+                    agentNameProvider = { receiverModelName },
+                    perceptionStoreFactory = { localPerceptionStoreFor() }
             )
     private val remoteTransport =
             RemoteWebSocketTransport(scope = scope, callbacks = transportCallbacks)
@@ -649,6 +652,15 @@ class ChatWebSocketManager {
                                             .runtimeMessageDao()
                             )
                             .also { historyStore = it }
+
+    private fun localPerceptionStoreFor(): PerceptionStore? {
+        val context = appContext ?: return null
+        val database = ChatDatabase.getInstance(context.applicationContext)
+        return RoomPerceptionStore(
+                messageDao = database.runtimeMessageDao(),
+                stateDao = database.runtimeStateDao()
+        )
+    }
 
     private fun historyContextId(modelKey: String?): String =
             RuntimeMessageMapper.contextIdForModel(modelKey)
