@@ -9,6 +9,7 @@ import com.l2dchat.core.LocalRuntimeLlmConfig
 import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.environment.EmptyEnvironmentStateProvider
 import com.l2dchat.core.environment.EnvironmentStateProvider
+import com.l2dchat.core.environment.EnvironmentTriggerSubmission
 import com.l2dchat.core.environment.MotionController
 import com.l2dchat.core.environment.NoopMotionController
 import com.l2dchat.core.perception.PerceptionStore
@@ -98,6 +99,25 @@ class LocalTransport(
                         )
             } catch (e: Exception) {
                 callbacks.onError("本地运行时处理消息失败：${e.message ?: "未知错误"}", e)
+            }
+        }
+        return true
+    }
+
+    fun submitEnvironmentTrigger(submission: EnvironmentTriggerSubmission): Boolean {
+        if (!running) {
+            start()
+        }
+        scope.launch {
+            try {
+                runtime.submitEnvironmentTrigger(
+                        submission = submission,
+                        fallbackPlatform = platformProvider(),
+                        fallbackAgentName = agentNameProvider(),
+                        replySink = replySink
+                )
+            } catch (e: Exception) {
+                callbacks.onError("本地运行时处理环境触发失败：${e.message ?: "未知错误"}", e)
             }
         }
         return true

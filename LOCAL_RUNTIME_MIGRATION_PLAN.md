@@ -722,7 +722,14 @@ Progress:
 - Done: app and wallpaper visual snapshot producers now report metadata-only
   environment snapshots into the Android-backed provider, including stable
   references, mime type, captured timestamp, and available surface dimensions.
-- Pending: image/content-block capable `look_at` and environment triggers.
+- Done: local ENV trigger submission is wired through `LocalTransport` and
+  `LocalChatRuntime`, and `ChatWebSocketManager` now converts model changes,
+  app/wallpaper visibility, background changes, app-side Live2D interactions,
+  and visual snapshot metadata updates into deduplicated environment planner
+  turns with routing/reply metadata.
+- Pending: image/content-block capable `look_at`, idle timer triggers, motion
+  finished triggers, and direct wallpaper-to-service interaction trigger
+  delivery beyond the persisted state read path.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood
 

@@ -10,6 +10,8 @@ import com.l2dchat.chat.transport.LocalTransport
 import com.l2dchat.chat.transport.RemoteWebSocketConfig
 import com.l2dchat.chat.transport.RemoteWebSocketTransport
 import com.l2dchat.core.config.LocalLlmSettings
+import com.l2dchat.core.context.RoutingKey
+import com.l2dchat.core.environment.EnvironmentTriggerSubmission
 import com.l2dchat.core.message.RuntimeMessageMapper
 import com.l2dchat.core.message.VisibleMessageRecord
 import com.l2dchat.core.perception.PerceptionStore
@@ -57,6 +59,7 @@ class ChatWebSocketManager {
             )
     val errors: SharedFlow<String> = _errors.asSharedFlow()
     private val environmentStateProvider = ChatEnvironmentStateProvider()
+    private val environmentTriggerEmitter = ChatEnvironmentTriggerEmitter()
     private val localMotionController =
             ChatMotionController { command -> emitMotionMessage(command) }
     private val transportCallbacks =
@@ -192,18 +195,20 @@ class ChatWebSocketManager {
     fun setActiveModel(context: Context, modelName: String?) {
         receiverModelName = modelName?.ifBlank { null }
         activeModelKey = modelName?.lowercase()?.replace(Regex("[^a-z0-9_-]+"), "_")
+        val app = context.applicationContext
+        appContext = app
+        historyStoreFor(app)
         environmentStateProvider.setApplicationContext(context)
         environmentStateProvider.update(
                 ChatEnvironmentUpdate(modelKey = activeModelKey, modelName = receiverModelName)
         )
-        val app = context.applicationContext
-        appContext = app
-        historyStoreFor(app)
         activeModelKey?.let { loadHistory(app, it) }
+        emitModelChangedEnvironmentTrigger()
     }
 
     fun updateEnvironmentState(update: ChatEnvironmentUpdate) {
         environmentStateProvider.update(update)
+        emitEnvironmentUpdateTriggers(update)
     }
     fun setReceiverInfo(userId: String?, userNickname: String?) {
         receiverUserIdOverride = userId?.ifBlank { null }
@@ -749,6 +754,56 @@ class ChatWebSocketManager {
                             timestampMillis = message.timestamp
                     )
                 }
+        )
+    }
+
+    private fun emitModelChangedEnvironmentTrigger() {
+        val transport = localEnvironmentTransport() ?: return
+        submitEnvironmentTriggers(
+                transport = transport,
+                submissions = environmentTriggerEmitter.onModelChanged(environmentTriggerContext())
+        )
+    }
+
+    private fun emitEnvironmentUpdateTriggers(update: ChatEnvironmentUpdate) {
+        val transport = localEnvironmentTransport() ?: return
+        submitEnvironmentTriggers(
+                transport = transport,
+                submissions =
+                        environmentTriggerEmitter.onEnvironmentUpdate(
+                                update = update,
+                                context = environmentTriggerContext()
+                        )
+        )
+    }
+
+    private fun localEnvironmentTransport(): LocalTransport? =
+            if (activeTransport.mode == RuntimeMode.LOCAL) activeTransport as? LocalTransport
+            else null
+
+    private fun submitEnvironmentTriggers(
+            transport: LocalTransport,
+            submissions: List<EnvironmentTriggerSubmission>
+    ) {
+        submissions.forEach { submission ->
+            if (!transport.submitEnvironmentTrigger(submission)) {
+                logger.warn("提交环境触发失败：${submission.messageId}")
+            }
+        }
+    }
+
+    private fun environmentTriggerContext(): ChatEnvironmentTriggerContext {
+        val modelKey = activeModelKey
+        val agentId = historyAgentId(modelKey) ?: RoutingKey.DEFAULT_AGENT_ID
+        val modelName = receiverModelName
+        return ChatEnvironmentTriggerContext(
+                routingKey = RoutingKey(contextId = historyContextId(modelKey), agentId = agentId),
+                modelKey = modelKey,
+                modelName = modelName,
+                userId = userId,
+                userName = userNickname ?: userCardName ?: "用户",
+                agentUserId = agentId,
+                agentName = modelName ?: modelKey ?: "Maimchat"
         )
     }
 

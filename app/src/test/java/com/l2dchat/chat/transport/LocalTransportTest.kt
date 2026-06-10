@@ -7,6 +7,8 @@ import com.l2dchat.chat.Seg
 import com.l2dchat.chat.SenderInfo
 import com.l2dchat.chat.UserInfo
 import com.l2dchat.chat.ChatWebSocketManager.ConnectionState
+import com.l2dchat.core.context.RoutingKey
+import com.l2dchat.core.environment.EnvironmentTriggerSubmission
 import com.l2dchat.core.LocalChatRuntime
 import com.l2dchat.core.reply.PlannerTriggerProcessor
 import kotlinx.coroutines.delay
@@ -64,6 +66,64 @@ class LocalTransportTest {
 
             assertEquals(listOf("first runtime", "second runtime"), incoming.map { it.rawMessage })
             assertEquals(2, factoryCalls)
+            assertEquals(ConnectionState.CONNECTED, states.last())
+            transport.stop("done")
+        }
+    }
+
+    @Test
+    fun `submitEnvironmentTrigger sends unbound environment replies through callbacks`() {
+        val states = mutableListOf<ConnectionState>()
+        val incoming = mutableListOf<MessageBase>()
+
+        val callbacks =
+                object : ChatTransportCallbacks {
+                    override fun onStateChanged(state: ConnectionState) {
+                        states += state
+                    }
+
+                    override fun onIncomingText(text: String) {
+                        incoming += MessageBase.fromJsonString(text)
+                    }
+
+                    override fun onError(message: String, throwable: Throwable?) {
+                        throw AssertionError(message, throwable)
+                    }
+                }
+
+        runBlocking {
+            val transport =
+                    LocalTransport(
+                            scope = this,
+                            callbacks = callbacks,
+                            platformProvider = { "test_platform" },
+                            agentNameProvider = { "Bot" },
+                            runtimeFactory = { runtimeFor("environment reply") }
+                    )
+
+            assertTrue(
+                    transport.submitEnvironmentTrigger(
+                            EnvironmentTriggerSubmission(
+                                    routingKey =
+                                            RoutingKey(
+                                                    contextId = "room-bot",
+                                                    agentId = "bot-id"
+                                            ),
+                                    text = "app visible",
+                                    source = "android_app",
+                                    metadata =
+                                            mapOf(
+                                                    "receiver_user_id" to "user-id",
+                                                    "receiver_user_name" to "Alice",
+                                                    "agent_user_id" to "bot-id",
+                                                    "agent_user_name" to "Bot"
+                                            )
+                            )
+                    )
+            )
+
+            withTimeout(1_000L) { incoming.awaitSize(1) }
+            assertEquals("environment reply", incoming.single().rawMessage)
             assertEquals(ConnectionState.CONNECTED, states.last())
             transport.stop("done")
         }
