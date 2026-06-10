@@ -24,6 +24,7 @@ import com.l2dchat.core.tools.ToolRegistry
 import com.l2dchat.core.trigger.Trigger
 import com.l2dchat.core.trigger.TriggerPriority
 import com.l2dchat.core.trigger.TriggerType
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -31,7 +32,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -205,6 +205,127 @@ class ToolCallingPlannerTriggerProcessorTest {
             assertEquals("COMPLETED", resultContent["state"].asString)
             assertEquals(true, resultContent["adopted"].asBoolean)
             loop.shutdown()
+        }
+    }
+
+    @Test
+    fun `processor sends current decision reply after killing background task`() {
+        val replyDone = CompletableDeferred<PlannerReply>()
+        val taskStarted = CompletableDeferred<Unit>()
+        val client =
+                ExecutingToolClient(
+                        toolCalls =
+                                listOf(
+                                        LlmToolCall(
+                                                id = "call-1",
+                                                name = KillBackgroundReplyTool.NAME,
+                                                argumentsJson = """{"task_id":"task-1"}"""
+                                        )
+                                ),
+                        finalText = "reply to current message"
+                )
+
+        runBlocking {
+            val taskManager =
+                    ReplierTaskManager(
+                            scope = this,
+                            generator =
+                                    ReplierTaskGenerator {
+                                        flow {
+                                            taskStarted.complete(Unit)
+                                            emit(ReplierTaskUpdate.Preview("old draft"))
+                                            awaitCancellation()
+                                        }
+                                    }
+                    )
+            val task = taskManager.startTask(replierTaskRequest("task-1"))
+            withTimeout(1_000L) { taskStarted.await() }
+            assertTrue(task.moveToBackground())
+            val loop =
+                    PlannerLoop(
+                            routingKey = routingKey,
+                            scope = this,
+                            processor =
+                                    ToolCallingPlannerTriggerProcessor(
+                                            llmClient = client,
+                                            config = LlmGenerationConfig(model = "fake"),
+                                            toolRegistry =
+                                                    ToolRegistry(
+                                                            listOf(ReplierTool()) +
+                                                                    DecisionTools.defaultTools(taskManager)
+                                                    ),
+                                            toolMode = ToolExecutionMode.DECISION
+                                    ),
+                            replySink = PlannerReplySink { replyDone.complete(it) }
+                    )
+            loop.start()
+            try {
+                loop.submitTrigger(trigger("new message"))
+
+                assertEquals(
+                        "reply to current message",
+                        withTimeout(1_000L) { replyDone.await() }.text
+                )
+                val resultContent =
+                        JsonParser.parseString(client.toolResults.single().content).asJsonObject
+                assertEquals("CANCELLED", resultContent["state"].asString)
+                assertEquals(true, resultContent["killed"].asBoolean)
+            } finally {
+                loop.shutdown()
+            }
+        }
+    }
+
+    @Test
+    fun `processor sends current decision reply when background adoption fails`() {
+        val replyDone = CompletableDeferred<PlannerReply>()
+        val client =
+                ExecutingToolClient(
+                        toolCalls =
+                                listOf(
+                                        LlmToolCall(
+                                                id = "call-1",
+                                                name = AdoptBackgroundReplyTool.NAME,
+                                                argumentsJson = """{"task_id":"missing-task"}"""
+                                        )
+                                ),
+                        finalText = "fresh current reply"
+                )
+
+        runBlocking {
+            val taskManager =
+                    ReplierTaskManager(
+                            scope = this,
+                            generator = ReplierTaskGenerator { emptyFlow() }
+                    )
+            val loop =
+                    PlannerLoop(
+                            routingKey = routingKey,
+                            scope = this,
+                            processor =
+                                    ToolCallingPlannerTriggerProcessor(
+                                            llmClient = client,
+                                            config = LlmGenerationConfig(model = "fake"),
+                                            toolRegistry =
+                                                    ToolRegistry(
+                                                            listOf(ReplierTool()) +
+                                                                    DecisionTools.defaultTools(taskManager)
+                                                    ),
+                                            toolMode = ToolExecutionMode.DECISION
+                                    ),
+                            replySink = PlannerReplySink { replyDone.complete(it) }
+                    )
+            loop.start()
+            try {
+                loop.submitTrigger(trigger("new message"))
+
+                assertEquals("fresh current reply", withTimeout(1_000L) { replyDone.await() }.text)
+                val toolResult = client.toolResults.single()
+                assertTrue(toolResult.isError)
+                assertEquals("Replier task not found: missing-task", toolResult.content)
+            } finally {
+                loop.shutdown()
+            }
         }
     }
 

@@ -990,7 +990,7 @@ Decision mode:
 - [x] Decision mode restricts tools.
 - [x] Adopt waits for old background task and sends its reply.
 - [x] Kill cancels old background task.
-- [ ] Foreground continues correctly after kill or adopt failure.
+- [x] Foreground continues correctly after kill or adopt failure.
 
 Reply delivery:
 
