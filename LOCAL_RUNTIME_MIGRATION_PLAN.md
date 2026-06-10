@@ -901,8 +901,10 @@ Progress:
 - Done: the local transport now emits visible `starting` and `error` states in
   addition to stopped/ready, surfaces provider call failures as local runtime
   errors, and the main chat status line is provider-first for local LLM settings.
-- Pending: add deeper runtime diagnostics for provider failures and parity
-  verification against the old backend.
+- Done: local runtime/provider failures now propagate a compact diagnostic from
+  `ChatConnectionService` through `ChatServiceClient` into the main chat status
+  line while preserving the existing Messenger error event.
+- Pending: parity verification against the old backend.
 
 Acceptance:
 
@@ -947,6 +949,17 @@ Manual checks:
 - switch Live2D model
 - verify history separation per model/agent
 - interrupt a long reply with a new message
+
+Progress:
+
+- Done: `./gradlew :app:testDebugUnitTest --no-daemon` and
+  `./scripts/check_build.sh` pass on the migration branch after the local
+  runtime diagnostic and named-provider changes.
+- Done: headless `pixel_6_api_34` emulator booted with `sg kvm`; debug APK
+  installed and launched; `:app:connectedDebugAndroidTest` passed
+  `MainActivitySmokeTest` on-device.
+- Pending: manual chat/provider parity checks with an actual Live2D model and
+  configured LLM endpoint.
 
 ## Implementation Order
 
