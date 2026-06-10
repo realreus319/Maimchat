@@ -116,10 +116,22 @@ object DefaultAgentProfileSeeder {
 
     private val DEFAULT_PROMPTS =
             listOf(
-                    DefaultPrompt("planner_system", "agents/default/prompts/planner_system.md"),
-                    DefaultPrompt("decision_system", "agents/default/prompts/decision_system.md"),
-                    DefaultPrompt("replier_system", "agents/default/prompts/replier_system.md"),
-                    DefaultPrompt("replier_user", "agents/default/prompts/replier_user.md")
+                    DefaultPrompt(
+                            AgentPromptTemplateNames.PLANNER_SYSTEM,
+                            "agents/default/prompts/planner_system.md"
+                    ),
+                    DefaultPrompt(
+                            AgentPromptTemplateNames.DECISION_SYSTEM,
+                            "agents/default/prompts/decision_system.md"
+                    ),
+                    DefaultPrompt(
+                            AgentPromptTemplateNames.REPLIER_SYSTEM,
+                            "agents/default/prompts/replier_system.md"
+                    ),
+                    DefaultPrompt(
+                            AgentPromptTemplateNames.REPLIER_USER,
+                            "agents/default/prompts/replier_user.md"
+                    )
             )
 
     private const val AGENT_JSON_PATH = "agents/default/agent.json"

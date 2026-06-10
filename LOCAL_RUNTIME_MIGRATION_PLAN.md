@@ -777,6 +777,7 @@ Tasks:
   - Keep prompt keys aligned with backend:
     - `planner_system`
     - `decision_system`
+    - `replier_system`
     - `replier_user`
 
 - Implement user-editable agent config.
@@ -825,8 +826,12 @@ Progress:
   `RuntimeStateDao` is present: `memory_store`, `memory_search`,
   `tool_get_user_impressions`, `tool_update_user_impression`,
   `tool_query_impression`, and `tool_update_mood_state`.
-- Pending: prompt import/export UI and editable agent config. Provider API keys
-  already use encrypted storage through `LocalLlmSettingsStore`.
+- Done: `AgentProfileRepository` centralizes editable per-agent config,
+  backend-aligned prompt template names, and profile JSON import/export on top
+  of Room.
+- Pending: wire prompt import/export and editable agent config into the Compose
+  UI. Provider API keys already use encrypted storage through
+  `LocalLlmSettingsStore`.
 
 ## Phase 10: UI And Service Migration
 
