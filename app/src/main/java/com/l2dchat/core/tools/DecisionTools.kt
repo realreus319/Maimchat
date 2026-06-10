@@ -74,17 +74,24 @@ class AdoptBackgroundReplyTool(
                     metadata = mapOf("task_id" to taskId, "state" to snapshot.state.name)
             )
         }
+        val cleared = taskManager.clearTask(taskId)
         return ToolExecutionResult(
                 llmContent =
                         gson.toJson(
                                 snapshot.toJson().apply {
                                     addProperty("adopted", true)
                                     addProperty("sent", false)
+                                    addProperty("cleared", cleared)
                                 }
                         ),
                 replyText = snapshot.replyText,
                 sent = false,
-                metadata = mapOf("task_id" to taskId, "state" to snapshot.state.name)
+                metadata =
+                        mapOf(
+                                "task_id" to taskId,
+                                "state" to snapshot.state.name,
+                                "cleared" to cleared
+                        )
         )
     }
 
@@ -125,14 +132,21 @@ class KillBackgroundReplyTool(
     ): ToolExecutionResult {
         val taskId = arguments.requiredTaskId()
         val snapshot = taskManager.cancel(taskId) ?: return missingTaskResult(taskId)
+        val cleared = taskManager.clearTask(taskId)
         return ToolExecutionResult(
                 llmContent =
                         gson.toJson(
                                 snapshot.toJson().apply {
                                     addProperty("killed", snapshot.state == ReplierTaskState.CANCELLED)
+                                    addProperty("cleared", cleared)
                                 }
                         ),
-                metadata = mapOf("task_id" to taskId, "state" to snapshot.state.name)
+                metadata =
+                        mapOf(
+                                "task_id" to taskId,
+                                "state" to snapshot.state.name,
+                                "cleared" to cleared
+                        )
         )
     }
 

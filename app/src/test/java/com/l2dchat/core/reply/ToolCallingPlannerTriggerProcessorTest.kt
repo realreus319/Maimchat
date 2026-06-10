@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -204,6 +205,8 @@ class ToolCallingPlannerTriggerProcessorTest {
                     JsonParser.parseString(client.toolResults.single().content).asJsonObject
             assertEquals("COMPLETED", resultContent["state"].asString)
             assertEquals(true, resultContent["adopted"].asBoolean)
+            assertEquals(true, resultContent["cleared"].asBoolean)
+            assertNull(taskManager.getTask("task-1"))
             loop.shutdown()
         }
     }
@@ -270,6 +273,8 @@ class ToolCallingPlannerTriggerProcessorTest {
                         JsonParser.parseString(client.toolResults.single().content).asJsonObject
                 assertEquals("CANCELLED", resultContent["state"].asString)
                 assertEquals(true, resultContent["killed"].asBoolean)
+                assertEquals(true, resultContent["cleared"].asBoolean)
+                assertNull(taskManager.getTask("task-1"))
             } finally {
                 loop.shutdown()
             }

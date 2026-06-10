@@ -417,7 +417,8 @@ Progress:
   `chatCompletion` responses for providers without native tool calling.
 - Done: replier task snapshots are mirrored into Room `tool_tasks` with planner
   round ids, inputs, outputs, errors, lifecycle state, and runtime injection.
-- Pending: richer decision/fork replier adoption behavior after kill/adopt.
+- Done: decision/fork cleanup clears adopted or killed background replier tasks
+  so later decision turns do not repeatedly process consumed replies.
 
 ## Phase 5: LLM Client
 
@@ -545,6 +546,9 @@ Progress:
   replier model.
 - Done: `ReplierTool` moves an unfinished task to `BACKGROUND` when planner-side
   waiting is cancelled, allowing a later decision turn to adopt or kill it.
+- Done: adopted or killed background replier tasks are cleared from the active
+  task index after the decision tool consumes them, while persisted snapshots
+  remain available in Room.
 - Done: `ReplierPromptContextProvider` and `RoomReplierPromptContextProvider`
   inject Room-backed persona, prompt templates, recent chat history, mood state,
   user impression, and memory entries into replier prompts.
@@ -619,7 +623,8 @@ Progress:
   `trigger_motion`) and exposes only decision-mode tools for decision turns.
 - Done: `wait_for`, `adopt_background_reply`, and `kill_background_reply` operate
   on `ReplierTaskManager`; adopt returns planner-managed `replyText`, while kill
-  cancels running background tasks.
+  cancels running background tasks and both decision paths clear consumed tasks
+  from subsequent decision prompts.
 - Done: `ToolCallingPlannerTriggerProcessor` can run in normal or decision tool
   mode, exposing only the matching tool definitions and passing the mode into
   tool execution.
@@ -632,7 +637,8 @@ Progress:
 - Done: interrupted planner turns notify `LocalChatRuntime`, so the cancelled
   inbound `handleMessage()` completes `false` instead of hanging while the next
   decision turn continues.
-- Pending: richer fork-continuation behavior after kill/adopt.
+- Done: richer fork-continuation cleanup after kill/adopt prevents consumed
+  background replies from being offered again to later decision turns.
 
 ## Phase 8: Live2D And Environment Integration
 

@@ -61,6 +61,11 @@ class ReplierTaskManager(
     suspend fun cancel(taskId: String): ReplierTaskSnapshot? =
             getTask(taskId)?.cancel()
 
+    fun clearTask(taskId: String): Boolean =
+            synchronized(lock) {
+                tasks.remove(taskId) != null
+            }
+
     private fun observeTask(task: ReplierTask, createdAtMillis: Long) {
         scope.launch {
             task.snapshots

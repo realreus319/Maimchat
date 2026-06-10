@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -145,6 +146,9 @@ class DecisionToolsTest {
             assertEquals("COMPLETED", content["state"].asString)
             assertEquals(true, content["adopted"].asBoolean)
             assertEquals(false, content["sent"].asBoolean)
+            assertEquals(true, content["cleared"].asBoolean)
+            assertNull(manager.getTask("task-1"))
+            assertTrue(manager.backgroundTaskSummaries(routingKey).isEmpty())
         }
     }
 
@@ -170,6 +174,9 @@ class DecisionToolsTest {
             val content = JsonParser.parseString(result.llmContent).asJsonObject
             assertEquals("CANCELLED", content["state"].asString)
             assertEquals(true, content["killed"].asBoolean)
+            assertEquals(true, content["cleared"].asBoolean)
+            assertNull(manager.getTask("task-1"))
+            assertTrue(manager.backgroundTaskSummaries(routingKey).isEmpty())
         }
     }
 
