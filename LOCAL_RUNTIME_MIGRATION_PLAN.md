@@ -337,7 +337,9 @@ Progress:
 - Done: default parser for text, command prefix, command args, and mentions.
 - Done: `Trigger` and `PerceptionProcessor` conversion from parsed message to `MSG` trigger.
 - Done: `LocalChatRuntime` now reads inbound text through the inbound/perception path while keeping fixed local reply behavior.
-- Pending: queued per-agent processor lifecycle, persistent internal message save, complete emoji/voice preservation, and routing into the planner layer.
+- Done: `processAndPersist()` can persist parsed standard messages and ordered media blocks into Room.
+- Done: image, emoji, and voice `seglist` blocks are preserved through inbound, trigger payload, and media block storage.
+- Pending: queued per-agent processor lifecycle and routing into the planner layer.
 
 ## Phase 4: PlannerLoop Core
 

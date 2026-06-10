@@ -153,6 +153,15 @@ interface RuntimeStateDao {
 
     @Query(
             """
+            SELECT * FROM media_blocks
+            WHERE message_id = :messageId
+            ORDER BY sequence ASC
+            """
+    )
+    suspend fun queryMediaBlocksForMessage(messageId: String): List<MediaBlockEntity>
+
+    @Query(
+            """
             SELECT * FROM memories
             WHERE context_id = :contextId
               AND agent_id = :agentId

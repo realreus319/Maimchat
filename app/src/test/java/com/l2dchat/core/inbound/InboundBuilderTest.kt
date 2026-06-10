@@ -25,7 +25,9 @@ class InboundBuilderTest {
                                         "seglist",
                                         listOf(
                                                 Seg("text", "看这里 [image1]"),
-                                                Seg("image", "file:///tmp/a.png")
+                                                Seg("image", "file:///tmp/a.png"),
+                                                Seg("emoji", "smile"),
+                                                Seg("voice", "voice-bytes")
                                         )
                                 ),
                         rawMessage = "看这里 [image1]"
@@ -40,8 +42,10 @@ class InboundBuilderTest {
         assertEquals("Alice", inbound.senderName)
         assertEquals("看这里 [image1]", inbound.text)
         assertTrue(inbound.isGroupChat)
-        assertEquals(listOf("text", "image_url"), inbound.contentBlocks.map { it.type })
+        assertEquals(listOf("text", "image_url", "emoji", "voice"), inbound.contentBlocks.map { it.type })
         assertEquals("file:///tmp/a.png", inbound.contentBlocks[1].imageUrl)
+        assertEquals("smile", inbound.contentBlocks[2].data)
+        assertEquals("voice-bytes", inbound.contentBlocks[3].data)
         assertTrue(builder.validateMultimodalMirror(inbound.text, inbound.contentBlocks).isValid)
     }
 

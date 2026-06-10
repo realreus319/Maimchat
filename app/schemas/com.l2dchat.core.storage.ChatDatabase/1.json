@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "3fb8e710135b60f496edeffd6b47c941",
+    "identityHash": "0f8d56bf525316dbc81f199665dcfaf2",
     "entities": [
       {
         "tableName": "messages",
@@ -23,7 +23,8 @@
           {
             "fieldPath": "agentId",
             "columnName": "agent_id",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "content",
@@ -46,12 +47,14 @@
           {
             "fieldPath": "motionGroup",
             "columnName": "motion_group",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "motionIndex",
             "columnName": "motion_index",
-            "affinity": "INTEGER"
+            "affinity": "INTEGER",
+            "notNull": false
           },
           {
             "fieldPath": "motionLoop",
@@ -78,7 +81,8 @@
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_messages_context_id_agent_id_timestamp_ms` ON `${TABLE_NAME}` (`context_id`, `agent_id`, `timestamp_ms`)"
           }
-        ]
+        ],
+        "foreignKeys": []
       },
       {
         "tableName": "standard_messages",
@@ -99,22 +103,26 @@
           {
             "fieldPath": "agentId",
             "columnName": "agent_id",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "platform",
             "columnName": "platform",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "senderUserId",
             "columnName": "sender_user_id",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "receiverUserId",
             "columnName": "receiver_user_id",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "timestampMillis",
@@ -125,7 +133,8 @@
           {
             "fieldPath": "rawText",
             "columnName": "raw_text",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "messageJson",
@@ -170,7 +179,8 @@
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_standard_messages_receiver_user_id` ON `${TABLE_NAME}` (`receiver_user_id`)"
           }
-        ]
+        ],
+        "foreignKeys": []
       },
       {
         "tableName": "planner_rounds",
@@ -197,7 +207,8 @@
           {
             "fieldPath": "triggerMessageId",
             "columnName": "trigger_message_id",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "state",
@@ -236,7 +247,8 @@
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_planner_rounds_context_id_agent_id_created_at_ms` ON `${TABLE_NAME}` (`context_id`, `agent_id`, `created_at_ms`)"
           }
-        ]
+        ],
+        "foreignKeys": []
       },
       {
         "tableName": "planner_messages",
@@ -269,17 +281,20 @@
           {
             "fieldPath": "content",
             "columnName": "content",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "toolCallId",
             "columnName": "tool_call_id",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "payloadJson",
             "columnName": "payload_json",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "createdAtMillis",
@@ -305,7 +320,8 @@
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_planner_messages_round_id_sequence` ON `${TABLE_NAME}` (`round_id`, `sequence`)"
           }
-        ]
+        ],
+        "foreignKeys": []
       },
       {
         "tableName": "agent_configs",
@@ -326,22 +342,26 @@
           {
             "fieldPath": "persona",
             "columnName": "persona",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "provider",
             "columnName": "provider",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "model",
             "columnName": "model",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "settingsJson",
             "columnName": "settings_json",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "updatedAtMillis",
@@ -355,7 +375,9 @@
           "columnNames": [
             "agent_id"
           ]
-        }
+        },
+        "indices": [],
+        "foreignKeys": []
       },
       {
         "tableName": "prompt_templates",
@@ -370,7 +392,8 @@
           {
             "fieldPath": "agentId",
             "columnName": "agent_id",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "name",
@@ -408,7 +431,8 @@
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_prompt_templates_agent_id_name` ON `${TABLE_NAME}` (`agent_id`, `name`)"
           }
-        ]
+        ],
+        "foreignKeys": []
       },
       {
         "tableName": "tool_tasks",
@@ -441,17 +465,20 @@
           {
             "fieldPath": "inputJson",
             "columnName": "input_json",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "outputJson",
             "columnName": "output_json",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "error",
             "columnName": "error",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "createdAtMillis",
@@ -492,7 +519,8 @@
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_tool_tasks_tool_name` ON `${TABLE_NAME}` (`tool_name`)"
           }
-        ]
+        ],
+        "foreignKeys": []
       },
       {
         "tableName": "memories",
@@ -559,7 +587,8 @@
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_memories_context_id_agent_id_updated_at_ms` ON `${TABLE_NAME}` (`context_id`, `agent_id`, `updated_at_ms`)"
           }
-        ]
+        ],
+        "foreignKeys": []
       },
       {
         "tableName": "impressions",
@@ -620,7 +649,8 @@
             "orders": [],
             "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_impressions_context_id_agent_id_subject_id` ON `${TABLE_NAME}` (`context_id`, `agent_id`, `subject_id`)"
           }
-        ]
+        ],
+        "foreignKeys": []
       },
       {
         "tableName": "mood_state",
@@ -653,7 +683,8 @@
           {
             "fieldPath": "stateJson",
             "columnName": "state_json",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "updatedAtMillis",
@@ -668,11 +699,13 @@
             "context_id",
             "agent_id"
           ]
-        }
+        },
+        "indices": [],
+        "foreignKeys": []
       },
       {
         "tableName": "media_blocks",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`media_id` TEXT NOT NULL, `message_id` TEXT, `context_id` TEXT NOT NULL, `type` TEXT NOT NULL, `uri` TEXT NOT NULL, `mime_type` TEXT, `metadata_json` TEXT, `created_at_ms` INTEGER NOT NULL, PRIMARY KEY(`media_id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`media_id` TEXT NOT NULL, `message_id` TEXT, `context_id` TEXT NOT NULL, `sequence` INTEGER NOT NULL, `type` TEXT NOT NULL, `uri` TEXT NOT NULL, `mime_type` TEXT, `metadata_json` TEXT, `created_at_ms` INTEGER NOT NULL, PRIMARY KEY(`media_id`))",
         "fields": [
           {
             "fieldPath": "mediaId",
@@ -683,12 +716,19 @@
           {
             "fieldPath": "messageId",
             "columnName": "message_id",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "contextId",
             "columnName": "context_id",
             "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sequence",
+            "columnName": "sequence",
+            "affinity": "INTEGER",
             "notNull": true
           },
           {
@@ -706,12 +746,14 @@
           {
             "fieldPath": "mimeType",
             "columnName": "mime_type",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "metadataJson",
             "columnName": "metadata_json",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "notNull": false
           },
           {
             "fieldPath": "createdAtMillis",
@@ -728,13 +770,14 @@
         },
         "indices": [
           {
-            "name": "index_media_blocks_message_id",
+            "name": "index_media_blocks_message_id_sequence",
             "unique": false,
             "columnNames": [
-              "message_id"
+              "message_id",
+              "sequence"
             ],
             "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_blocks_message_id` ON `${TABLE_NAME}` (`message_id`)"
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_blocks_message_id_sequence` ON `${TABLE_NAME}` (`message_id`, `sequence`)"
           },
           {
             "name": "index_media_blocks_context_id_created_at_ms",
@@ -746,12 +789,14 @@
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_media_blocks_context_id_created_at_ms` ON `${TABLE_NAME}` (`context_id`, `created_at_ms`)"
           }
-        ]
+        ],
+        "foreignKeys": []
       }
     ],
+    "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3fb8e710135b60f496edeffd6b47c941')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0f8d56bf525316dbc81f199665dcfaf2')"
     ]
   }
 }

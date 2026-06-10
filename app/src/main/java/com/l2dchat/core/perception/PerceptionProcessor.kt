@@ -18,6 +18,15 @@ class PerceptionProcessor(private val parser: MessageParser = DefaultMessagePars
         return PerceptionResult(parsedMessage = parsed, trigger = createTrigger(parsed))
     }
 
+    suspend fun processAndPersist(
+            message: InboundMessage,
+            store: PerceptionStore
+    ): PerceptionResult {
+        val result = process(message)
+        store.persist(result.parsedMessage)
+        return result
+    }
+
     fun createTrigger(parsed: ParsedMessage): Trigger {
         val payload =
                 linkedMapOf<String, Any?>(

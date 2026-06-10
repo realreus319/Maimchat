@@ -149,12 +149,17 @@ data class MoodStateEntity(
 
 @Entity(
         tableName = "media_blocks",
-        indices = [Index(value = ["message_id"]), Index(value = ["context_id", "created_at_ms"])]
+        indices =
+                [
+                        Index(value = ["message_id", "sequence"]),
+                        Index(value = ["context_id", "created_at_ms"])
+                ]
 )
 data class MediaBlockEntity(
         @PrimaryKey @ColumnInfo(name = "media_id") val mediaId: String,
         @ColumnInfo(name = "message_id") val messageId: String?,
         @ColumnInfo(name = "context_id") val contextId: String,
+        @ColumnInfo(name = "sequence") val sequence: Int,
         @ColumnInfo(name = "type") val type: String,
         @ColumnInfo(name = "uri") val uri: String,
         @ColumnInfo(name = "mime_type") val mimeType: String?,
