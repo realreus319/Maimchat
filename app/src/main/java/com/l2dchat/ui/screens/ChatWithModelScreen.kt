@@ -110,6 +110,7 @@ fun ChatWithModelScreen(
 
     val connectionState by chatManager.connectionState.collectAsState()
     val connectionLabel by chatManager.connectionLabel.collectAsState()
+    val runtimeDiagnostic by chatManager.runtimeDiagnostic.collectAsState()
     val messages by chatManager.messages.collectAsState()
     val standardMessages by chatManager.standardMessages.collectAsState()
     val currentUserNickname by chatManager.userNickname.collectAsState()
@@ -165,6 +166,7 @@ fun ChatWithModelScreen(
                     runtimeMode,
                     connectionState,
                     connectionLabel,
+                    runtimeDiagnostic,
                     effectiveLocalLlmSettings,
                     serverUrl
             ) {
@@ -172,6 +174,7 @@ fun ChatWithModelScreen(
                         runtimeMode = runtimeMode,
                         connectionState = connectionState,
                         connectionLabel = connectionLabel,
+                        runtimeDiagnostic = runtimeDiagnostic,
                         localLlmSettings = effectiveLocalLlmSettings,
                         serverUrl = serverUrl
                 )
@@ -1282,15 +1285,25 @@ private fun buildRuntimeStatusLine(
         runtimeMode: ChatRuntimeMode,
         connectionState: ChatServiceClient.ChatConnectionState,
         connectionLabel: String,
+        runtimeDiagnostic: String,
         localLlmSettings: LocalLlmSettings,
         serverUrl: String
 ): String {
     val stateLabel =
             connectionLabel.ifBlank { fallbackRuntimeStatusLabel(runtimeMode, connectionState) }
-    return when (runtimeMode) {
-        ChatRuntimeMode.LOCAL -> "${localProviderStatusText(localLlmSettings)} · $stateLabel"
-        ChatRuntimeMode.REMOTE -> "${remoteProviderStatusText(serverUrl)} · $stateLabel"
-    }
+    val baseLine =
+            when (runtimeMode) {
+                ChatRuntimeMode.LOCAL ->
+                        "${localProviderStatusText(localLlmSettings)} · $stateLabel"
+                ChatRuntimeMode.REMOTE -> "${remoteProviderStatusText(serverUrl)} · $stateLabel"
+            }
+    val diagnostic =
+            runtimeDiagnostic.trim().takeIf {
+                connectionState == ChatServiceClient.ChatConnectionState.ERROR &&
+                        it.isNotEmpty() &&
+                        !baseLine.contains(it)
+            }
+    return diagnostic?.let { "$baseLine · $it" } ?: baseLine
 }
 
 private fun fallbackRuntimeStatusLabel(

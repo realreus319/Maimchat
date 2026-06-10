@@ -50,6 +50,7 @@ class ChatConnectionService : Service() {
     private var lastKnownReceiverNickname: String? = null
     private var localLlmSettings = LocalLlmSettings()
     private var runtimeMode = ChatRuntimeMode.LOCAL
+    private var lastConnectionError: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -134,39 +135,71 @@ class ChatConnectionService : Service() {
                 broadcastStandardMessage(last)
             }
         }
-        serviceScope.launch { manager.errors.collect { message -> notifyError(message) } }
+        serviceScope.launch {
+            manager.errors.collect { message ->
+                lastConnectionError = message
+                notifyError(message)
+                if (manager.connectionState.value == ConnectionState.ERROR) {
+                    broadcastConnectionState(ConnectionState.ERROR)
+                }
+            }
+        }
     }
 
     private fun broadcastConnectionState(state: ConnectionState) {
+        if (state != ConnectionState.ERROR) {
+            lastConnectionError = null
+        }
+        val diagnostic =
+                if (state == ConnectionState.ERROR) {
+                    lastConnectionError?.let(::compactConnectionError)
+                } else {
+                    null
+                }
         val bundle =
                 Bundle().apply {
                     putInt(ChatServiceProtocol.EXTRA_CONNECTION_STATE, state.ordinal)
                     putString(
                             ChatServiceProtocol.EXTRA_CONNECTION_LABEL,
-                            connectionLabelFor(state)
+                            connectionLabelFor(state, diagnostic)
                     )
                     putString(ChatServiceProtocol.EXTRA_RUNTIME_MODE, runtimeMode.wireValue)
+                    diagnostic?.let {
+                        putString(ChatServiceProtocol.EXTRA_ERROR_MESSAGE, it)
+                    }
                 }
         sendToClients(ChatServiceProtocol.MSG_EVENT_CONNECTION_STATE, bundle)
     }
 
-    private fun connectionLabelFor(state: ConnectionState): String =
-            when (runtimeMode) {
-                ChatRuntimeMode.LOCAL ->
-                        when (state) {
-                            ConnectionState.DISCONNECTED -> "本地运行时: stopped"
-                            ConnectionState.CONNECTING -> "本地运行时: starting"
-                            ConnectionState.CONNECTED -> "本地运行时: ready"
-                            ConnectionState.ERROR -> "本地运行时: error"
-                        }
-                ChatRuntimeMode.REMOTE ->
-                        when (state) {
-                            ConnectionState.DISCONNECTED -> "远端 WebSocket: 未连接"
-                            ConnectionState.CONNECTING -> "远端 WebSocket: 连接中"
-                            ConnectionState.CONNECTED -> "远端 WebSocket: 已连接"
-                            ConnectionState.ERROR -> "远端 WebSocket: 错误"
-                        }
-            }
+    private fun connectionLabelFor(state: ConnectionState, diagnostic: String?): String {
+        val base =
+                when (runtimeMode) {
+                    ChatRuntimeMode.LOCAL ->
+                            when (state) {
+                                ConnectionState.DISCONNECTED -> "本地运行时: stopped"
+                                ConnectionState.CONNECTING -> "本地运行时: starting"
+                                ConnectionState.CONNECTED -> "本地运行时: ready"
+                                ConnectionState.ERROR -> "本地运行时: error"
+                            }
+                    ChatRuntimeMode.REMOTE ->
+                            when (state) {
+                                ConnectionState.DISCONNECTED -> "远端 WebSocket: 未连接"
+                                ConnectionState.CONNECTING -> "远端 WebSocket: 连接中"
+                                ConnectionState.CONNECTED -> "远端 WebSocket: 已连接"
+                                ConnectionState.ERROR -> "远端 WebSocket: 错误"
+                            }
+                }
+        return diagnostic?.takeIf { it.isNotBlank() }?.let { "$base · $it" } ?: base
+    }
+
+    private fun compactConnectionError(message: String): String {
+        val singleLine = message.lineSequence().firstOrNull()?.trim().orEmpty()
+        return if (singleLine.length <= CONNECTION_ERROR_PREVIEW_LIMIT) {
+            singleLine
+        } else {
+            singleLine.take(CONNECTION_ERROR_PREVIEW_LIMIT - 3) + "..."
+        }
+    }
 
     private fun broadcastChatMessage(message: ChatMessage) {
         val bundle =
@@ -704,6 +737,7 @@ class ChatConnectionService : Service() {
         private const val KEY_NICKNAME = "nickname"
         private const val KEY_RECEIVER_ID = "receiver_user_id"
         private const val KEY_RECEIVER_NICKNAME = "receiver_user_nickname"
+        private const val CONNECTION_ERROR_PREVIEW_LIMIT = 120
     }
 }
 

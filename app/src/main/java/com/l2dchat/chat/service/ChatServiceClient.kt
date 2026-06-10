@@ -47,10 +47,18 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                         ChatServiceProtocol.MSG_EVENT_CONNECTION_STATE -> {
                             val ordinal =
                                     msg.data.getInt(ChatServiceProtocol.EXTRA_CONNECTION_STATE, 0)
+                            val state = ChatConnectionState.fromOrdinal(ordinal)
                             val label =
                                     msg.data.getString(ChatServiceProtocol.EXTRA_CONNECTION_LABEL)
-                            _connectionState.value = ChatConnectionState.fromOrdinal(ordinal)
+                            val diagnostic =
+                                    msg.data
+                                            .getString(ChatServiceProtocol.EXTRA_ERROR_MESSAGE)
+                                            .orEmpty()
+                            _connectionState.value = state
                             _connectionLabel.value = label.orEmpty()
+                            if (diagnostic.isNotBlank() || state != ChatConnectionState.ERROR) {
+                                _runtimeDiagnostic.value = diagnostic
+                            }
                             ChatRuntimeMode.fromWireValue(
                                             msg.data.getString(
                                                     ChatServiceProtocol.EXTRA_RUNTIME_MODE
@@ -80,6 +88,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
 
     private val _connectionState = MutableStateFlow(ChatConnectionState.DISCONNECTED)
     private val _connectionLabel = MutableStateFlow("")
+    private val _runtimeDiagnostic = MutableStateFlow("")
     private val _messages = MutableStateFlow<List<ChatMessageSnapshot>>(emptyList())
     private val _standardMessages = MutableStateFlow<List<MessageBase>>(emptyList())
     private val _newMessages =
@@ -127,6 +136,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
 
     val connectionState: StateFlow<ChatConnectionState> = _connectionState.asStateFlow()
     val connectionLabel: StateFlow<String> = _connectionLabel.asStateFlow()
+    val runtimeDiagnostic: StateFlow<String> = _runtimeDiagnostic.asStateFlow()
     val messages: StateFlow<List<ChatMessageSnapshot>> = _messages.asStateFlow()
     val standardMessages: StateFlow<List<MessageBase>> = _standardMessages.asStateFlow()
     val newMessages: SharedFlow<ChatMessageSnapshot> = _newMessages.asSharedFlow()
@@ -171,6 +181,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
         serviceMessenger = null
         logger.warn("Service disconnected component=$name")
         _connectionState.value = ChatConnectionState.DISCONNECTED
+        _runtimeDiagnostic.value = ""
     }
 
     fun ensureBound() {
