@@ -715,8 +715,11 @@ Progress:
   `Live2DGestureDispatcher` / `Live2DModelLifecycleManager` through
   `ChatServiceClient` into the Android-backed environment provider, preserving
   existing model, motion, and surface state during partial interaction updates.
-- Pending: wire wallpaper visibility/touch state and snapshot producers into the
-  Android-backed provider.
+- Done: wallpaper visibility and wallpaper touch/drag state are persisted by
+  `Live2DWallpaperService` and merged into `ChatEnvironmentStateProvider` at
+  tool execution time, resolving app-side and wallpaper-side interactions by
+  newest timestamp.
+- Pending: wire snapshot producers into the Android-backed provider.
 - Pending: image/content-block capable `look_at` and environment triggers.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood

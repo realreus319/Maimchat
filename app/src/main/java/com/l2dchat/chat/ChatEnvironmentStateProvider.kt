@@ -1,5 +1,7 @@
 package com.l2dchat.chat
 
+import android.content.Context
+import android.content.SharedPreferences
 import com.l2dchat.core.environment.EnvironmentChatBubble
 import com.l2dchat.core.environment.EnvironmentInteraction
 import com.l2dchat.core.environment.EnvironmentModelState
@@ -8,6 +10,7 @@ import com.l2dchat.core.environment.EnvironmentState
 import com.l2dchat.core.environment.EnvironmentStateProvider
 import com.l2dchat.core.environment.EnvironmentSurfaceState
 import com.l2dchat.core.tools.ToolExecutionContext
+import com.l2dchat.wallpaper.WallpaperComm
 
 data class ChatEnvironmentUpdate(
         val modelKey: String? = null,
@@ -38,12 +41,19 @@ data class ChatEnvironmentInteraction(
         val timestampMillis: Long? = null
 )
 
-class ChatEnvironmentStateProvider : EnvironmentStateProvider {
+class ChatEnvironmentStateProvider(appContext: Context? = null) : EnvironmentStateProvider {
     private val lock = Any()
+    private var applicationContext: Context? = appContext?.applicationContext
     private var snapshot = Snapshot()
 
     override fun currentState(context: ToolExecutionContext): EnvironmentState =
-            synchronized(lock) { snapshot.toEnvironmentState(context) }
+            synchronized(lock) {
+                snapshot.withWallpaperState(applicationContext).toEnvironmentState(context)
+            }
+
+    fun setApplicationContext(context: Context) {
+        synchronized(lock) { applicationContext = context.applicationContext }
+    }
 
     fun update(update: ChatEnvironmentUpdate) {
         synchronized(lock) { snapshot = snapshot.updated(update) }
@@ -124,6 +134,37 @@ class ChatEnvironmentStateProvider : EnvironmentStateProvider {
                     name = name,
                     folderPath = folderPath,
                     lifecycleState = lifecycleState
+            )
+        }
+
+        fun withWallpaperState(context: Context?): Snapshot {
+            val prefs =
+                    context?.getSharedPreferences(
+                            WallpaperComm.PREF_WALLPAPER,
+                            Context.MODE_PRIVATE
+                    )
+                            ?: return this
+            val wallpaperVisible =
+                    if (prefs.contains(WallpaperComm.PREF_WALLPAPER_VISIBLE)) {
+                        prefs.getBoolean(WallpaperComm.PREF_WALLPAPER_VISIBLE, false)
+                    } else {
+                        null
+                    }
+            val wallpaperInteraction = prefs.wallpaperInteraction()
+            val wallpaperUpdatedAt =
+                    listOfNotNull(
+                                    prefs.optionalLong(
+                                            WallpaperComm.PREF_WALLPAPER_VISIBLE_UPDATED_AT
+                                    ),
+                                    wallpaperInteraction?.timestampMillis
+                            )
+                            .maxOrNull()
+            return copy(
+                    surface =
+                            if (wallpaperVisible == null) surface
+                            else surface.copy(wallpaperVisible = wallpaperVisible),
+                    lastInteraction = newestInteraction(lastInteraction, wallpaperInteraction),
+                    updatedAtMillis = maxOf(updatedAtMillis, wallpaperUpdatedAt ?: updatedAtMillis)
             )
         }
 
@@ -217,6 +258,36 @@ private fun displayNameForMotion(filePath: String): String {
 
 private fun stableModelKey(vararg candidates: String?): String? =
         candidates.mapNotNull { it.cleanOrNull() }.firstOrNull()
+
+private fun SharedPreferences.wallpaperInteraction(): EnvironmentInteraction? {
+    val type = getString(WallpaperComm.PREF_WALLPAPER_INTERACTION_TYPE, null).cleanOrNull()
+            ?: return null
+    return EnvironmentInteraction(
+            type = type,
+            x = optionalFloat(WallpaperComm.PREF_WALLPAPER_INTERACTION_X),
+            y = optionalFloat(WallpaperComm.PREF_WALLPAPER_INTERACTION_Y),
+            timestampMillis = optionalLong(WallpaperComm.PREF_WALLPAPER_INTERACTION_TIMESTAMP)
+    )
+}
+
+private fun SharedPreferences.optionalFloat(key: String): Float? =
+        if (contains(key)) getFloat(key, 0f).takeIf { it.isFinite() } else null
+
+private fun SharedPreferences.optionalLong(key: String): Long? =
+        if (contains(key)) getLong(key, 0L).takeIf { it >= 0L } else null
+
+private fun newestInteraction(
+        current: EnvironmentInteraction?,
+        candidate: EnvironmentInteraction?
+): EnvironmentInteraction? {
+    if (candidate == null) return current
+    if (current == null) return candidate
+    val currentTimestamp = current.timestampMillis
+    val candidateTimestamp = candidate.timestampMillis
+    if (candidateTimestamp == null) return current
+    if (currentTimestamp == null) return candidate
+    return if (candidateTimestamp >= currentTimestamp) candidate else current
+}
 
 private fun ChatEnvironmentInteraction.toEnvironmentInteraction(): EnvironmentInteraction? {
     val cleanType = type.cleanOrNull() ?: return null

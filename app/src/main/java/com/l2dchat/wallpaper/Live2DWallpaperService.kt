@@ -30,6 +30,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private const val WALLPAPER_INTERACTION_MOVE_PERSIST_INTERVAL_MS = 120L
+
 /**
  * 基础 Live2D 动态壁纸骨架： 后续需要接入现有的 Live2D 渲染器 (ImprovedLive2DRenderer / LifecycleManager) 放到一个离屏或直接 GL
  * 上下文。 当前版本先用占位绘制与手势缩放/拖动逻辑，消息接收与气泡缓冲。
@@ -69,6 +71,7 @@ class Live2DWallpaperService : WallpaperService() {
         private val restartMaxDelayMs = 5_000L
         private val serviceResetDelayMs = 3_000L
         private val threadJoinTimeoutMs = 1_200L
+        private var lastMoveInteractionPersistMillis = 0L
         private val renderEventListener =
                 object : WallpaperGLThread.RenderEventListener {
                     override fun onRenderError(
@@ -86,26 +89,46 @@ class Live2DWallpaperService : WallpaperService() {
                 Live2DGestureDispatcher(
                         object : Live2DGestureDispatcher.Callbacks {
                             override fun onSingleDown(x: Float, y: Float) {
+                                persistWallpaperInteraction("wallpaper_touch", x, y)
                                 LAppDelegate.getInstance().onTouchBegan(x, y)
                             }
 
                             override fun onSingleMove(x: Float, y: Float) {
+                                persistWallpaperInteraction("wallpaper_drag", x, y, throttle = true)
                                 LAppDelegate.getInstance().onTouchMoved(x, y)
                             }
 
                             override fun onSingleUp(x: Float, y: Float) {
+                                persistWallpaperInteraction("wallpaper_touch_end", x, y)
                                 LAppDelegate.getInstance().onTouchEnd(x, y)
                             }
 
                             override fun onMultiStart(x1: Float, y1: Float, x2: Float, y2: Float) {
+                                persistWallpaperInteraction(
+                                        "wallpaper_multi_touch",
+                                        centerOf(x1, x2),
+                                        centerOf(y1, y2)
+                                )
                                 LAppDelegate.getInstance().onMultiTouchBegan(x1, y1, x2, y2)
                             }
 
                             override fun onMultiMove(x1: Float, y1: Float, x2: Float, y2: Float) {
+                                persistWallpaperInteraction(
+                                        "wallpaper_multi_drag",
+                                        centerOf(x1, x2),
+                                        centerOf(y1, y2),
+                                        throttle = true
+                                )
                                 LAppDelegate.getInstance().onMultiTouchMoved(x1, y1, x2, y2)
                             }
 
-                            override fun onMultiEnd() {}
+                            override fun onMultiEnd() {
+                                persistWallpaperInteraction(
+                                        "wallpaper_multi_touch_end",
+                                        null,
+                                        null
+                                )
+                            }
                         }
                 )
 
@@ -350,6 +373,7 @@ class Live2DWallpaperService : WallpaperService() {
         override fun onDestroy() {
             super.onDestroy()
             logger.info("Engine destroyed, shutting down GL thread")
+            persistWallpaperVisibility(false)
             try {
                 unregisterReceiver(receiver)
             } catch (_: Exception) {}
@@ -374,6 +398,7 @@ class Live2DWallpaperService : WallpaperService() {
             super.onVisibilityChanged(visible)
             logger.info("Visibility changed -> $visible")
             engineVisible = visible
+            persistWallpaperVisibility(visible)
             if (visible) {
                 synchronized(glThreadGuard) { glThread }?.onResume()
                 lastRequestedModelFolder?.let { renderer.setModelFolder(it) }
@@ -420,6 +445,49 @@ class Live2DWallpaperService : WallpaperService() {
             )
             gestureDispatcher.onTouchEvent(event)
         }
+
+        private fun persistWallpaperVisibility(visible: Boolean) {
+            prefs.edit()
+                    .putBoolean(WallpaperComm.PREF_WALLPAPER_VISIBLE, visible)
+                    .putLong(
+                            WallpaperComm.PREF_WALLPAPER_VISIBLE_UPDATED_AT,
+                            System.currentTimeMillis()
+                    )
+                    .apply()
+        }
+
+        private fun persistWallpaperInteraction(
+                type: String,
+                x: Float?,
+                y: Float?,
+                throttle: Boolean = false
+        ) {
+            val elapsed = SystemClock.uptimeMillis()
+            if (
+                    throttle &&
+                            elapsed - lastMoveInteractionPersistMillis <
+                                    WALLPAPER_INTERACTION_MOVE_PERSIST_INTERVAL_MS
+            ) {
+                return
+            }
+            if (throttle) lastMoveInteractionPersistMillis = elapsed
+            val editor =
+                    prefs.edit()
+                            .putString(WallpaperComm.PREF_WALLPAPER_INTERACTION_TYPE, type)
+                            .putLong(
+                                    WallpaperComm.PREF_WALLPAPER_INTERACTION_TIMESTAMP,
+                                    System.currentTimeMillis()
+                            )
+            val cleanX = x?.takeIf { it.isFinite() }
+            val cleanY = y?.takeIf { it.isFinite() }
+            if (cleanX == null) editor.remove(WallpaperComm.PREF_WALLPAPER_INTERACTION_X)
+            else editor.putFloat(WallpaperComm.PREF_WALLPAPER_INTERACTION_X, cleanX)
+            if (cleanY == null) editor.remove(WallpaperComm.PREF_WALLPAPER_INTERACTION_Y)
+            else editor.putFloat(WallpaperComm.PREF_WALLPAPER_INTERACTION_Y, cleanY)
+            editor.apply()
+        }
+
+        private fun centerOf(first: Float, second: Float): Float = (first + second) * 0.5f
 
         private fun loadBackgroundAsync(path: String?, force: Boolean = false) {
             lastRequestedBackgroundPath = path

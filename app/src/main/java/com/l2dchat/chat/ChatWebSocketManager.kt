@@ -192,6 +192,7 @@ class ChatWebSocketManager {
     fun setActiveModel(context: Context, modelName: String?) {
         receiverModelName = modelName?.ifBlank { null }
         activeModelKey = modelName?.lowercase()?.replace(Regex("[^a-z0-9_-]+"), "_")
+        environmentStateProvider.setApplicationContext(context)
         environmentStateProvider.update(
                 ChatEnvironmentUpdate(modelKey = activeModelKey, modelName = receiverModelName)
         )
