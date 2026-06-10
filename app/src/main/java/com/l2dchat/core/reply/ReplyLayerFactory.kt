@@ -56,4 +56,14 @@ class ReplyLayerFactory(
                 }
         activeLoops.forEach { it.shutdown() }
     }
+
+    fun cancel() {
+        val activeLoops =
+                synchronized(lock) {
+                    val activeLoops = loops.values.toList()
+                    loops.clear()
+                    activeLoops
+                }
+        activeLoops.forEach { it.cancel() }
+    }
 }

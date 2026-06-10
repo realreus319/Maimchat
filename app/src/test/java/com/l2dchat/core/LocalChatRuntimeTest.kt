@@ -30,6 +30,7 @@ class LocalChatRuntimeTest {
 
             assertTrue(handled)
             assertEquals(1, runtime.activePerceptionWorkerCount())
+            assertEquals(1, runtime.activePlannerLoopCount())
             val reply = emitted.single()
             assertEquals("test_platform", reply.messageInfo.platform)
             assertEquals("bot-id", reply.messageInfo.senderInfo?.userInfo?.userId)
@@ -57,6 +58,7 @@ class LocalChatRuntimeTest {
 
             assertFalse(handled)
             assertEquals(0, runtime.activePerceptionWorkerCount())
+            assertEquals(0, runtime.activePlannerLoopCount())
             assertTrue(emitted.isEmpty())
             runtime.stopAndDrain()
         }

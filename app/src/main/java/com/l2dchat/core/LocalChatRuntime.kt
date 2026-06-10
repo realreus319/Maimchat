@@ -12,12 +12,15 @@ import com.l2dchat.core.inbound.InboundBuilder
 import com.l2dchat.core.inbound.InboundMessage
 import com.l2dchat.core.perception.PerceptionDispatcher
 import com.l2dchat.core.perception.PerceptionProcessor
-import com.l2dchat.core.perception.TriggerSink
+import com.l2dchat.core.reply.PlannerReply
+import com.l2dchat.core.reply.PlannerReplySink
+import com.l2dchat.core.reply.PlannerTriggerProcessor
+import com.l2dchat.core.reply.ReplyLayerFactory
 import com.l2dchat.core.reply.ReplySink
 import com.l2dchat.core.trigger.Trigger
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
@@ -33,18 +36,26 @@ class LocalChatRuntime(
     private val inboundBuilder = InboundBuilder()
     private val perceptionProcessor = PerceptionProcessor()
     private val pendingLock = Any()
-    private val pendingTriggers = linkedMapOf<PendingTriggerKey, CompletableDeferred<Trigger>>()
+    private val pendingReplies = linkedMapOf<PendingTriggerKey, PendingRuntimeReply>()
+    private val replyLayerFactory =
+            ReplyLayerFactory(
+                    scope = scope,
+                    processorFactory = {
+                        PlannerTriggerProcessor { context ->
+                            context.sendReply(context.triggerText)
+                        }
+                    },
+                    replySinkFactory = { PlannerReplySink { reply -> handlePlannerReply(reply) } },
+                    onError = { _, trigger, throwable ->
+                        removePending(trigger.toPendingKey())?.completion?.completeExceptionally(throwable)
+                    }
+            )
     private val perceptionDispatcher =
             PerceptionDispatcher(
                     scope = scope,
-                    triggerSink =
-                            object : TriggerSink {
-                                override suspend fun submit(trigger: Trigger) {
-                                    removePending(trigger.toPendingKey())?.complete(trigger)
-                                }
-                            },
+                    triggerSink = replyLayerFactory,
                     onError = { _, message, throwable ->
-                        removePending(message.toPendingKey())?.completeExceptionally(throwable)
+                        removePending(message.toPendingKey())?.completion?.completeExceptionally(throwable)
                     }
             )
 
@@ -71,20 +82,18 @@ class LocalChatRuntime(
                         message = inbound,
                         fallbackPlatform = fallbackPlatform
                 )
-        val pending = registerPending(inboundMessage)
+        val pending =
+                registerPending(
+                        message = inboundMessage,
+                        inbound = inbound,
+                        fallbackPlatform = fallbackPlatform,
+                        fallbackAgentName = fallbackAgentName,
+                        replySink = replySink
+                )
 
         try {
             perceptionDispatcher.submit(inboundMessage)
-            val trigger = pending.await()
-            replySink.send(
-                    createReply(
-                            inbound = inbound,
-                            fallbackPlatform = fallbackPlatform,
-                            fallbackAgentName = fallbackAgentName,
-                            inboundText = trigger.payload["text"]?.toString().orEmpty()
-                    )
-            )
-            return true
+            return pending.completion.await()
         } catch (throwable: Throwable) {
             removePending(inboundMessage.toPendingKey())
             throw throwable
@@ -93,38 +102,73 @@ class LocalChatRuntime(
 
     suspend fun stopAndDrain() {
         perceptionDispatcher.stopAndDrain()
+        replyLayerFactory.shutdown()
     }
 
     fun cancel() {
         perceptionDispatcher.cancel()
+        replyLayerFactory.cancel()
         failPending(CancellationException("Local chat runtime cancelled"))
     }
 
     fun activePerceptionWorkerCount(): Int = perceptionDispatcher.workerCount
 
-    private fun registerPending(message: InboundMessage): CompletableDeferred<Trigger> {
+    fun activePlannerLoopCount(): Int = replyLayerFactory.loopCount
+
+    private fun registerPending(
+            message: InboundMessage,
+            inbound: MessageBase,
+            fallbackPlatform: String,
+            fallbackAgentName: String?,
+            replySink: ReplySink
+    ): PendingRuntimeReply {
         val key = message.toPendingKey()
-        val pending = CompletableDeferred<Trigger>()
+        val pending =
+                PendingRuntimeReply(
+                        inbound = inbound,
+                        fallbackPlatform = fallbackPlatform,
+                        fallbackAgentName = fallbackAgentName,
+                        replySink = replySink,
+                        completion = CompletableDeferred()
+                )
         synchronized(pendingLock) {
-            require(!pendingTriggers.containsKey(key)) {
+            require(!pendingReplies.containsKey(key)) {
                 "Duplicate pending inbound message ${message.messageId} for ${message.routingKey}"
             }
-            pendingTriggers[key] = pending
+            pendingReplies[key] = pending
         }
         return pending
     }
 
-    private fun removePending(key: PendingTriggerKey): CompletableDeferred<Trigger>? =
-            synchronized(pendingLock) { pendingTriggers.remove(key) }
+    private suspend fun handlePlannerReply(reply: PlannerReply) {
+        val pending = removePending(reply.trigger.toPendingKey()) ?: return
+        try {
+            pending.replySink.send(
+                    createReply(
+                            inbound = pending.inbound,
+                            fallbackPlatform = pending.fallbackPlatform,
+                            fallbackAgentName = pending.fallbackAgentName,
+                            inboundText = reply.text
+                    )
+            )
+            pending.completion.complete(true)
+        } catch (throwable: Throwable) {
+            pending.completion.completeExceptionally(throwable)
+            throw throwable
+        }
+    }
+
+    private fun removePending(key: PendingTriggerKey): PendingRuntimeReply? =
+            synchronized(pendingLock) { pendingReplies.remove(key) }
 
     private fun failPending(cause: Throwable) {
         val pending =
                 synchronized(pendingLock) {
-                    val pending = pendingTriggers.values.toList()
-                    pendingTriggers.clear()
+                    val pending = pendingReplies.values.toList()
+                    pendingReplies.clear()
                     pending
                 }
-        pending.forEach { it.completeExceptionally(cause) }
+        pending.forEach { it.completion.completeExceptionally(cause) }
     }
 
     private fun InboundMessage.toPendingKey(): PendingTriggerKey =
@@ -137,6 +181,14 @@ class LocalChatRuntime(
             )
 
     private data class PendingTriggerKey(val routingKey: RoutingKey, val messageId: String)
+
+    private data class PendingRuntimeReply(
+            val inbound: MessageBase,
+            val fallbackPlatform: String,
+            val fallbackAgentName: String?,
+            val replySink: ReplySink,
+            val completion: CompletableDeferred<Boolean>
+    )
 
     fun createReply(
             inbound: MessageBase,

@@ -97,6 +97,17 @@ class PlannerLoop(
         jobs.forEach { it.cancelAndJoin() }
     }
 
+    fun cancel() {
+        val jobs =
+                synchronized(lock) {
+                    shutdownRequested = true
+                    triggerQueue.clear()
+                    listOfNotNull(currentJob, loopJob)
+                }
+        signal.close()
+        jobs.forEach { it.cancel() }
+    }
+
     private suspend fun awaitNextTrigger(): Trigger? {
         while (true) {
             val next =

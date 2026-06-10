@@ -341,7 +341,8 @@ Progress:
 - Done: image, emoji, and voice `seglist` blocks are preserved through inbound, trigger payload, and media block storage.
 - Done: `PerceptionDispatcher` and `PerceptionWorker` queue inbound messages per `(contextId, agentId)`, optionally persist parsed messages, and submit triggers through `TriggerSink`.
 - Done: `LocalChatRuntime.handleMessage()` now routes chat input through `PerceptionDispatcher` and waits on `TriggerSink` before emitting the current fixed local reply.
-- Pending: routing into the concrete planner layer.
+- Done: `LocalChatRuntime.handleMessage()` now routes perception triggers into `ReplyLayerFactory` and `PlannerLoop`.
+- Pending: Room-backed standard message persistence from the live local runtime path.
 
 ## Phase 4: PlannerLoop Core
 
@@ -402,7 +403,8 @@ Progress:
 - Done: `PlannerLoopState`, `PlannerLoop`, `PlannerTurnContext`, `PlannerReplySink`, and `ReplyLayerFactory` skeletons are in place.
 - Done: `ReplyLayerFactory` creates one running loop per `(contextId, agentId)` and implements `TriggerSink`.
 - Done: `PlannerLoop` processes queued triggers by priority and timestamp, supports `MSG` interruption through foreground epoch advancement and job cancellation, rejects duplicate foreground replies, and rejects stale foreground sends.
-- Pending: planner session persistence, native tool-calling processor, decision/fork replier adoption, and concrete runtime wiring.
+- Done: `LocalChatRuntime` now routes perception triggers into `ReplyLayerFactory`/`PlannerLoop`; the temporary fixed reply is emitted by a planner processor and converted back through `PlannerReplySink`.
+- Pending: planner session persistence, native tool-calling processor, and decision/fork replier adoption.
 
 ## Phase 5: LLM Client
 
@@ -775,22 +777,22 @@ Recommended first implementation slices:
 
 Core routing:
 
-- [ ] User input becomes standard message.
-- [ ] Standard message becomes internal message.
-- [ ] Internal message has context id and agent id.
+- [x] User input becomes standard message.
+- [x] Standard message becomes internal message.
+- [x] Internal message has context id and agent id.
 - [ ] Message is persisted before reply generation.
-- [ ] Message parser extracts text, command, mention, sender, timestamp.
-- [ ] Multimodal blocks are retained.
-- [ ] Trigger is created with correct type and priority.
-- [ ] Trigger is routed to the correct planner loop.
+- [x] Message parser extracts text, command, mention, sender, timestamp.
+- [x] Multimodal blocks are retained.
+- [x] Trigger is created with correct type and priority.
+- [x] Trigger is routed to the correct planner loop.
 
 Planner:
 
-- [ ] One loop per `(contextId, agentId)`.
-- [ ] Priority queue sorts by priority and timestamp.
-- [ ] `MSG` triggers can interrupt.
-- [ ] `ENV` and `SYS` triggers queue.
-- [ ] Foreground epoch blocks stale sends.
+- [x] One loop per `(contextId, agentId)`.
+- [x] Priority queue sorts by priority and timestamp.
+- [x] `MSG` triggers can interrupt.
+- [x] `ENV` and `SYS` triggers queue.
+- [x] Foreground epoch blocks stale sends.
 - [ ] Planner session is persisted.
 - [ ] Native tool calling works.
 - [ ] JSON fallback works for providers without tool calling.
