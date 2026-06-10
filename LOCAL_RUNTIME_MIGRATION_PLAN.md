@@ -411,8 +411,9 @@ Progress:
   executes registered tools, sends planner-managed `replier` output through the
   existing `ReplySink`, and falls back to final assistant text when no tool reply
   was sent.
-- Pending: JSON fallback for non-tool providers, tool task/session message persistence,
-  and decision/fork replier adoption.
+- Pending: tool task/session message persistence and decision/fork replier adoption.
+- Done: JSON fallback planner processor executes tool calls through plain
+  `chatCompletion` responses for providers without native tool calling.
 
 ## Phase 5: LLM Client
 
@@ -864,7 +865,7 @@ Planner:
 - [x] Foreground epoch blocks stale sends.
 - [x] Planner session is persisted.
 - [x] Native tool calling works.
-- [ ] JSON fallback works for providers without tool calling.
+- [x] JSON fallback works for providers without tool calling.
 - [x] Final assistant text fallback sends only when no tool reply was sent.
 
 Replier:
