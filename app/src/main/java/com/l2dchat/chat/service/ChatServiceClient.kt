@@ -494,12 +494,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
 
     fun getConnectionStateDescription(): String =
             connectionLabel.value.ifBlank {
-                when (connectionState.value) {
-                    ChatConnectionState.DISCONNECTED -> "未连接"
-                    ChatConnectionState.CONNECTING -> "连接中"
-                    ChatConnectionState.CONNECTED -> "已连接"
-                    ChatConnectionState.ERROR -> "错误"
-                }
+                fallbackConnectionLabel(runtimeMode.value, connectionState.value)
             }
 
     fun release() {
@@ -667,6 +662,27 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                     values().getOrNull(ordinal) ?: DISCONNECTED
         }
     }
+
+    private fun fallbackConnectionLabel(
+            mode: ChatRuntimeMode,
+            state: ChatConnectionState
+    ): String =
+            when (mode) {
+                ChatRuntimeMode.LOCAL ->
+                        when (state) {
+                            ChatConnectionState.DISCONNECTED -> "本地运行时: stopped"
+                            ChatConnectionState.CONNECTING -> "本地运行时: starting"
+                            ChatConnectionState.CONNECTED -> "本地运行时: ready"
+                            ChatConnectionState.ERROR -> "本地运行时: error"
+                        }
+                ChatRuntimeMode.REMOTE ->
+                        when (state) {
+                            ChatConnectionState.DISCONNECTED -> "远端 WebSocket: 未连接"
+                            ChatConnectionState.CONNECTING -> "远端 WebSocket: 连接中"
+                            ChatConnectionState.CONNECTED -> "远端 WebSocket: 已连接"
+                            ChatConnectionState.ERROR -> "远端 WebSocket: 错误"
+                        }
+            }
 
     companion object {
         private const val CHAT_PREFS = "chat_prefs"

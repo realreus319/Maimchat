@@ -104,12 +104,25 @@ class LocalTransport(
             }
 
     fun start() {
-        val wasRunning =
+        val shouldEmitStarting =
                 synchronized(runtimeLock) {
-                    val previous = running
-                    ensureRuntimeLocked()
-                    running = true
-                    previous
+                    !running || runtime == null || runtimeJob?.isActive != true
+                }
+        if (shouldEmitStarting) {
+            callbacks.onStateChanged(ConnectionState.CONNECTING)
+        }
+        val wasRunning =
+                try {
+                    synchronized(runtimeLock) {
+                        val previous = running
+                        ensureRuntimeLocked()
+                        running = true
+                        previous
+                    }
+                } catch (e: Exception) {
+                    markRuntimeFailed()
+                    callbacks.onError("本地运行时启动失败：${e.message ?: "未知错误"}", e)
+                    return
                 }
         callbacks.onStateChanged(ConnectionState.CONNECTED)
         if (!wasRunning) {
@@ -118,18 +131,31 @@ class LocalTransport(
     }
 
     fun rebuildRuntime(reason: String = "runtime configuration changed") {
-        val previous =
-                synchronized(runtimeLock) {
-                    val snapshot = clearRuntimeLocked()
-                    if (running) {
-                        ensureRuntimeLocked()
+        if (isRunning()) {
+            callbacks.onStateChanged(ConnectionState.CONNECTING)
+        }
+        var previous: RuntimeSnapshot? = null
+        try {
+            previous =
+                    synchronized(runtimeLock) {
+                        val snapshot = clearRuntimeLocked()
+                        if (running) {
+                            ensureRuntimeLocked()
+                        }
+                        snapshot
                     }
-                    snapshot
-                }
-        previous.runtime?.cancel()
-        previous.job?.cancel()
+        } catch (e: Exception) {
+            previous?.runtime?.cancel()
+            previous?.job?.cancel()
+            markRuntimeFailed()
+            callbacks.onError("本地运行时重建失败：${e.message ?: "未知错误"}", e)
+            return
+        }
+        val rebuilt = previous ?: return
+        rebuilt.runtime?.cancel()
+        rebuilt.job?.cancel()
         logger.info("本地聊天运行时已重建：$reason")
-        if (previous.wasRunning) {
+        if (rebuilt.wasRunning) {
             callbacks.onStateChanged(ConnectionState.CONNECTED)
         }
     }
@@ -170,6 +196,7 @@ class LocalTransport(
             } catch (_: CancellationException) {
                 // Expected when local runtime is stopped, rebuilt, or the service is destroyed.
             } catch (e: Exception) {
+                callbacks.onStateChanged(ConnectionState.ERROR)
                 callbacks.onError("本地运行时处理消息失败：${e.message ?: "未知错误"}", e)
             }
         }
@@ -195,6 +222,7 @@ class LocalTransport(
             } catch (_: CancellationException) {
                 // Expected when local runtime is stopped, rebuilt, or the service is destroyed.
             } catch (e: Exception) {
+                callbacks.onStateChanged(ConnectionState.ERROR)
                 callbacks.onError("本地运行时处理环境触发失败：${e.message ?: "未知错误"}", e)
             }
         }
@@ -250,6 +278,18 @@ class LocalTransport(
     }
 
     private fun newRuntimeJob(): Job = SupervisorJob(scope.coroutineContext[Job])
+
+    private fun markRuntimeFailed() {
+        val snapshot =
+                synchronized(runtimeLock) {
+                    val cleared = clearRuntimeLocked()
+                    running = false
+                    cleared
+                }
+        snapshot.runtime?.cancel()
+        snapshot.job?.cancel()
+        callbacks.onStateChanged(ConnectionState.ERROR)
+    }
 
     private data class RuntimeWork(
             val runtime: LocalChatRuntime,

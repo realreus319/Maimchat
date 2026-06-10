@@ -896,8 +896,11 @@ Progress:
 - Done: the main chat screen labels the configuration surface as runtime
   settings, keeps remote WebSocket wording scoped to remote mode, and persists
   remote URLs only when remote mode is selected.
-- Pending: add visible local engine states (`stopped`/`starting`/`ready`/`error`)
-  and provider-first status display.
+- Done: the local transport now emits visible `starting` and `error` states in
+  addition to stopped/ready, surfaces provider call failures as local runtime
+  errors, and the main chat status line is provider-first for local LLM settings.
+- Pending: add deeper runtime diagnostics for provider failures and parity
+  verification against the old backend.
 
 Acceptance:
 

@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
@@ -108,6 +109,7 @@ fun ChatWithModelScreen(
     val scope = rememberCoroutineScope()
 
     val connectionState by chatManager.connectionState.collectAsState()
+    val connectionLabel by chatManager.connectionLabel.collectAsState()
     val messages by chatManager.messages.collectAsState()
     val standardMessages by chatManager.standardMessages.collectAsState()
     val currentUserNickname by chatManager.userNickname.collectAsState()
@@ -158,6 +160,22 @@ fun ChatWithModelScreen(
     var suppressMissingUrlWarning by rememberSaveable { mutableStateOf(true) }
     var pendingAgentProfileExportJson by remember { mutableStateOf<String?>(null) }
     var agentProfileImportEvent by remember { mutableStateOf<AgentProfileImportEvent?>(null) }
+    val runtimeStatusLine =
+            remember(
+                    runtimeMode,
+                    connectionState,
+                    connectionLabel,
+                    effectiveLocalLlmSettings,
+                    serverUrl
+            ) {
+                buildRuntimeStatusLine(
+                        runtimeMode = runtimeMode,
+                        connectionState = connectionState,
+                        connectionLabel = connectionLabel,
+                        localLlmSettings = effectiveLocalLlmSettings,
+                        serverUrl = serverUrl
+                )
+            }
 
     var isLoadingDefaultModel by remember { mutableStateOf(selectedModel == null) }
     var currentModel by remember(modelKey) { mutableStateOf(selectedModel) }
@@ -574,14 +592,10 @@ fun ChatWithModelScreen(
                             Column {
                                 Text(currentModel!!.name)
                                 Text(
-                                        text =
-                                                chatManager.getConnectionStateDescription() +
-                                                        when (connectionState) {
-                                                            ChatServiceClient.ChatConnectionState
-                                                                    .CONNECTING -> " (校验配置...)"
-                                                            else -> ""
-                                                        },
-                                        style = MaterialTheme.typography.bodySmall
+                                        text = runtimeStatusLine,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                 )
                             }
                         },
@@ -1262,6 +1276,58 @@ private fun validateConfig(
                 errors.add("WebSocket 地址必须以 ws:// 或 wss:// 开头")
     }
     return errors
+}
+
+private fun buildRuntimeStatusLine(
+        runtimeMode: ChatRuntimeMode,
+        connectionState: ChatServiceClient.ChatConnectionState,
+        connectionLabel: String,
+        localLlmSettings: LocalLlmSettings,
+        serverUrl: String
+): String {
+    val stateLabel =
+            connectionLabel.ifBlank { fallbackRuntimeStatusLabel(runtimeMode, connectionState) }
+    return when (runtimeMode) {
+        ChatRuntimeMode.LOCAL -> "${localProviderStatusText(localLlmSettings)} · $stateLabel"
+        ChatRuntimeMode.REMOTE -> "${remoteProviderStatusText(serverUrl)} · $stateLabel"
+    }
+}
+
+private fun fallbackRuntimeStatusLabel(
+        runtimeMode: ChatRuntimeMode,
+        connectionState: ChatServiceClient.ChatConnectionState
+): String =
+        when (runtimeMode) {
+            ChatRuntimeMode.LOCAL ->
+                    when (connectionState) {
+                        ChatServiceClient.ChatConnectionState.DISCONNECTED ->
+                                "本地运行时: stopped"
+                        ChatServiceClient.ChatConnectionState.CONNECTING -> "本地运行时: starting"
+                        ChatServiceClient.ChatConnectionState.CONNECTED -> "本地运行时: ready"
+                        ChatServiceClient.ChatConnectionState.ERROR -> "本地运行时: error"
+                    }
+            ChatRuntimeMode.REMOTE ->
+                    when (connectionState) {
+                        ChatServiceClient.ChatConnectionState.DISCONNECTED ->
+                                "远端 WebSocket: 未连接"
+                        ChatServiceClient.ChatConnectionState.CONNECTING -> "远端 WebSocket: 连接中"
+                        ChatServiceClient.ChatConnectionState.CONNECTED -> "远端 WebSocket: 已连接"
+                        ChatServiceClient.ChatConnectionState.ERROR -> "远端 WebSocket: 错误"
+                    }
+        }
+
+private fun localProviderStatusText(settings: LocalLlmSettings): String {
+    val endpoint = settings.baseUrl?.trim()?.takeIf { it.isNotEmpty() } ?: "Endpoint 未配置"
+    val planner = settings.plannerModel?.trim()?.takeIf { it.isNotEmpty() } ?: "Planner 未配置"
+    val replier =
+            settings.replierModel?.trim()?.takeIf { it.isNotEmpty() } ?: "Replier 跟随 Planner"
+    val tools = if (settings.nativeToolCalling) "Tools native" else "Tools compat"
+    return "LLM: $endpoint · Planner: $planner · Replier: $replier · $tools"
+}
+
+private fun remoteProviderStatusText(serverUrl: String): String {
+    val url = serverUrl.trim().takeIf { it.isNotEmpty() } ?: "未配置"
+    return "WebSocket: $url"
 }
 
 private fun buildLocalLlmSettings(

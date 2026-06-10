@@ -143,17 +143,30 @@ class ChatConnectionService : Service() {
                     putInt(ChatServiceProtocol.EXTRA_CONNECTION_STATE, state.ordinal)
                     putString(
                             ChatServiceProtocol.EXTRA_CONNECTION_LABEL,
-                            when (state) {
-                                ConnectionState.DISCONNECTED -> "未连接"
-                                ConnectionState.CONNECTING -> "连接中"
-                                ConnectionState.CONNECTED -> manager.getConnectionStateDescription()
-                                ConnectionState.ERROR -> "错误"
-                            }
+                            connectionLabelFor(state)
                     )
                     putString(ChatServiceProtocol.EXTRA_RUNTIME_MODE, runtimeMode.wireValue)
                 }
         sendToClients(ChatServiceProtocol.MSG_EVENT_CONNECTION_STATE, bundle)
     }
+
+    private fun connectionLabelFor(state: ConnectionState): String =
+            when (runtimeMode) {
+                ChatRuntimeMode.LOCAL ->
+                        when (state) {
+                            ConnectionState.DISCONNECTED -> "本地运行时: stopped"
+                            ConnectionState.CONNECTING -> "本地运行时: starting"
+                            ConnectionState.CONNECTED -> "本地运行时: ready"
+                            ConnectionState.ERROR -> "本地运行时: error"
+                        }
+                ChatRuntimeMode.REMOTE ->
+                        when (state) {
+                            ConnectionState.DISCONNECTED -> "远端 WebSocket: 未连接"
+                            ConnectionState.CONNECTING -> "远端 WebSocket: 连接中"
+                            ConnectionState.CONNECTED -> "远端 WebSocket: 已连接"
+                            ConnectionState.ERROR -> "远端 WebSocket: 错误"
+                        }
+            }
 
     private fun broadcastChatMessage(message: ChatMessage) {
         val bundle =

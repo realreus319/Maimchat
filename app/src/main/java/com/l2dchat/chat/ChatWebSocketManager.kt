@@ -1086,12 +1086,21 @@ class ChatWebSocketManager {
     }
 
     fun getConnectionStateDescription(): String =
-            when (_connectionState.value) {
-                ConnectionState.DISCONNECTED -> "未连接"
-                ConnectionState.CONNECTING -> "连接中..."
-                ConnectionState.CONNECTED ->
-                        if (activeTransport.mode == RuntimeMode.LOCAL) "本地运行中" else "已连接"
-                ConnectionState.ERROR -> "连接错误"
+            when (activeTransport.mode) {
+                RuntimeMode.LOCAL ->
+                        when (_connectionState.value) {
+                            ConnectionState.DISCONNECTED -> "本地运行时: stopped"
+                            ConnectionState.CONNECTING -> "本地运行时: starting"
+                            ConnectionState.CONNECTED -> "本地运行时: ready"
+                            ConnectionState.ERROR -> "本地运行时: error"
+                        }
+                RuntimeMode.REMOTE ->
+                        when (_connectionState.value) {
+                            ConnectionState.DISCONNECTED -> "远端 WebSocket: 未连接"
+                            ConnectionState.CONNECTING -> "远端 WebSocket: 连接中"
+                            ConnectionState.CONNECTED -> "远端 WebSocket: 已连接"
+                            ConnectionState.ERROR -> "远端 WebSocket: 错误"
+                        }
             }
 
     fun getPlatform(): String = platform
