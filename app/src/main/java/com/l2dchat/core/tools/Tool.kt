@@ -9,8 +9,14 @@ data class ToolExecutionContext(
         val loopId: String,
         val routingKey: RoutingKey,
         val trigger: Trigger,
-        val foregroundEpoch: Int
+        val foregroundEpoch: Int,
+        val mode: ToolExecutionMode = ToolExecutionMode.NORMAL
 )
+
+enum class ToolExecutionMode {
+    NORMAL,
+    DECISION
+}
 
 data class ToolExecutionResult(
         val llmContent: String,
@@ -29,6 +35,9 @@ data class ToolExecutionResult(
 
 interface Tool {
     val definition: LlmToolDefinition
+
+    val allowedModes: Set<ToolExecutionMode>
+        get() = setOf(ToolExecutionMode.NORMAL)
 
     suspend fun execute(
             context: ToolExecutionContext,

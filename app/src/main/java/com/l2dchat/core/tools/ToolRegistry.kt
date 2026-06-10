@@ -15,7 +15,12 @@ class ToolRegistry(
                 require(byName.size == tools.size) { "Duplicate tool names are not allowed" }
             }
 
-    val definitions: List<LlmToolDefinition> = tools.map { it.definition }
+    val definitions: List<LlmToolDefinition> = definitionsFor(ToolExecutionMode.NORMAL)
+
+    fun definitionsFor(mode: ToolExecutionMode): List<LlmToolDefinition> =
+            toolsByName.values
+                    .filter { mode in it.allowedModes }
+                    .map { it.definition }
 
     suspend fun execute(
             context: ToolExecutionContext,
@@ -31,6 +36,17 @@ class ToolRegistry(
                                                 isError = true
                                         )
                         )
+        if (context.mode !in tool.allowedModes) {
+            return ToolCallExecutionResult(
+                    toolCall = toolCall,
+                    result =
+                            ToolExecutionResult(
+                                    llmContent =
+                                            "Tool ${toolCall.name} is not allowed in ${context.mode.name.lowercase()} mode",
+                                    isError = true
+                            )
+            )
+        }
         val arguments =
                 parseArguments(toolCall.argumentsJson)
                         ?: return ToolCallExecutionResult(

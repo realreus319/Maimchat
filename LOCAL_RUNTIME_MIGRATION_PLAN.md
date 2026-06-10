@@ -602,8 +602,13 @@ Progress:
 - Done: `ToolRegistry` exposes provider-neutral `LlmToolDefinition`s and converts
   unknown tools, malformed JSON, and argument validation failures into LLM tool
   error results.
-- Pending: decision-mode gating and background reply decision tools
-  (`wait_for`, `adopt_background_reply`, `kill_background_reply`).
+- Done: `ToolExecutionMode` and `ToolRegistry.definitionsFor()` gate normal and
+  decision-mode tools, rejecting disallowed calls before execution.
+- Done: `wait_for`, `adopt_background_reply`, and `kill_background_reply` operate
+  on `ReplierTaskManager`; adopt returns planner-managed `replyText`, while kill
+  cancels running background tasks.
+- Pending: planner decision/fork loop wiring that creates a decision-mode turn
+  after foreground interruption.
 
 ## Phase 8: Live2D And Environment Integration
 
