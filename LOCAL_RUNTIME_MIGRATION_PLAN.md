@@ -1021,8 +1021,12 @@ Android integration:
 
 - [x] Local mode starts without server URL.
 - [x] Remote WebSocket mode still works.
-- [ ] API key is stored securely.
-- [ ] No API key appears in logs.
+- [x] API key is stored securely.
+  Local LLM API keys and remote auth tokens are migrated out of `chat_prefs` and stored in
+  an Android Keystore-backed encrypted preference store.
+- [x] No API key appears in logs.
+  Authorization headers are masked, connection logs only expose token presence, and
+  `LocalLlmSettings.toString()` redacts `apiKey`.
 - [ ] Runtime survives service restarts where possible.
 - [ ] Long-running generation handles Android lifecycle cancellation.
 

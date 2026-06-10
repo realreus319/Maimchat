@@ -70,4 +70,19 @@ class LocalLlmSettingsTest {
         assertEquals("planner-model", config.replierConfig.model)
         assertTrue(config.nativeToolCalling)
     }
+
+    @Test
+    fun `string representation redacts api key`() {
+        val text =
+                LocalLlmSettings(
+                                enabled = true,
+                                baseUrl = "https://api.example.com/v1",
+                                apiKey = "secret-key",
+                                plannerModel = "planner-model"
+                        )
+                        .toString()
+
+        assertFalse(text.contains("secret-key"))
+        assertTrue(text.contains("apiKey=<redacted>"))
+    }
 }

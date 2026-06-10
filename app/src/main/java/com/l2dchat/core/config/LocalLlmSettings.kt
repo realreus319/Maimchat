@@ -46,9 +46,25 @@ data class LocalLlmSettings(
                     timeoutMillis = timeoutMillis
             )
 
+    override fun toString(): String =
+            "LocalLlmSettings(" +
+                    "enabled=$enabled, " +
+                    "baseUrl=$baseUrl, " +
+                    "apiKey=${apiKey.redactedForLog()}, " +
+                    "plannerModel=$plannerModel, " +
+                    "replierModel=$replierModel, " +
+                    "nativeToolCalling=$nativeToolCalling, " +
+                    "temperature=$temperature, " +
+                    "maxTokens=$maxTokens, " +
+                    "timeoutMillis=$timeoutMillis" +
+                    ")"
+
     companion object {
         const val DEFAULT_TIMEOUT_MILLIS: Long = 60_000L
     }
 }
 
 private fun String?.trimmedOrNull(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
+
+private fun String?.redactedForLog(): String =
+        if (this.isNullOrBlank()) "null" else "<redacted>"

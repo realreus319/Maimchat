@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 class ChatConnectionService : Service() {
 
     private val logger = L2DLogger.module(LogModule.CHAT)
+    private val secureStore by lazy { SecurePreferenceStore(applicationContext) }
 
     private val clients = CopyOnWriteArraySet<Messenger>()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -84,7 +85,9 @@ class ChatConnectionService : Service() {
         val prefs = getSharedPreferences(CHAT_PREFS, MODE_PRIVATE)
         lastKnownUrl = prefs.getString(KEY_LAST_URL, null)?.takeUnless { it.isNullOrBlank() }
         lastKnownPlatform = prefs.getString(KEY_PLATFORM, null)?.takeUnless { it.isNullOrBlank() }
-        lastKnownAuth = prefs.getString(KEY_AUTH_TOKEN, null)?.takeUnless { it.isNullOrBlank() }
+        lastKnownAuth =
+                ChatSecurePreferences.readMigratingString(prefs, secureStore, KEY_AUTH_TOKEN)
+                        ?.takeUnless { it.isBlank() }
         lastKnownNickname = prefs.getString(KEY_NICKNAME, null)
         lastKnownReceiverId = prefs.getString(KEY_RECEIVER_ID, null)?.ifBlank { null }
         lastKnownReceiverNickname = prefs.getString(KEY_RECEIVER_NICKNAME, null)?.ifBlank { null }
@@ -481,13 +484,14 @@ class ChatConnectionService : Service() {
     }
 
     private fun persistConnectionConfig() {
+        ChatSecurePreferences.writeString(secureStore, KEY_AUTH_TOKEN, lastKnownAuth)
+        ChatSecurePreferences.writeString(secureStore, KEY_LOCAL_LLM_API_KEY, localLlmSettings.apiKey)
         val editor = getSharedPreferences(CHAT_PREFS, MODE_PRIVATE).edit()
         if (lastKnownUrl != null) editor.putString(KEY_LAST_URL, lastKnownUrl)
         else editor.remove(KEY_LAST_URL)
         if (lastKnownPlatform != null) editor.putString(KEY_PLATFORM, lastKnownPlatform)
         else editor.remove(KEY_PLATFORM)
-        if (lastKnownAuth != null) editor.putString(KEY_AUTH_TOKEN, lastKnownAuth)
-        else editor.remove(KEY_AUTH_TOKEN)
+        editor.remove(KEY_AUTH_TOKEN)
         if (!lastKnownNickname.isNullOrEmpty()) editor.putString(KEY_NICKNAME, lastKnownNickname)
         else editor.remove(KEY_NICKNAME)
         if (lastKnownReceiverId != null) editor.putString(KEY_RECEIVER_ID, lastKnownReceiverId)
@@ -498,7 +502,7 @@ class ChatConnectionService : Service() {
         editor.putBoolean(KEY_LOCAL_LLM_ENABLED, localLlmSettings.enabled)
         editor.putBoolean(KEY_LOCAL_LLM_NATIVE_TOOL_CALLING, localLlmSettings.nativeToolCalling)
         editor.putOptionalString(KEY_LOCAL_LLM_BASE_URL, localLlmSettings.baseUrl)
-        editor.putOptionalString(KEY_LOCAL_LLM_API_KEY, localLlmSettings.apiKey)
+        editor.remove(KEY_LOCAL_LLM_API_KEY)
         editor.putOptionalString(KEY_LOCAL_LLM_PLANNER_MODEL, localLlmSettings.plannerModel)
         editor.putOptionalString(KEY_LOCAL_LLM_REPLIER_MODEL, localLlmSettings.replierModel)
         editor.putOptionalDouble(KEY_LOCAL_LLM_TEMPERATURE, localLlmSettings.temperature)
@@ -511,7 +515,12 @@ class ChatConnectionService : Service() {
             LocalLlmSettings(
                     enabled = prefs.getBoolean(KEY_LOCAL_LLM_ENABLED, false),
                     baseUrl = prefs.getString(KEY_LOCAL_LLM_BASE_URL, null),
-                    apiKey = prefs.getString(KEY_LOCAL_LLM_API_KEY, null),
+                    apiKey =
+                            ChatSecurePreferences.readMigratingString(
+                                    prefs,
+                                    secureStore,
+                                    KEY_LOCAL_LLM_API_KEY
+                            ),
                     plannerModel = prefs.getString(KEY_LOCAL_LLM_PLANNER_MODEL, null),
                     replierModel = prefs.getString(KEY_LOCAL_LLM_REPLIER_MODEL, null),
                     nativeToolCalling =

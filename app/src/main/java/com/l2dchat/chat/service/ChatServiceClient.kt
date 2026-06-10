@@ -39,6 +39,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val prefs = appContext.getSharedPreferences(CHAT_PREFS, Context.MODE_PRIVATE)
+    private val secureStore = SecurePreferenceStore(appContext)
 
     private val incomingHandler =
             object : Handler(Looper.getMainLooper()) {
@@ -493,7 +494,12 @@ class ChatServiceClient(context: Context) : ServiceConnection {
             LocalLlmSettings(
                     enabled = prefs.getBoolean(KEY_LOCAL_LLM_ENABLED, false),
                     baseUrl = prefs.getString(KEY_LOCAL_LLM_BASE_URL, null),
-                    apiKey = prefs.getString(KEY_LOCAL_LLM_API_KEY, null),
+                    apiKey =
+                            ChatSecurePreferences.readMigratingString(
+                                    prefs,
+                                    secureStore,
+                                    KEY_LOCAL_LLM_API_KEY
+                            ),
                     plannerModel = prefs.getString(KEY_LOCAL_LLM_PLANNER_MODEL, null),
                     replierModel = prefs.getString(KEY_LOCAL_LLM_REPLIER_MODEL, null),
                     nativeToolCalling =
@@ -516,11 +522,12 @@ class ChatServiceClient(context: Context) : ServiceConnection {
             )
 
     private fun persistLocalLlmSettings(settings: LocalLlmSettings) {
+        ChatSecurePreferences.writeString(secureStore, KEY_LOCAL_LLM_API_KEY, settings.apiKey)
         prefs.edit()
                 .putBoolean(KEY_LOCAL_LLM_ENABLED, settings.enabled)
                 .putBoolean(KEY_LOCAL_LLM_NATIVE_TOOL_CALLING, settings.nativeToolCalling)
                 .putOptionalString(KEY_LOCAL_LLM_BASE_URL, settings.baseUrl)
-                .putOptionalString(KEY_LOCAL_LLM_API_KEY, settings.apiKey)
+                .remove(KEY_LOCAL_LLM_API_KEY)
                 .putOptionalString(KEY_LOCAL_LLM_PLANNER_MODEL, settings.plannerModel)
                 .putOptionalString(KEY_LOCAL_LLM_REPLIER_MODEL, settings.replierModel)
                 .putOptionalDouble(KEY_LOCAL_LLM_TEMPERATURE, settings.temperature)
