@@ -41,6 +41,17 @@ class PlannerPromptBuilderTest {
     }
 
     @Test
+    fun `builder can override system prompt per turn`() {
+        val messages =
+                PlannerPromptBuilder(systemPrompt = "system").buildMessages(
+                        context = turnContext(trigger("msg-1", text = "hello")),
+                        systemPromptOverride = "room system"
+                )
+
+        assertEquals("room system", messages[0].textContent())
+    }
+
+    @Test
     fun `builder keeps multimodal image blocks`() {
         val messages =
                 PlannerPromptBuilder(systemPrompt = "system").buildMessages(

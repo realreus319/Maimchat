@@ -21,6 +21,8 @@ class JsonFallbackPlannerTriggerProcessor(
         private val config: LlmGenerationConfig,
         private val toolRegistry: ToolRegistry,
         private val promptBuilder: PlannerPromptBuilder = PlannerPromptBuilder(),
+        private val systemPromptProvider: PlannerSystemPromptProvider =
+                EmptyPlannerSystemPromptProvider,
         private val toolMode: ToolExecutionMode = ToolExecutionMode.NORMAL,
         private val gson: Gson = Gson()
 ) : PlannerTriggerProcessor {
@@ -32,7 +34,13 @@ class JsonFallbackPlannerTriggerProcessor(
 
     override suspend fun process(context: PlannerTurnContext) {
         val toolDefinitions = toolRegistry.definitionsFor(toolMode)
-        val history = promptBuilder.buildMessages(context).withJsonFallbackInstructions(toolDefinitions)
+        val history =
+                promptBuilder
+                        .buildMessages(
+                                context = context,
+                                systemPromptOverride = systemPromptProvider.systemPromptFor(context)
+                        )
+                        .withJsonFallbackInstructions(toolDefinitions)
         val toolContext =
                 ToolExecutionContext(
                         loopId = context.loopId,

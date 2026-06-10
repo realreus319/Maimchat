@@ -18,10 +18,14 @@ import com.l2dchat.core.message.VisibleMessageRecord
 import com.l2dchat.core.perception.PerceptionStore
 import com.l2dchat.core.reply.NoopPlannerSessionStore
 import com.l2dchat.core.reply.PlannerSessionStore
+import com.l2dchat.core.reply.EmptyPlannerSystemPromptProvider
+import com.l2dchat.core.reply.PlannerSystemPromptProvider
+import com.l2dchat.core.reply.PlannerTurnContext
 import com.l2dchat.core.storage.ChatDatabase
 import com.l2dchat.core.storage.ChatHistoryStore
 import com.l2dchat.core.storage.RoomChatHistoryStore
 import com.l2dchat.core.storage.RoomPlannerSessionStore
+import com.l2dchat.core.storage.RoomPlannerSystemPromptProvider
 import com.l2dchat.core.storage.RoomPerceptionStore
 import com.l2dchat.core.storage.RoomReplierPromptContextProvider
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
@@ -93,6 +97,16 @@ class ChatWebSocketManager {
                     agentNameProvider = { receiverModelName },
                     perceptionStoreFactory = { localPerceptionStoreFor() },
                     plannerSessionStoreFactory = { localPlannerSessionStoreFor() },
+                    plannerSystemPromptProvider = {
+                        localPlannerSystemPromptProviderFor(
+                                RoomPlannerSystemPromptProvider.PLANNER_SYSTEM_TEMPLATE
+                        )
+                    },
+                    decisionPlannerSystemPromptProvider = {
+                        localPlannerSystemPromptProviderFor(
+                                RoomPlannerSystemPromptProvider.DECISION_SYSTEM_TEMPLATE
+                        )
+                    },
                     replierPromptContextProvider = { localReplierPromptContextProviderFor() },
                     localRuntimeLlmConfigProvider = { localLlmSettings.toRuntimeConfig() },
                     environmentStateProvider = environmentStateProvider,
@@ -756,6 +770,31 @@ class ChatWebSocketManager {
         val context = appContext ?: return NoopPlannerSessionStore
         val database = ChatDatabase.getInstance(context.applicationContext)
         return RoomPlannerSessionStore(database.plannerStateDao())
+    }
+
+    private fun localPlannerSystemPromptProviderFor(
+            templateName: String
+    ): PlannerSystemPromptProvider {
+        val context = appContext ?: return EmptyPlannerSystemPromptProvider
+        val app = context.applicationContext
+        val database = ChatDatabase.getInstance(app)
+        val stateDao = database.runtimeStateDao()
+        val roomProvider =
+                RoomPlannerSystemPromptProvider(
+                        stateDao = stateDao,
+                        templateName = templateName
+                )
+        return object : PlannerSystemPromptProvider {
+            override suspend fun systemPromptFor(context: PlannerTurnContext): String? {
+                DefaultAgentProfileSeeder.seed(
+                        context = app,
+                        stateDao = stateDao,
+                        agentId = context.routingKey.agentId,
+                        displayName = receiverModelName
+                )
+                return roomProvider.systemPromptFor(context)
+            }
+        }
     }
 
     private fun localReplierPromptContextProviderFor(): ReplierPromptContextProvider {

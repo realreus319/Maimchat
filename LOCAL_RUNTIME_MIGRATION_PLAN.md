@@ -799,6 +799,10 @@ Progress:
   defaults.
 - Done: `DefaultAgentProfileSeeder` writes default agent config and global
   prompt templates into Room without overwriting an existing per-agent config.
+- Done: `RoomPlannerSystemPromptProvider` lets normal planner turns read
+  `planner_system` and interrupted decision turns read `decision_system` from
+  Room prompt templates, with agent-specific templates taking priority over
+  global defaults.
 - Done: local runtime prompt context lookup is dynamically resolved from the
   current Android app/model context, so replier context still works when
   `LocalTransport` was created before `setActiveModel()`.

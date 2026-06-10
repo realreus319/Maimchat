@@ -13,8 +13,11 @@ import com.l2dchat.core.environment.EnvironmentTriggerSubmission
 import com.l2dchat.core.environment.MotionController
 import com.l2dchat.core.environment.NoopMotionController
 import com.l2dchat.core.perception.PerceptionStore
+import com.l2dchat.core.reply.EmptyPlannerSystemPromptProvider
 import com.l2dchat.core.reply.NoopPlannerSessionStore
 import com.l2dchat.core.reply.PlannerSessionStore
+import com.l2dchat.core.reply.PlannerSystemPromptProvider
+import com.l2dchat.core.reply.PlannerTurnContext
 import com.l2dchat.core.reply.ReplySink
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
 import com.l2dchat.core.tools.ReplierPromptContextProvider
@@ -34,6 +37,12 @@ class LocalTransport(
         plannerSessionStoreFactory: (RoutingKey) -> PlannerSessionStore = {
             NoopPlannerSessionStore
         },
+        plannerSystemPromptProvider: () -> PlannerSystemPromptProvider = {
+            EmptyPlannerSystemPromptProvider
+        },
+        decisionPlannerSystemPromptProvider: () -> PlannerSystemPromptProvider = {
+            EmptyPlannerSystemPromptProvider
+        },
         replierPromptContextProvider: () -> ReplierPromptContextProvider = {
             EmptyReplierPromptContextProvider
         },
@@ -46,6 +55,18 @@ class LocalTransport(
                     llmConfig = localRuntimeLlmConfigProvider(),
                     perceptionStoreFactory = perceptionStoreFactory,
                     plannerSessionStoreFactory = plannerSessionStoreFactory,
+                    plannerSystemPromptProvider =
+                            object : PlannerSystemPromptProvider {
+                                override suspend fun systemPromptFor(context: PlannerTurnContext) =
+                                        plannerSystemPromptProvider().systemPromptFor(context)
+                            },
+                    decisionPlannerSystemPromptProvider =
+                            object : PlannerSystemPromptProvider {
+                                override suspend fun systemPromptFor(context: PlannerTurnContext) =
+                                        decisionPlannerSystemPromptProvider().systemPromptFor(
+                                                context
+                                        )
+                            },
                     replierPromptContextProvider =
                             object : ReplierPromptContextProvider {
                                 override suspend fun contextFor(request: ReplierTaskRequest) =

@@ -6,12 +6,19 @@ import com.l2dchat.core.llm.LlmGenerationConfig
 class LlmPlannerTriggerProcessor(
         private val llmClient: LlmClient,
         private val config: LlmGenerationConfig,
-        private val promptBuilder: PlannerPromptBuilder = PlannerPromptBuilder()
+        private val promptBuilder: PlannerPromptBuilder = PlannerPromptBuilder(),
+        private val systemPromptProvider: PlannerSystemPromptProvider =
+                EmptyPlannerSystemPromptProvider
 ) : PlannerTriggerProcessor {
     override suspend fun process(context: PlannerTurnContext) {
         val response =
                 llmClient.chatCompletion(
-                        messages = promptBuilder.buildMessages(context),
+                        messages =
+                                promptBuilder.buildMessages(
+                                        context = context,
+                                        systemPromptOverride =
+                                                systemPromptProvider.systemPromptFor(context)
+                                ),
                         config = config
                 )
         if (response.toolCalls.isNotEmpty()) {

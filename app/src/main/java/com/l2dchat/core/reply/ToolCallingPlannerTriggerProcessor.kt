@@ -12,6 +12,8 @@ class ToolCallingPlannerTriggerProcessor(
         private val config: LlmGenerationConfig,
         private val toolRegistry: ToolRegistry,
         private val promptBuilder: PlannerPromptBuilder = PlannerPromptBuilder(),
+        private val systemPromptProvider: PlannerSystemPromptProvider =
+                EmptyPlannerSystemPromptProvider,
         private val toolMode: ToolExecutionMode = ToolExecutionMode.NORMAL
 ) : PlannerTriggerProcessor {
     init {
@@ -33,7 +35,12 @@ class ToolCallingPlannerTriggerProcessor(
                 )
         val response =
                 llmClient.chatCompletionWithTools(
-                        messages = promptBuilder.buildMessages(context),
+                        messages =
+                                promptBuilder.buildMessages(
+                                        context = context,
+                                        systemPromptOverride =
+                                                systemPromptProvider.systemPromptFor(context)
+                                ),
                         tools = toolDefinitions,
                         config = config,
                         toolExecutor =

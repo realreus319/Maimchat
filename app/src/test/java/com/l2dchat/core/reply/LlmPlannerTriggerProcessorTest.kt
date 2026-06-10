@@ -49,6 +49,38 @@ class LlmPlannerTriggerProcessorTest {
         }
     }
 
+    @Test
+    fun `processor uses system prompt provider override`() {
+        val replyDone = CompletableDeferred<PlannerReply>()
+        val client =
+                FixedLlmClient(
+                        LlmResponse(message = LlmMessage.assistant("llm reply"), model = "fake")
+                )
+
+        runBlocking {
+            val loop =
+                    PlannerLoop(
+                            routingKey = routingKey,
+                            scope = this,
+                            processor =
+                                    LlmPlannerTriggerProcessor(
+                                            llmClient = client,
+                                            config = LlmGenerationConfig(model = "fake"),
+                                            promptBuilder = PlannerPromptBuilder(systemPrompt = "system"),
+                                            systemPromptProvider =
+                                                    PlannerSystemPromptProvider { "room system" }
+                                    ),
+                            replySink = PlannerReplySink { replyDone.complete(it) }
+                    )
+            loop.start()
+            loop.submitTrigger(trigger("hello"))
+
+            assertEquals("llm reply", withTimeout(1_000L) { replyDone.await() }.text)
+            assertEquals("room system", client.messages.single().first().textContent())
+            loop.shutdown()
+        }
+    }
+
     private fun trigger(text: String): Trigger =
             Trigger(
                     contextId = routingKey.contextId,

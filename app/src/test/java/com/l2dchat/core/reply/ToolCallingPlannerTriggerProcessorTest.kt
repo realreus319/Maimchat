@@ -120,6 +120,36 @@ class ToolCallingPlannerTriggerProcessorTest {
     }
 
     @Test
+    fun `processor uses system prompt provider override`() {
+        val replyDone = CompletableDeferred<PlannerReply>()
+        val client = ExecutingToolClient(toolCalls = emptyList(), finalText = "native reply")
+
+        runBlocking {
+            val loop =
+                    PlannerLoop(
+                            routingKey = routingKey,
+                            scope = this,
+                            processor =
+                                    ToolCallingPlannerTriggerProcessor(
+                                            llmClient = client,
+                                            config = LlmGenerationConfig(model = "fake"),
+                                            toolRegistry = ToolRegistry(listOf(ReplierTool())),
+                                            promptBuilder = PlannerPromptBuilder(systemPrompt = "system"),
+                                            systemPromptProvider =
+                                                    PlannerSystemPromptProvider { "room system" }
+                                    ),
+                            replySink = PlannerReplySink { replyDone.complete(it) }
+                    )
+            loop.start()
+            loop.submitTrigger(trigger("hello"))
+
+            assertEquals("native reply", withTimeout(1_000L) { replyDone.await() }.text)
+            assertEquals("room system", client.messages.single().first().textContent())
+            loop.shutdown()
+        }
+    }
+
+    @Test
     fun `processor can execute decision mode background adoption tools`() {
         val replyDone = CompletableDeferred<PlannerReply>()
         val client =
@@ -201,6 +231,7 @@ class ToolCallingPlannerTriggerProcessorTest {
             private val toolCalls: List<LlmToolCall>,
             private val finalText: String
     ) : LlmClient {
+        val messages = mutableListOf<List<LlmMessage>>()
         val toolDefinitions = mutableListOf<List<LlmToolDefinition>>()
         val toolResults = mutableListOf<LlmToolResult>()
 
@@ -220,6 +251,7 @@ class ToolCallingPlannerTriggerProcessorTest {
                 config: LlmGenerationConfig,
                 toolExecutor: LlmToolExecutor
         ): LlmResponse {
+            this.messages.add(messages)
             toolDefinitions.add(tools)
             toolCalls.forEach { toolResults.add(toolExecutor.execute(it)) }
             return LlmResponse(message = LlmMessage.assistant(finalText), model = config.model)

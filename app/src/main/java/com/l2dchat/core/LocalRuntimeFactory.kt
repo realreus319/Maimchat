@@ -10,10 +10,12 @@ import com.l2dchat.core.llm.LlmClient
 import com.l2dchat.core.llm.LlmGenerationConfig
 import com.l2dchat.core.perception.PerceptionStore
 import com.l2dchat.core.reply.BackgroundReplierPromptContextProvider
+import com.l2dchat.core.reply.EmptyPlannerSystemPromptProvider
 import com.l2dchat.core.reply.JsonFallbackPlannerTriggerProcessor
 import com.l2dchat.core.reply.NoopPlannerSessionStore
 import com.l2dchat.core.reply.PlannerPromptBuilder
 import com.l2dchat.core.reply.PlannerSessionStore
+import com.l2dchat.core.reply.PlannerSystemPromptProvider
 import com.l2dchat.core.reply.PlannerTriggerProcessor
 import com.l2dchat.core.reply.ToolCallingPlannerTriggerProcessor
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
@@ -45,6 +47,10 @@ object LocalRuntimeFactory {
             plannerSessionStoreFactory: (RoutingKey) -> PlannerSessionStore = {
                 NoopPlannerSessionStore
             },
+            plannerSystemPromptProvider: PlannerSystemPromptProvider =
+                    EmptyPlannerSystemPromptProvider,
+            decisionPlannerSystemPromptProvider: PlannerSystemPromptProvider =
+                    EmptyPlannerSystemPromptProvider,
             replierPromptContextProvider: ReplierPromptContextProvider =
                     EmptyReplierPromptContextProvider,
             environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
@@ -97,7 +103,8 @@ object LocalRuntimeFactory {
                                             replierTaskIdFactory = taskIdFactory
                                     ),
                             mode = ToolExecutionMode.NORMAL,
-                            promptBuilder = PlannerPromptBuilder()
+                            promptBuilder = PlannerPromptBuilder(),
+                            systemPromptProvider = plannerSystemPromptProvider
                     )
                 },
                 decisionPlannerProcessorFactory = {
@@ -114,7 +121,8 @@ object LocalRuntimeFactory {
                                                     BackgroundReplierPromptContextProvider(
                                                             taskManager
                                                     )
-                                    )
+                                    ),
+                            systemPromptProvider = decisionPlannerSystemPromptProvider
                     )
                 }
         )
@@ -123,7 +131,8 @@ object LocalRuntimeFactory {
     private fun LocalRuntimeLlmConfig.buildProcessor(
             registry: ToolRegistry,
             mode: ToolExecutionMode,
-            promptBuilder: PlannerPromptBuilder
+            promptBuilder: PlannerPromptBuilder,
+            systemPromptProvider: PlannerSystemPromptProvider
     ): PlannerTriggerProcessor =
             if (nativeToolCalling) {
                 ToolCallingPlannerTriggerProcessor(
@@ -131,6 +140,7 @@ object LocalRuntimeFactory {
                         config = plannerConfig,
                         toolRegistry = registry,
                         promptBuilder = promptBuilder,
+                        systemPromptProvider = systemPromptProvider,
                         toolMode = mode
                 )
             } else {
@@ -139,6 +149,7 @@ object LocalRuntimeFactory {
                         config = plannerConfig,
                         toolRegistry = registry,
                         promptBuilder = promptBuilder,
+                        systemPromptProvider = systemPromptProvider,
                         toolMode = mode
                 )
             }

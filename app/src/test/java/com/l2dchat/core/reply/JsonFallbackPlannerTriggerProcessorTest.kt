@@ -58,7 +58,9 @@ class JsonFallbackPlannerTriggerProcessorTest {
                                             llmClient = client,
                                             config = LlmGenerationConfig(model = "fake"),
                                             toolRegistry = ToolRegistry(listOf(ReplierTool())),
-                                            promptBuilder = PlannerPromptBuilder(systemPrompt = "system")
+                                            promptBuilder = PlannerPromptBuilder(systemPrompt = "system"),
+                                            systemPromptProvider =
+                                                    PlannerSystemPromptProvider { "room system" }
                                     ),
                             replySink = PlannerReplySink { replyDone.complete(it) }
                     )
@@ -67,6 +69,7 @@ class JsonFallbackPlannerTriggerProcessorTest {
 
             assertEquals("json reply", withTimeout(1_000L) { replyDone.await() }.text)
             val firstCallMessages = client.messages.single()
+            assertEquals("room system", firstCallMessages[0].textContent())
             assertEquals(LlmMessageRole.SYSTEM, firstCallMessages[1].role)
             assertTrue(firstCallMessages[1].textContent().contains("Native tool calling is unavailable"))
             assertTrue(firstCallMessages[1].textContent().contains("replier"))

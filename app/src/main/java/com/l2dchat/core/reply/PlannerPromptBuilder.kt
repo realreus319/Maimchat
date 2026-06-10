@@ -11,7 +11,13 @@ class PlannerPromptBuilder(
         private val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
         private val contextProvider: PlannerPromptContextProvider = EmptyPlannerPromptContextProvider
 ) {
-    fun buildMessages(context: PlannerTurnContext): List<LlmMessage> {
+    fun buildMessages(context: PlannerTurnContext): List<LlmMessage> =
+            buildMessages(context = context, systemPromptOverride = null)
+
+    fun buildMessages(
+            context: PlannerTurnContext,
+            systemPromptOverride: String?
+    ): List<LlmMessage> {
         val sessionMessage = context.trigger.toSessionMessage(context.triggerText)
         val userText = sessionMessage["content"]?.toString().orEmpty()
         val promptContextPart = promptContextPart(contextProvider.blocksFor(context))
@@ -23,7 +29,7 @@ class PlannerPromptBuilder(
                     it != "role" && it != "content" && it != "content_blocks"
                 }
         return listOf(
-                LlmMessage.system(systemPrompt),
+                LlmMessage.system(systemPromptOverride.trimmedOrNull() ?: systemPrompt),
                 LlmMessage(
                         role = LlmMessageRole.USER,
                         content = userParts,
@@ -117,3 +123,13 @@ object EmptyPlannerPromptContextProvider : PlannerPromptContextProvider {
     override fun blocksFor(context: PlannerTurnContext): List<PlannerPromptContextBlock> =
             emptyList()
 }
+
+fun interface PlannerSystemPromptProvider {
+    suspend fun systemPromptFor(context: PlannerTurnContext): String?
+}
+
+object EmptyPlannerSystemPromptProvider : PlannerSystemPromptProvider {
+    override suspend fun systemPromptFor(context: PlannerTurnContext): String? = null
+}
+
+private fun String?.trimmedOrNull(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
