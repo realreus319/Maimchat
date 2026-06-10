@@ -1,5 +1,8 @@
 package com.l2dchat.core
 
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import com.l2dchat.chat.BaseMessageInfo
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.chat.ReceiverInfo
@@ -14,6 +17,7 @@ import com.l2dchat.core.llm.LlmStreamEvent
 import com.l2dchat.core.llm.LlmToolCall
 import com.l2dchat.core.llm.LlmToolDefinition
 import com.l2dchat.core.llm.LlmToolExecutor
+import com.l2dchat.core.llm.OpenAiCompatibleClient
 import com.l2dchat.core.reply.ReplySink
 import com.l2dchat.core.tools.AdoptBackgroundReplyTool
 import com.l2dchat.core.tools.GetWorldStateTool
@@ -22,12 +26,21 @@ import com.l2dchat.core.tools.LookAtTool
 import com.l2dchat.core.tools.ReplierTool
 import com.l2dchat.core.tools.TriggerMotionTool
 import com.l2dchat.core.tools.WaitForTool
+import java.util.Collections
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -94,6 +107,80 @@ class LocalRuntimeFactoryTest {
             assertEquals("local_reply", reply.messageInfo.additionalConfig?.get("migration_phase"))
             assertEquals(normalToolNames, client.toolNames.single())
             assertEquals(listOf("replier"), client.streamModels)
+            runtime.stopAndDrain()
+        }
+    }
+
+    @Test
+    fun `factory can run openai compatible provider through planner and replier`() {
+        val emitted = mutableListOf<MessageBase>()
+        val recorded = Collections.synchronizedList(mutableListOf<ProviderRecordedRequest>())
+        val providerClient =
+                OpenAiCompatibleClient(
+                        baseUrl = "https://provider.test/v1",
+                        apiKeyProvider = { "parity-key" },
+                        httpClient = scriptedProviderClient(recorded),
+                        maxRetries = 0
+                )
+
+        runBlocking {
+            val runtime =
+                    LocalRuntimeFactory.create(
+                            scope = this,
+                            llmConfig =
+                                    LocalRuntimeLlmConfig(
+                                            plannerClient = providerClient,
+                                            plannerConfig =
+                                                    LlmGenerationConfig(model = "planner-model"),
+                                            replierClient = providerClient,
+                                            replierConfig =
+                                                    LlmGenerationConfig(model = "replier-model")
+                                    )
+                    )
+
+            val handled =
+                    runtime.handleMessage(
+                            inbound = buildMessage(content = "provider parity"),
+                            fallbackPlatform = "fallback",
+                            fallbackAgentName = "Maimchat",
+                            replySink = collectingSink(emitted)
+                    )
+
+            assertTrue(handled)
+            assertEquals("provider final reply", emitted.single().rawMessage)
+            withTimeout(1_000L) {
+                while (recorded.size < 3) {
+                    delay(10L)
+                }
+            }
+            val requests = synchronized(recorded) { recorded.toList() }
+            assertEquals(3, requests.size)
+            requests.forEach {
+                assertEquals("Bearer parity-key", it.authorization)
+                assertEquals("https://provider.test/v1/chat/completions", it.url)
+            }
+
+            val firstPlannerBody = requests[0].jsonBody()
+            assertEquals("planner-model", firstPlannerBody["model"].asString)
+            assertEquals(false, firstPlannerBody["stream"].asBoolean)
+            assertTrue(firstPlannerBody.getAsJsonArray("tools").containsTool(ReplierTool.NAME))
+
+            val replierBody = requests[1].jsonBody()
+            assertEquals("replier-model", replierBody["model"].asString)
+            assertEquals(true, replierBody["stream"].asBoolean)
+            assertTrue(replierBody.toString().contains("draft from planner"))
+
+            val secondPlannerBody = requests[2].jsonBody()
+            val plannerMessages = secondPlannerBody.getAsJsonArray("messages")
+            assertEquals("planner-model", secondPlannerBody["model"].asString)
+            assertTrue(plannerMessages.anyObject { it.has("tool_calls") })
+            assertTrue(
+                    plannerMessages.anyObject {
+                        it["role"]?.asString == "tool" &&
+                                it["tool_call_id"]?.asString == "call-replier-1" &&
+                                it["content"]?.asString.orEmpty().contains("provider final reply")
+                    }
+            )
             runtime.stopAndDrain()
         }
     }
@@ -221,6 +308,138 @@ class LocalRuntimeFactoryTest {
                     messageSegment = Seg("text", content),
                     rawMessage = content
             )
+
+    private fun scriptedProviderClient(
+            recorded: MutableList<ProviderRecordedRequest>
+    ): OkHttpClient =
+            OkHttpClient.Builder()
+                    .addInterceptor(
+                            Interceptor { chain ->
+                                val request = chain.request()
+                                val buffer = Buffer()
+                                request.body?.writeTo(buffer)
+                                val recordedRequest =
+                                        ProviderRecordedRequest(
+                                                url = request.url.toString(),
+                                                authorization = request.header("Authorization"),
+                                                body = buffer.readUtf8()
+                                        )
+                                val requestIndex =
+                                        synchronized(recorded) {
+                                            val nextIndex = recorded.size
+                                            recorded.add(recordedRequest)
+                                            nextIndex
+                                        }
+                                scriptedProviderResponse(requestIndex)
+                                        .newBuilder()
+                                        .request(request)
+                                        .protocol(Protocol.HTTP_1_1)
+                                        .build()
+                            }
+                    )
+                    .build()
+
+    private fun scriptedProviderResponse(requestIndex: Int): Response =
+            when (requestIndex) {
+                0 ->
+                        jsonResponse(
+                                """
+                                {
+                                  "id": "planner-tool-call",
+                                  "model": "planner-model",
+                                  "choices": [
+                                    {
+                                      "finish_reason": "tool_calls",
+                                      "message": {
+                                        "role": "assistant",
+                                        "content": null,
+                                        "tool_calls": [
+                                          {
+                                            "id": "call-replier-1",
+                                            "type": "function",
+                                            "function": {
+                                              "name": "replier",
+                                              "arguments": "{\"content\":\"draft from planner\"}"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                }
+                                """.trimIndent()
+                        )
+                1 ->
+                        sseResponse(
+                                """
+                                data: {"id":"replier-stream","model":"replier-model","choices":[{"delta":{"content":"provider "},"finish_reason":null}]}
+
+                                data: {"id":"replier-stream","model":"replier-model","choices":[{"delta":{"content":"final reply"},"finish_reason":"stop"}]}
+
+                                data: [DONE]
+                                """.trimIndent()
+                        )
+                2 ->
+                        jsonResponse(
+                                """
+                                {
+                                  "id": "planner-final",
+                                  "model": "planner-model",
+                                  "choices": [
+                                    {
+                                      "finish_reason": "stop",
+                                      "message": {
+                                        "role": "assistant",
+                                        "content": "ack"
+                                      }
+                                    }
+                                  ]
+                                }
+                                """.trimIndent()
+                        )
+                else -> error("Unexpected provider request index $requestIndex")
+            }
+
+    private fun jsonResponse(body: String): Response =
+            Response.Builder()
+                    .code(200)
+                    .message("OK")
+                    .body(body.toResponseBody("application/json".toMediaType()))
+                    .request(okhttp3.Request.Builder().url("https://provider.test").build())
+                    .protocol(Protocol.HTTP_1_1)
+                    .build()
+
+    private fun sseResponse(body: String): Response =
+            Response.Builder()
+                    .code(200)
+                    .message("OK")
+                    .body(body.toResponseBody("text/event-stream".toMediaType()))
+                    .request(okhttp3.Request.Builder().url("https://provider.test").build())
+                    .protocol(Protocol.HTTP_1_1)
+                    .build()
+
+    private fun ProviderRecordedRequest.jsonBody(): JsonObject =
+            JsonParser.parseString(body).asJsonObject
+
+    private fun JsonArray.containsTool(name: String): Boolean =
+            anyObject { tool ->
+                tool.getAsJsonObject("function")?.get("name")?.asString == name
+            }
+
+    private fun JsonArray.anyObject(predicate: (JsonObject) -> Boolean): Boolean {
+        forEach { element ->
+            if (element.isJsonObject && predicate(element.asJsonObject)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private data class ProviderRecordedRequest(
+            val url: String,
+            val authorization: String?,
+            val body: String
+    )
 
     private class NativeReplierClient(
             private val streamText: String

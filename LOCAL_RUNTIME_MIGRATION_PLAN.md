@@ -477,6 +477,11 @@ Progress:
 - Done: encrypted provider settings are centralized in `LocalLlmSettingsStore`;
   API keys are migrated from legacy `chat_prefs` plaintext values into the
   secure string store and covered by JVM unit tests.
+- Done: `LocalRuntimeFactoryTest` now runs the actual `OpenAiCompatibleClient`
+  through the local planner and replier path with a scripted OpenAI-compatible
+  HTTP provider, covering planner native tool calls, replier SSE streaming,
+  tool-result round-trip messages, API-key header injection, and separate
+  planner/replier model requests without requiring an external API key.
 - Pending: manual real-provider verification.
 
 ## Phase 6: ReplierTool And ReplierTask
@@ -981,6 +986,10 @@ Progress:
   emulator when a packaged Live2D model is available, including opening the
   overflow action, verifying backend-aligned profile fields, saving a display
   name edit, and closing the dialog.
+- Done: `LocalRuntimeFactoryTest` covers the OpenAI-compatible provider parity
+  path through the real HTTP client, local planner, `replier` tool,
+  streaming replier generation, and planner tool-result continuation using a
+  scripted in-process provider.
 - Pending: manual provider parity checks with a configured real LLM endpoint.
 
 ## Implementation Order
