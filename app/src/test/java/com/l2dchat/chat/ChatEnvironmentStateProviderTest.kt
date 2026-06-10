@@ -113,6 +113,42 @@ class ChatEnvironmentStateProviderTest {
         assertEquals(300L, state.lastInteraction?.timestampMillis)
     }
 
+    @Test
+    fun `visual snapshot update is exposed and can be cleared`() {
+        val provider = ChatEnvironmentStateProvider()
+        provider.update(
+                ChatEnvironmentUpdate(
+                        visualSnapshot =
+                                ChatEnvironmentVisualSnapshot(
+                                        reference = "android_app:abc123",
+                                        mimeType =
+                                                "application/vnd.l2dchat.environment-snapshot+json",
+                                        width = 1080,
+                                        height = 2400,
+                                        capturedAtMillis = 500L
+                                )
+                )
+        )
+
+        val result =
+                runBlocking {
+                    GetWorldStateTool(provider)
+                            .execute(context(), JsonParser.parseString("{}").asJsonObject)
+                }
+        val json = JsonParser.parseString(result.llmContent).asJsonObject
+
+        assertEquals(
+                "android_app:abc123",
+                json["visualSnapshot"].asJsonObject["reference"].asString
+        )
+        assertEquals(1080, json["visualSnapshot"].asJsonObject["width"].asInt)
+        assertEquals(2400, json["visualSnapshot"].asJsonObject["height"].asInt)
+
+        provider.update(ChatEnvironmentUpdate(visualSnapshot = null, hasVisualSnapshot = true))
+
+        assertNull(provider.currentState(context()).visualSnapshot)
+    }
+
     private fun context(): ToolExecutionContext {
         val routingKey = RoutingKey(contextId = "room-a", agentId = "agent-a")
         return ToolExecutionContext(

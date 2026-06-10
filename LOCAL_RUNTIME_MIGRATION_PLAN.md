@@ -719,7 +719,9 @@ Progress:
   `Live2DWallpaperService` and merged into `ChatEnvironmentStateProvider` at
   tool execution time, resolving app-side and wallpaper-side interactions by
   newest timestamp.
-- Pending: wire snapshot producers into the Android-backed provider.
+- Done: app and wallpaper visual snapshot producers now report metadata-only
+  environment snapshots into the Android-backed provider, including stable
+  references, mime type, captured timestamp, and available surface dimensions.
 - Pending: image/content-block capable `look_at` and environment triggers.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood

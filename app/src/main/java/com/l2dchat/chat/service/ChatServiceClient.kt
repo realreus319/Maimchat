@@ -281,7 +281,13 @@ class ChatServiceClient(context: Context) : ServiceConnection {
             appVisible: Boolean? = null,
             wallpaperVisible: Boolean? = null,
             backgroundPath: String? = null,
-            hasBackgroundPath: Boolean = backgroundPath != null
+            hasBackgroundPath: Boolean = backgroundPath != null,
+            visualSnapshotReference: String? = null,
+            visualSnapshotMimeType: String? = null,
+            visualSnapshotWidth: Int? = null,
+            visualSnapshotHeight: Int? = null,
+            visualSnapshotCapturedAtMillis: Long? = null,
+            hasVisualSnapshot: Boolean = visualSnapshotReference != null
     ) {
         sendCommand(
                 ChatServiceProtocol.MSG_UPDATE_ENVIRONMENT_STATE,
@@ -314,6 +320,41 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                                 ChatServiceProtocol.EXTRA_ENV_BACKGROUND_PATH,
                                 backgroundPath.orEmpty()
                         )
+                    }
+                    if (hasVisualSnapshot) {
+                        putString(
+                                ChatServiceProtocol.EXTRA_ENV_VISUAL_SNAPSHOT_REFERENCE,
+                                visualSnapshotReference.orEmpty()
+                        )
+                        visualSnapshotMimeType?.trim()?.takeIf { it.isNotEmpty() }
+                                ?.let {
+                                    putString(
+                                            ChatServiceProtocol.EXTRA_ENV_VISUAL_SNAPSHOT_MIME_TYPE,
+                                            it
+                                    )
+                                }
+                        visualSnapshotWidth?.takeIf { it > 0 }
+                                ?.let {
+                                    putInt(
+                                            ChatServiceProtocol.EXTRA_ENV_VISUAL_SNAPSHOT_WIDTH,
+                                            it
+                                    )
+                                }
+                        visualSnapshotHeight?.takeIf { it > 0 }
+                                ?.let {
+                                    putInt(
+                                            ChatServiceProtocol.EXTRA_ENV_VISUAL_SNAPSHOT_HEIGHT,
+                                            it
+                                    )
+                                }
+                        visualSnapshotCapturedAtMillis?.takeIf { it >= 0L }
+                                ?.let {
+                                    putLong(
+                                            ChatServiceProtocol
+                                                    .EXTRA_ENV_VISUAL_SNAPSHOT_CAPTURED_AT_MILLIS,
+                                            it
+                                    )
+                                }
                     }
                 }
         )

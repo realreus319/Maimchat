@@ -9,6 +9,7 @@ import com.l2dchat.core.environment.EnvironmentMotion
 import com.l2dchat.core.environment.EnvironmentState
 import com.l2dchat.core.environment.EnvironmentStateProvider
 import com.l2dchat.core.environment.EnvironmentSurfaceState
+import com.l2dchat.core.environment.EnvironmentVisualSnapshot
 import com.l2dchat.core.tools.ToolExecutionContext
 import com.l2dchat.wallpaper.WallpaperComm
 
@@ -25,7 +26,9 @@ data class ChatEnvironmentUpdate(
         val hasWallpaperVisible: Boolean = wallpaperVisible != null,
         val backgroundPath: String? = null,
         val hasBackgroundPath: Boolean = backgroundPath != null,
-        val interaction: ChatEnvironmentInteraction? = null
+        val interaction: ChatEnvironmentInteraction? = null,
+        val visualSnapshot: ChatEnvironmentVisualSnapshot? = null,
+        val hasVisualSnapshot: Boolean = visualSnapshot != null
 )
 
 data class ChatEnvironmentMessage(
@@ -39,6 +42,14 @@ data class ChatEnvironmentInteraction(
         val x: Float? = null,
         val y: Float? = null,
         val timestampMillis: Long? = null
+)
+
+data class ChatEnvironmentVisualSnapshot(
+        val reference: String,
+        val mimeType: String? = null,
+        val width: Int? = null,
+        val height: Int? = null,
+        val capturedAtMillis: Long? = null
 )
 
 class ChatEnvironmentStateProvider(appContext: Context? = null) : EnvironmentStateProvider {
@@ -89,6 +100,7 @@ class ChatEnvironmentStateProvider(appContext: Context? = null) : EnvironmentSta
             val surface: EnvironmentSurfaceState = EnvironmentSurfaceState(),
             val lastInteraction: EnvironmentInteraction? = null,
             val recentBubbles: List<EnvironmentChatBubble> = emptyList(),
+            val visualSnapshot: EnvironmentVisualSnapshot? = null,
             val updatedAtMillis: Long = now()
     ) {
         fun updated(update: ChatEnvironmentUpdate): Snapshot {
@@ -113,6 +125,12 @@ class ChatEnvironmentStateProvider(appContext: Context? = null) : EnvironmentSta
                     surface = nextSurface,
                     lastInteraction =
                             update.interaction?.toEnvironmentInteraction() ?: lastInteraction,
+                    visualSnapshot =
+                            if (update.hasVisualSnapshot) {
+                                update.visualSnapshot?.toEnvironmentVisualSnapshot()
+                            } else {
+                                visualSnapshot
+                            },
                     updatedAtMillis = now()
             )
         }
@@ -151,19 +169,33 @@ class ChatEnvironmentStateProvider(appContext: Context? = null) : EnvironmentSta
                         null
                     }
             val wallpaperInteraction = prefs.wallpaperInteraction()
+            val nextSurface =
+                    surface.withWallpaperPrefs(
+                            visible = wallpaperVisible,
+                            backgroundPath =
+                                    prefs.getString(WallpaperComm.PREF_WALLPAPER_BG_PATH, null)
+                                            .cleanOrNull()
+                    )
+            val wallpaperVisualSnapshot =
+                    prefs.wallpaperVisualSnapshot(
+                            model = model,
+                            surface = nextSurface
+                    )
             val wallpaperUpdatedAt =
                     listOfNotNull(
                                     prefs.optionalLong(
                                             WallpaperComm.PREF_WALLPAPER_VISIBLE_UPDATED_AT
                                     ),
+                                    prefs.optionalLong(
+                                            WallpaperComm.PREF_WALLPAPER_SURFACE_UPDATED_AT
+                                    ),
                                     wallpaperInteraction?.timestampMillis
                             )
                             .maxOrNull()
             return copy(
-                    surface =
-                            if (wallpaperVisible == null) surface
-                            else surface.copy(wallpaperVisible = wallpaperVisible),
+                    surface = nextSurface,
                     lastInteraction = newestInteraction(lastInteraction, wallpaperInteraction),
+                    visualSnapshot = newestVisualSnapshot(visualSnapshot, wallpaperVisualSnapshot),
                     updatedAtMillis = maxOf(updatedAtMillis, wallpaperUpdatedAt ?: updatedAtMillis)
             )
         }
@@ -177,6 +209,7 @@ class ChatEnvironmentStateProvider(appContext: Context? = null) : EnvironmentSta
                         surface = surface,
                         lastInteraction = lastInteraction,
                         recentBubbles = recentBubbles,
+                        visualSnapshot = visualSnapshot,
                         metadata =
                                 mapOf(
                                         "provider" to "chat_environment",
@@ -189,6 +222,9 @@ class ChatEnvironmentStateProvider(appContext: Context? = null) : EnvironmentSta
         private const val MAX_RECENT_BUBBLES = 50
     }
 }
+
+private const val ENVIRONMENT_VISUAL_SNAPSHOT_MIME_TYPE =
+        "application/vnd.l2dchat.environment-snapshot+json"
 
 private data class MotionIdentity(val group: String, val index: Int)
 
@@ -259,6 +295,15 @@ private fun displayNameForMotion(filePath: String): String {
 private fun stableModelKey(vararg candidates: String?): String? =
         candidates.mapNotNull { it.cleanOrNull() }.firstOrNull()
 
+private fun EnvironmentSurfaceState.withWallpaperPrefs(
+        visible: Boolean?,
+        backgroundPath: String?
+): EnvironmentSurfaceState =
+        copy(
+                wallpaperVisible = visible ?: wallpaperVisible,
+                backgroundPath = this.backgroundPath ?: backgroundPath
+        )
+
 private fun SharedPreferences.wallpaperInteraction(): EnvironmentInteraction? {
     val type = getString(WallpaperComm.PREF_WALLPAPER_INTERACTION_TYPE, null).cleanOrNull()
             ?: return null
@@ -276,6 +321,9 @@ private fun SharedPreferences.optionalFloat(key: String): Float? =
 private fun SharedPreferences.optionalLong(key: String): Long? =
         if (contains(key)) getLong(key, 0L).takeIf { it >= 0L } else null
 
+private fun SharedPreferences.optionalPositiveInt(key: String): Int? =
+        if (contains(key)) getInt(key, 0).takeIf { it > 0 } else null
+
 private fun newestInteraction(
         current: EnvironmentInteraction?,
         candidate: EnvironmentInteraction?
@@ -289,6 +337,19 @@ private fun newestInteraction(
     return if (candidateTimestamp >= currentTimestamp) candidate else current
 }
 
+private fun newestVisualSnapshot(
+        current: EnvironmentVisualSnapshot?,
+        candidate: EnvironmentVisualSnapshot?
+): EnvironmentVisualSnapshot? {
+    if (candidate == null) return current
+    if (current == null) return candidate
+    val currentTimestamp = current.capturedAtMillis
+    val candidateTimestamp = candidate.capturedAtMillis
+    if (candidateTimestamp == null) return current
+    if (currentTimestamp == null) return candidate
+    return if (candidateTimestamp >= currentTimestamp) candidate else current
+}
+
 private fun ChatEnvironmentInteraction.toEnvironmentInteraction(): EnvironmentInteraction? {
     val cleanType = type.cleanOrNull() ?: return null
     return EnvironmentInteraction(
@@ -297,6 +358,72 @@ private fun ChatEnvironmentInteraction.toEnvironmentInteraction(): EnvironmentIn
             y = y?.takeIf { it.isFinite() },
             timestampMillis = timestampMillis?.takeIf { it >= 0L }
     )
+}
+
+private fun ChatEnvironmentVisualSnapshot.toEnvironmentVisualSnapshot(): EnvironmentVisualSnapshot? {
+    val cleanReference = reference.cleanOrNull() ?: return null
+    return EnvironmentVisualSnapshot(
+            reference = cleanReference,
+            mimeType = mimeType.cleanOrNull(),
+            width = width?.takeIf { it > 0 },
+            height = height?.takeIf { it > 0 },
+            capturedAtMillis = capturedAtMillis?.takeIf { it >= 0L }
+    )
+}
+
+private fun SharedPreferences.wallpaperVisualSnapshot(
+        model: EnvironmentModelState?,
+        surface: EnvironmentSurfaceState
+): EnvironmentVisualSnapshot? {
+    val width = optionalPositiveInt(WallpaperComm.PREF_WALLPAPER_SURFACE_WIDTH)
+    val height = optionalPositiveInt(WallpaperComm.PREF_WALLPAPER_SURFACE_HEIGHT)
+    val hasWallpaperSurface = surface.wallpaperVisible == true || width != null || height != null
+    if (!hasWallpaperSurface) return null
+    val capturedAt =
+            listOfNotNull(
+                            optionalLong(WallpaperComm.PREF_WALLPAPER_SURFACE_UPDATED_AT),
+                            optionalLong(WallpaperComm.PREF_WALLPAPER_VISIBLE_UPDATED_AT)
+                    )
+                    .maxOrNull()
+    return EnvironmentVisualSnapshot(
+            reference =
+                    buildVisualSnapshotReference(
+                            source = "android_wallpaper",
+                            model = model,
+                            surface = surface,
+                            width = width,
+                            height = height
+                    ),
+            mimeType = ENVIRONMENT_VISUAL_SNAPSHOT_MIME_TYPE,
+            width = width,
+            height = height,
+            capturedAtMillis = capturedAt
+    )
+}
+
+private fun buildVisualSnapshotReference(
+        source: String,
+        model: EnvironmentModelState?,
+        surface: EnvironmentSurfaceState,
+        width: Int?,
+        height: Int?
+): String {
+    val fingerprint =
+            listOf(
+                            source,
+                            model?.key.orEmpty(),
+                            model?.name.orEmpty(),
+                            model?.folderPath.orEmpty(),
+                            model?.lifecycleState.orEmpty(),
+                            surface.appVisible?.toString().orEmpty(),
+                            surface.wallpaperVisible?.toString().orEmpty(),
+                            surface.backgroundPath.orEmpty(),
+                            width?.toString().orEmpty(),
+                            height?.toString().orEmpty()
+                    )
+                    .joinToString("|")
+                    .hashCode()
+    return "$source:${Integer.toHexString(fingerprint)}"
 }
 
 private fun String?.cleanOrNull(): String? = this?.trim()?.takeIf { it.isNotBlank() }

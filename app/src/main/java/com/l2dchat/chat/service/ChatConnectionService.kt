@@ -13,6 +13,7 @@ import android.os.Process
 import android.os.RemoteException
 import com.l2dchat.chat.ChatEnvironmentInteraction
 import com.l2dchat.chat.ChatEnvironmentUpdate
+import com.l2dchat.chat.ChatEnvironmentVisualSnapshot
 import com.l2dchat.chat.ChatWebSocketManager
 import com.l2dchat.chat.ChatWebSocketManager.ChatMessage
 import com.l2dchat.chat.ChatWebSocketManager.ConnectionState
@@ -410,10 +411,45 @@ class ChatConnectionService : Service() {
                                                             ),
                                                     timestampMillis =
                                                             data.optionalLong(
-                                                                    ChatServiceProtocol.EXTRA_ENV_INTERACTION_TIMESTAMP_MILLIS
+                                                                    ChatServiceProtocol
+                                                                            .EXTRA_ENV_INTERACTION_TIMESTAMP_MILLIS
                                                             )
                                             )
-                                        }
+                                        },
+                        visualSnapshot =
+                                data.optionalString(
+                                                ChatServiceProtocol
+                                                        .EXTRA_ENV_VISUAL_SNAPSHOT_REFERENCE
+                                        )
+                                        ?.let { reference ->
+                                            ChatEnvironmentVisualSnapshot(
+                                                    reference = reference,
+                                                    mimeType =
+                                                            data.optionalString(
+                                                                    ChatServiceProtocol
+                                                                            .EXTRA_ENV_VISUAL_SNAPSHOT_MIME_TYPE
+                                                            ),
+                                                    width =
+                                                            data.optionalPositiveInt(
+                                                                    ChatServiceProtocol
+                                                                            .EXTRA_ENV_VISUAL_SNAPSHOT_WIDTH
+                                                            ),
+                                                    height =
+                                                            data.optionalPositiveInt(
+                                                                    ChatServiceProtocol
+                                                                            .EXTRA_ENV_VISUAL_SNAPSHOT_HEIGHT
+                                                            ),
+                                                    capturedAtMillis =
+                                                            data.optionalLong(
+                                                                    ChatServiceProtocol
+                                                                            .EXTRA_ENV_VISUAL_SNAPSHOT_CAPTURED_AT_MILLIS
+                                                            )
+                                            )
+                                        },
+                        hasVisualSnapshot =
+                                data.containsKey(
+                                        ChatServiceProtocol.EXTRA_ENV_VISUAL_SNAPSHOT_REFERENCE
+                                )
                 )
         )
     }
@@ -652,3 +688,6 @@ private fun Bundle.optionalFloat(key: String): Float? =
 
 private fun Bundle.optionalLong(key: String): Long? =
         if (containsKey(key)) getLong(key).takeIf { it >= 0L } else null
+
+private fun Bundle.optionalPositiveInt(key: String): Int? =
+        if (containsKey(key)) getInt(key).takeIf { it > 0 } else null

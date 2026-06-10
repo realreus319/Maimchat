@@ -374,6 +374,7 @@ class Live2DWallpaperService : WallpaperService() {
             super.onDestroy()
             logger.info("Engine destroyed, shutting down GL thread")
             persistWallpaperVisibility(false)
+            persistWallpaperSurface(0, 0)
             try {
                 unregisterReceiver(receiver)
             } catch (_: Exception) {}
@@ -423,6 +424,7 @@ class Live2DWallpaperService : WallpaperService() {
             currentSurfaceHolder = holder
             currentSurfaceWidth = width
             currentSurfaceHeight = height
+            persistWallpaperSurface(width, height)
             synchronized(glThreadGuard) { glThread }?.onSurfaceChanged(width, height)
             lastRequestedModelFolder?.let { renderer.setModelFolder(it) }
             loadBackgroundAsync(lastRequestedBackgroundPath, force = true)
@@ -434,6 +436,7 @@ class Live2DWallpaperService : WallpaperService() {
             currentSurfaceHolder = null
             currentSurfaceWidth = 0
             currentSurfaceHeight = 0
+            persistWallpaperSurface(0, 0)
             synchronized(glThreadGuard) { glThread }?.onSurfaceDestroyed()
         }
 
@@ -454,6 +457,23 @@ class Live2DWallpaperService : WallpaperService() {
                             System.currentTimeMillis()
                     )
                     .apply()
+        }
+
+        private fun persistWallpaperSurface(width: Int, height: Int) {
+            val editor =
+                    prefs.edit()
+                            .putLong(
+                                    WallpaperComm.PREF_WALLPAPER_SURFACE_UPDATED_AT,
+                                    System.currentTimeMillis()
+                            )
+            if (width > 0 && height > 0) {
+                editor.putInt(WallpaperComm.PREF_WALLPAPER_SURFACE_WIDTH, width)
+                editor.putInt(WallpaperComm.PREF_WALLPAPER_SURFACE_HEIGHT, height)
+            } else {
+                editor.remove(WallpaperComm.PREF_WALLPAPER_SURFACE_WIDTH)
+                editor.remove(WallpaperComm.PREF_WALLPAPER_SURFACE_HEIGHT)
+            }
+            editor.apply()
         }
 
         private fun persistWallpaperInteraction(

@@ -19,4 +19,7 @@ object WallpaperComm {
     const val PREF_WALLPAPER_INTERACTION_X = "wallpaper_interaction_x"
     const val PREF_WALLPAPER_INTERACTION_Y = "wallpaper_interaction_y"
     const val PREF_WALLPAPER_INTERACTION_TIMESTAMP = "wallpaper_interaction_timestamp"
+    const val PREF_WALLPAPER_SURFACE_WIDTH = "wallpaper_surface_width"
+    const val PREF_WALLPAPER_SURFACE_HEIGHT = "wallpaper_surface_height"
+    const val PREF_WALLPAPER_SURFACE_UPDATED_AT = "wallpaper_surface_updated_at"
 }

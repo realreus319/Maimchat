@@ -54,6 +54,12 @@ object ChatServiceProtocol {
     const val EXTRA_ENV_INTERACTION_Y = "extra_env_interaction_y"
     const val EXTRA_ENV_INTERACTION_TIMESTAMP_MILLIS =
             "extra_env_interaction_timestamp_millis"
+    const val EXTRA_ENV_VISUAL_SNAPSHOT_REFERENCE = "extra_env_visual_snapshot_reference"
+    const val EXTRA_ENV_VISUAL_SNAPSHOT_MIME_TYPE = "extra_env_visual_snapshot_mime_type"
+    const val EXTRA_ENV_VISUAL_SNAPSHOT_WIDTH = "extra_env_visual_snapshot_width"
+    const val EXTRA_ENV_VISUAL_SNAPSHOT_HEIGHT = "extra_env_visual_snapshot_height"
+    const val EXTRA_ENV_VISUAL_SNAPSHOT_CAPTURED_AT_MILLIS =
+            "extra_env_visual_snapshot_captured_at_millis"
 
     // Event extras
     const val EXTRA_CONNECTION_STATE = "extra_connection_state"

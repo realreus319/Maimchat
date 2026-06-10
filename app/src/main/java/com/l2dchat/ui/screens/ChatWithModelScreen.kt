@@ -80,6 +80,9 @@ private val ReservedBottomHeight = 84.dp
 // 顶部 AppBar 高度（防止模型头部被遮或越界），Material3 默认 56.dp
 private val TopBarHeight = 56.dp
 
+private const val ENVIRONMENT_VISUAL_SNAPSHOT_MIME_TYPE =
+        "application/vnd.l2dchat.environment-snapshot+json"
+
 private data class ConnectionErrorBanner(val id: Long, val message: String)
 
 private val uiLogger = L2DLogger.module(LogModule.MAIN_VIEW)
@@ -135,6 +138,8 @@ fun ChatWithModelScreen(
     // 连接确认弹窗
     var showConnectConfirm by remember { mutableStateOf(false) }
     var chatInputHeightPx by remember { mutableStateOf(0) }
+    var visualSurfaceWidthPx by remember { mutableStateOf(0) }
+    var visualSurfaceHeightPx by remember { mutableStateOf(0) }
     val connectionErrorBanners = remember { mutableStateListOf<ConnectionErrorBanner>() }
     var suppressMissingUrlWarning by rememberSaveable { mutableStateOf(true) }
 
@@ -261,8 +266,15 @@ fun ChatWithModelScreen(
         lifecycleManager?.updateBackgroundTexture(wallpaperBgPath.takeIf { it.isNotBlank() })
     }
 
-    LaunchedEffect(currentModel, lifecycleStateName, wallpaperBgPath) {
+    LaunchedEffect(
+            currentModel,
+            lifecycleStateName,
+            wallpaperBgPath,
+            visualSurfaceWidthPx,
+            visualSurfaceHeightPx
+    ) {
         val model = currentModel
+        val cleanBackgroundPath = wallpaperBgPath.takeIf { it.isNotBlank() }
         chatManager.updateEnvironmentState(
                 modelKey = model?.folderPath,
                 modelName = model?.name,
@@ -271,8 +283,22 @@ fun ChatWithModelScreen(
                 lifecycleState = lifecycleStateName,
                 motionFiles = model?.motionFiles.orEmpty(),
                 appVisible = true,
-                backgroundPath = wallpaperBgPath.takeIf { it.isNotBlank() },
-                hasBackgroundPath = true
+                backgroundPath = cleanBackgroundPath,
+                hasBackgroundPath = true,
+                visualSnapshotReference =
+                        buildEnvironmentVisualSnapshotReference(
+                                source = "android_app",
+                                modelFolderPath = model?.folderPath,
+                                modelName = model?.name,
+                                lifecycleState = lifecycleStateName,
+                                backgroundPath = cleanBackgroundPath,
+                                width = visualSurfaceWidthPx,
+                                height = visualSurfaceHeightPx
+                        ),
+                visualSnapshotMimeType = ENVIRONMENT_VISUAL_SNAPSHOT_MIME_TYPE,
+                visualSnapshotWidth = visualSurfaceWidthPx.takeIf { it > 0 },
+                visualSnapshotHeight = visualSurfaceHeightPx.takeIf { it > 0 },
+                visualSnapshotCapturedAtMillis = System.currentTimeMillis()
         )
     }
 
@@ -385,14 +411,29 @@ fun ChatWithModelScreen(
         onDispose {
             lifecycleManager?.setInteractionCallback(null)
             lifecycleManager?.destroy()
-            chatManager.updateEnvironmentState(appVisible = false)
+            chatManager.updateEnvironmentState(
+                    appVisible = false,
+                    visualSnapshotReference = null,
+                    hasVisualSnapshot = true
+            )
         }
     }
 
     val chatInputHeightDp = with(LocalDensity.current) { chatInputHeightPx.toDp() }
     val floatingBottomPadding = maxOf(ReservedBottomHeight, chatInputHeightDp) + 8.dp
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+            modifier =
+                    Modifier.fillMaxSize()
+                            .onSizeChanged { size ->
+                                if (visualSurfaceWidthPx != size.width) {
+                                    visualSurfaceWidthPx = size.width
+                                }
+                                if (visualSurfaceHeightPx != size.height) {
+                                    visualSurfaceHeightPx = size.height
+                                }
+                            }
+    ) {
         backgroundBitmap?.let { bmp ->
             Image(
                     bitmap = bmp.asImageBitmap(),
@@ -1600,6 +1641,30 @@ private fun calculateInSampleSize(width: Int, height: Int, maxDim: Int): Int {
         sampleSize *= 2
     }
     return sampleSize
+}
+
+private fun buildEnvironmentVisualSnapshotReference(
+        source: String,
+        modelFolderPath: String?,
+        modelName: String?,
+        lifecycleState: String?,
+        backgroundPath: String?,
+        width: Int,
+        height: Int
+): String {
+    val fingerprint =
+            listOf(
+                            source,
+                            modelFolderPath.orEmpty(),
+                            modelName.orEmpty(),
+                            lifecycleState.orEmpty(),
+                            backgroundPath.orEmpty(),
+                            width.coerceAtLeast(0).toString(),
+                            height.coerceAtLeast(0).toString()
+                    )
+                    .joinToString("|")
+                    .hashCode()
+    return "$source:${Integer.toHexString(fingerprint)}"
 }
 
 private fun sendWallpaperRefreshBroadcast(context: Context, path: String?) {
