@@ -474,7 +474,10 @@ Progress:
 - Done: `LocalLlmSettings` can translate provider-neutral local LLM settings into
   planner/replier runtime configs with separate model selection and native tool
   calling fallback control.
-- Pending: encrypted provider settings and manual real-provider verification.
+- Done: encrypted provider settings are centralized in `LocalLlmSettingsStore`;
+  API keys are migrated from legacy `chat_prefs` plaintext values into the
+  secure string store and covered by JVM unit tests.
+- Pending: manual real-provider verification.
 
 ## Phase 6: ReplierTool And ReplierTask
 
@@ -822,7 +825,8 @@ Progress:
   `RuntimeStateDao` is present: `memory_store`, `memory_search`,
   `tool_get_user_impressions`, `tool_update_user_impression`,
   `tool_query_impression`, and `tool_update_mood_state`.
-- Pending: prompt import/export UI and encrypted editable agent config.
+- Pending: prompt import/export UI and editable agent config. Provider API keys
+  already use encrypted storage through `LocalLlmSettingsStore`.
 
 ## Phase 10: UI And Service Migration
 

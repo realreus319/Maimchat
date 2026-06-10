@@ -11,16 +11,22 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-internal class SecurePreferenceStore(context: Context) {
+internal interface SecretStringStore {
+    fun getString(key: String): String?
+
+    fun putString(key: String, value: String?): Boolean
+}
+
+internal class SecurePreferenceStore(context: Context) : SecretStringStore {
     private val prefs: SharedPreferences =
             context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun getString(key: String): String? {
+    override fun getString(key: String): String? {
         val encoded = prefs.getString(key, null) ?: return null
         return runCatching { decrypt(encoded) }.getOrNull()
     }
 
-    fun putString(key: String, value: String?): Boolean {
+    override fun putString(key: String, value: String?): Boolean {
         val sanitized = value?.takeUnless { it.isBlank() }
         if (sanitized == null) {
             prefs.edit().remove(key).apply()
@@ -94,7 +100,7 @@ internal object ChatSecurePreferences {
 
     fun readMigratingString(
             prefs: SharedPreferences,
-            secureStore: SecurePreferenceStore,
+            secureStore: SecretStringStore,
             key: String
     ): String? {
         val secureValue = secureStore.getString(key)?.takeUnless { it.isBlank() }
@@ -111,7 +117,7 @@ internal object ChatSecurePreferences {
         return legacyValue
     }
 
-    fun writeString(secureStore: SecurePreferenceStore, key: String, value: String?) {
+    fun writeString(secureStore: SecretStringStore, key: String, value: String?) {
         secureStore.putString(key, value?.takeUnless { it.isBlank() })
     }
 }
