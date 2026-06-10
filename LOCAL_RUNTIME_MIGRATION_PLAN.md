@@ -843,7 +843,11 @@ Progress:
 - Done: named provider labels can resolve runtime endpoints through
   `LlmProviderRegistry`; `openai` maps to `https://api.openai.com/v1`, while
   explicit `settings_json.base_url` and direct provider URLs remain supported.
-- Pending: verify the role config dialog on emulator/device.
+- Done: the role config dialog is covered by `MainActivitySmokeTest` on an
+  emulator when packaged Live2D model assets are present. The test opens the
+  overflow menu, loads the current model's seeded/default agent profile,
+  edits the display name, saves, and closes the dialog. The startup smoke test
+  also remains compatible with an empty packaged-model state.
 
 ## Phase 10: UI And Service Migration
 
@@ -973,6 +977,10 @@ Progress:
   runtime state: local sends start the embedded runtime without a WebSocket URL,
   while remote mode still requires and uses the saved backend URL. The decision
   policy is covered by `WallpaperChatConnectionPolicyTest`.
+- Done: `MainActivitySmokeTest` covers the model-scoped role config dialog on
+  emulator when a packaged Live2D model is available, including opening the
+  overflow action, verifying backend-aligned profile fields, saving a display
+  name edit, and closing the dialog.
 - Pending: manual provider parity checks with a configured real LLM endpoint.
 
 ## Implementation Order

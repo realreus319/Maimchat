@@ -44,6 +44,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -1481,6 +1482,7 @@ private fun AgentProfileConfigDialog(
     }
 
     AlertDialog(
+            modifier = Modifier.testTag("agent-profile-dialog"),
             onDismissRequest = onDismiss,
             title = { Text("角色配置") },
             text = {
@@ -1504,14 +1506,14 @@ private fun AgentProfileConfigDialog(
                             label = { Text("Agent ID") },
                             singleLine = true,
                             enabled = false,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().testTag("agent-profile-agent-id")
                     )
                     OutlinedTextField(
                             value = displayName,
                             onValueChange = { displayName = it },
                             label = { Text("显示名称") },
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().testTag("agent-profile-display-name")
                     )
                     OutlinedTextField(
                             value = persona,
@@ -1519,7 +1521,7 @@ private fun AgentProfileConfigDialog(
                             label = { Text("人格设定") },
                             minLines = 3,
                             maxLines = 6,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().testTag("agent-profile-persona")
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
@@ -1527,14 +1529,14 @@ private fun AgentProfileConfigDialog(
                                 onValueChange = { provider = it },
                                 label = { Text("Provider") },
                                 singleLine = true,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f).testTag("agent-profile-provider")
                         )
                         OutlinedTextField(
                                 value = providerModel,
                                 onValueChange = { providerModel = it },
                                 label = { Text("Model") },
                                 singleLine = true,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f).testTag("agent-profile-model")
                         )
                     }
                     OutlinedTextField(
@@ -1543,33 +1545,38 @@ private fun AgentProfileConfigDialog(
                             label = { Text("Settings JSON") },
                             minLines = 2,
                             maxLines = 5,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().testTag("agent-profile-settings-json")
                     )
                     HorizontalDivider()
                     AgentPromptField(
                             label = "Planner system",
                             value = plannerSystemPrompt,
-                            onValueChange = { plannerSystemPrompt = it }
+                            onValueChange = { plannerSystemPrompt = it },
+                            tag = "agent-profile-planner-system"
                     )
                     AgentPromptField(
                             label = "Decision system",
                             value = decisionSystemPrompt,
-                            onValueChange = { decisionSystemPrompt = it }
+                            onValueChange = { decisionSystemPrompt = it },
+                            tag = "agent-profile-decision-system"
                     )
                     AgentPromptField(
                             label = "Replier system",
                             value = replierSystemPrompt,
-                            onValueChange = { replierSystemPrompt = it }
+                            onValueChange = { replierSystemPrompt = it },
+                            tag = "agent-profile-replier-system"
                     )
                     AgentPromptField(
                             label = "Replier user",
                             value = replierUserPrompt,
-                            onValueChange = { replierUserPrompt = it }
+                            onValueChange = { replierUserPrompt = it },
+                            tag = "agent-profile-replier-user"
                     )
                 }
             },
             confirmButton = {
                 TextButton(
+                        modifier = Modifier.testTag("agent-profile-save"),
                         enabled = !isLoading && !isSaving && agentId != null,
                         onClick = {
                             val profile = currentProfile()
@@ -1586,17 +1593,27 @@ private fun AgentProfileConfigDialog(
                                                 repository.save(profile)
                                             }
                                         }
-                                result.onSuccess {
-                                            onSaved()
-                                            Toast.makeText(context, "角色配置已保存", Toast.LENGTH_SHORT)
-                                                    .show()
-                                        }
-                                        .onFailure { error ->
-                                            uiLogger.error("保存角色配置失败", error)
-                                            Toast.makeText(context, "角色配置保存失败", Toast.LENGTH_SHORT)
-                                                    .show()
-                                        }
-                                isSaving = false
+                                withContext(Dispatchers.Main.immediate) {
+                                    result.onSuccess {
+                                                onSaved()
+                                                Toast.makeText(
+                                                                context,
+                                                                "角色配置已保存",
+                                                                Toast.LENGTH_SHORT
+                                                        )
+                                                        .show()
+                                            }
+                                            .onFailure { error ->
+                                                uiLogger.error("保存角色配置失败", error)
+                                                Toast.makeText(
+                                                                context,
+                                                                "角色配置保存失败",
+                                                                Toast.LENGTH_SHORT
+                                                        )
+                                                        .show()
+                                            }
+                                    isSaving = false
+                                }
                             }
                         }
                 ) { Text(if (isSaving) "保存中" else "保存") }
@@ -1626,7 +1643,8 @@ private fun AgentProfileConfigDialog(
 private fun AgentPromptField(
         label: String,
         value: String,
-        onValueChange: (String) -> Unit
+        onValueChange: (String) -> Unit,
+        tag: String
 ) {
     OutlinedTextField(
             value = value,
@@ -1634,7 +1652,7 @@ private fun AgentPromptField(
             label = { Text(label) },
             minLines = 4,
             maxLines = 8,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth().testTag(tag)
     )
 }
 
