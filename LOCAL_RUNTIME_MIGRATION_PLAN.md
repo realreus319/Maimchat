@@ -672,6 +672,18 @@ Acceptance:
 - Environment triggers can initiate planner turns without user text.
 - Live image/multimodal blocks are preserved when available.
 
+Progress:
+
+- Done: core `EnvironmentStateProvider` and `EnvironmentState` models expose
+  routing identity, selected model metadata, motions, expression, surface state,
+  last interaction, recent bubbles, optional visual snapshot metadata, and
+  extension metadata without coupling to Android UI classes.
+- Done: `get_world_state` returns a bounded, planner-readable JSON summary of
+  that environment state and is exposed only in normal tool mode.
+- Pending: wire real app, wallpaper, Live2D lifecycle, touch, chat bubble, and
+  snapshot producers into an Android-backed provider.
+- Pending: `trigger_motion`, `look_at`, and environment triggers.
+
 ## Phase 9: Agent Config, Prompts, Memory, And Mood
 
 Goal: port important agent behavior and prompts from backend config.
@@ -884,10 +896,10 @@ Replier:
 
 Decision mode:
 
-- [ ] New user message during generation moves current task to background.
-- [ ] Decision mode restricts tools.
-- [ ] Adopt waits for old background task and sends its reply.
-- [ ] Kill cancels old background task.
+- [x] New user message during generation moves current task to background.
+- [x] Decision mode restricts tools.
+- [x] Adopt waits for old background task and sends its reply.
+- [x] Kill cancels old background task.
 - [ ] Foreground continues correctly after kill or adopt failure.
 
 Reply delivery:
@@ -903,10 +915,10 @@ Reply delivery:
 Tools:
 
 - [x] `replier`
-- [ ] `wait_for`
-- [ ] `adopt_background_reply`
-- [ ] `kill_background_reply`
-- [ ] `get_world_state`
+- [x] `wait_for`
+- [x] `adopt_background_reply`
+- [x] `kill_background_reply`
+- [x] `get_world_state`
 - [ ] `look_at`
 - [ ] `trigger_motion`
 - [ ] memory/impression tools
