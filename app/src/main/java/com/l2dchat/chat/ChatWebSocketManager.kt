@@ -9,6 +9,7 @@ import com.l2dchat.chat.transport.ChatTransportCallbacks
 import com.l2dchat.chat.transport.LocalTransport
 import com.l2dchat.chat.transport.RemoteWebSocketConfig
 import com.l2dchat.chat.transport.RemoteWebSocketTransport
+import com.l2dchat.core.config.LocalLlmSettings
 import com.l2dchat.core.message.RuntimeMessageMapper
 import com.l2dchat.core.message.VisibleMessageRecord
 import com.l2dchat.core.perception.PerceptionStore
@@ -44,6 +45,7 @@ class ChatWebSocketManager {
     private val gson = Gson()
     private var platform: String = DEFAULT_PLATFORM
     private var authToken: String? = null
+    private var localLlmSettings = LocalLlmSettings()
     private val messageHandler = Live2DChatMessageHandler()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
@@ -75,7 +77,8 @@ class ChatWebSocketManager {
                     platformProvider = { platform },
                     agentNameProvider = { receiverModelName },
                     perceptionStoreFactory = { localPerceptionStoreFor() },
-                    plannerSessionStoreFactory = { localPlannerSessionStoreFor() }
+                    plannerSessionStoreFactory = { localPlannerSessionStoreFor() },
+                    localRuntimeLlmConfigProvider = { localLlmSettings.toRuntimeConfig() }
             )
     private val remoteTransport =
             RemoteWebSocketTransport(scope = scope, callbacks = transportCallbacks)
@@ -192,6 +195,11 @@ class ChatWebSocketManager {
     fun setReceiverInfo(userId: String?, userNickname: String?) {
         receiverUserIdOverride = userId?.ifBlank { null }
         receiverUserNicknameOverride = userNickname?.ifBlank { null }
+    }
+    fun setLocalLlmSettings(settings: LocalLlmSettings) {
+        if (localLlmSettings == settings) return
+        localLlmSettings = settings
+        localTransport.rebuildRuntime("本地 LLM 配置更新")
     }
     fun hasUserNickname(): Boolean = !userNickname.isNullOrBlank()
     fun getUserNickname(): String? = userNickname

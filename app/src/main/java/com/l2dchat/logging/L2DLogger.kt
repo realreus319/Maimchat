@@ -118,12 +118,18 @@ object L2DLogger {
             message: String,
             throwable: Throwable?
     ) {
-        when (level) {
-            LogLevel.VERBOSE -> Log.v(module.tag, message, throwable)
-            LogLevel.DEBUG -> Log.d(module.tag, message, throwable)
-            LogLevel.INFO -> Log.i(module.tag, message, throwable)
-            LogLevel.WARN -> Log.w(module.tag, message, throwable)
-            LogLevel.ERROR -> Log.e(module.tag, message, throwable)
+        try {
+            when (level) {
+                LogLevel.VERBOSE -> Log.v(module.tag, message, throwable)
+                LogLevel.DEBUG -> Log.d(module.tag, message, throwable)
+                LogLevel.INFO -> Log.i(module.tag, message, throwable)
+                LogLevel.WARN -> Log.w(module.tag, message, throwable)
+                LogLevel.ERROR -> Log.e(module.tag, message, throwable)
+            }
+        } catch (runtime: RuntimeException) {
+            if (runtime.message?.contains("not mocked") != true) {
+                throw runtime
+            }
         }
     }
 

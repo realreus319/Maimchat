@@ -2,6 +2,7 @@ package com.l2dchat.chat.service
 
 import android.app.Service
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
@@ -14,6 +15,7 @@ import com.l2dchat.chat.ChatWebSocketManager
 import com.l2dchat.chat.ChatWebSocketManager.ChatMessage
 import com.l2dchat.chat.ChatWebSocketManager.ConnectionState
 import com.l2dchat.chat.MessageBase
+import com.l2dchat.core.config.LocalLlmSettings
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import com.l2dchat.wallpaper.WallpaperComm
@@ -43,6 +45,7 @@ class ChatConnectionService : Service() {
     private var lastKnownNickname: String? = null
     private var lastKnownReceiverId: String? = null
     private var lastKnownReceiverNickname: String? = null
+    private var localLlmSettings = LocalLlmSettings()
 
     override fun onCreate() {
         super.onCreate()
@@ -89,6 +92,8 @@ class ChatConnectionService : Service() {
         if (!lastKnownReceiverId.isNullOrBlank() || !lastKnownReceiverNickname.isNullOrBlank()) {
             manager.setReceiverInfo(lastKnownReceiverId, lastKnownReceiverNickname)
         }
+        localLlmSettings = readLocalLlmSettings(prefs)
+        manager.setLocalLlmSettings(localLlmSettings)
         manager.startLocalRuntime()
     }
 
@@ -305,6 +310,10 @@ class ChatConnectionService : Service() {
                     data.getString(ChatServiceProtocol.EXTRA_RECEIVER_NICKNAME)?.ifBlank { null }
             manager.setReceiverInfo(lastKnownReceiverId, lastKnownReceiverNickname)
         }
+        if (data.containsLocalLlmSettings()) {
+            localLlmSettings = localLlmSettings.updatedFrom(data)
+            manager.setLocalLlmSettings(localLlmSettings)
+        }
         data.getString(ChatServiceProtocol.EXTRA_URL)?.let { url ->
             val trimmed = url.trim()
             lastKnownUrl = trimmed.ifBlank { null }
@@ -342,8 +351,154 @@ class ChatConnectionService : Service() {
         if (lastKnownReceiverNickname != null)
                 editor.putString(KEY_RECEIVER_NICKNAME, lastKnownReceiverNickname)
         else editor.remove(KEY_RECEIVER_NICKNAME)
+        editor.putBoolean(KEY_LOCAL_LLM_ENABLED, localLlmSettings.enabled)
+        editor.putBoolean(KEY_LOCAL_LLM_NATIVE_TOOL_CALLING, localLlmSettings.nativeToolCalling)
+        editor.putOptionalString(KEY_LOCAL_LLM_BASE_URL, localLlmSettings.baseUrl)
+        editor.putOptionalString(KEY_LOCAL_LLM_API_KEY, localLlmSettings.apiKey)
+        editor.putOptionalString(KEY_LOCAL_LLM_PLANNER_MODEL, localLlmSettings.plannerModel)
+        editor.putOptionalString(KEY_LOCAL_LLM_REPLIER_MODEL, localLlmSettings.replierModel)
+        editor.putOptionalDouble(KEY_LOCAL_LLM_TEMPERATURE, localLlmSettings.temperature)
+        editor.putOptionalInt(KEY_LOCAL_LLM_MAX_TOKENS, localLlmSettings.maxTokens)
+        editor.putOptionalLong(KEY_LOCAL_LLM_TIMEOUT_MILLIS, localLlmSettings.timeoutMillis)
         editor.apply()
     }
+
+    private fun readLocalLlmSettings(prefs: SharedPreferences): LocalLlmSettings =
+            LocalLlmSettings(
+                    enabled = prefs.getBoolean(KEY_LOCAL_LLM_ENABLED, false),
+                    baseUrl = prefs.getString(KEY_LOCAL_LLM_BASE_URL, null),
+                    apiKey = prefs.getString(KEY_LOCAL_LLM_API_KEY, null),
+                    plannerModel = prefs.getString(KEY_LOCAL_LLM_PLANNER_MODEL, null),
+                    replierModel = prefs.getString(KEY_LOCAL_LLM_REPLIER_MODEL, null),
+                    nativeToolCalling =
+                            prefs.getBoolean(KEY_LOCAL_LLM_NATIVE_TOOL_CALLING, true),
+                    temperature =
+                            prefs.getString(KEY_LOCAL_LLM_TEMPERATURE, null)?.toDoubleOrNull(),
+                    maxTokens =
+                            if (prefs.contains(KEY_LOCAL_LLM_MAX_TOKENS)) {
+                                prefs.getInt(KEY_LOCAL_LLM_MAX_TOKENS, 0).takeIf { it > 0 }
+                            } else {
+                                null
+                            },
+                    timeoutMillis =
+                            if (prefs.contains(KEY_LOCAL_LLM_TIMEOUT_MILLIS)) {
+                                prefs.getLong(KEY_LOCAL_LLM_TIMEOUT_MILLIS, 0L)
+                                        .takeIf { it > 0L }
+                            } else {
+                                LocalLlmSettings.DEFAULT_TIMEOUT_MILLIS
+                            }
+            )
+
+    private fun Bundle.containsLocalLlmSettings(): Boolean =
+            containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_ENABLED) ||
+                    containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_BASE_URL) ||
+                    containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_API_KEY) ||
+                    containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_PLANNER_MODEL) ||
+                    containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_REPLIER_MODEL) ||
+                    containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_NATIVE_TOOL_CALLING) ||
+                    containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_TEMPERATURE) ||
+                    containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_MAX_TOKENS) ||
+                    containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_TIMEOUT_MILLIS)
+
+    private fun LocalLlmSettings.updatedFrom(data: Bundle): LocalLlmSettings =
+            copy(
+                    enabled =
+                            if (data.containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_ENABLED)) {
+                                data.getBoolean(ChatServiceProtocol.EXTRA_LOCAL_LLM_ENABLED)
+                            } else {
+                                enabled
+                            },
+                    baseUrl =
+                            data.optionalStringOrExisting(
+                                    ChatServiceProtocol.EXTRA_LOCAL_LLM_BASE_URL,
+                                    baseUrl
+                            ),
+                    apiKey =
+                            data.optionalStringOrExisting(
+                                    ChatServiceProtocol.EXTRA_LOCAL_LLM_API_KEY,
+                                    apiKey
+                            ),
+                    plannerModel =
+                            data.optionalStringOrExisting(
+                                    ChatServiceProtocol.EXTRA_LOCAL_LLM_PLANNER_MODEL,
+                                    plannerModel
+                            ),
+                    replierModel =
+                            data.optionalStringOrExisting(
+                                    ChatServiceProtocol.EXTRA_LOCAL_LLM_REPLIER_MODEL,
+                                    replierModel
+                            ),
+                    nativeToolCalling =
+                            if (
+                                    data.containsKey(
+                                            ChatServiceProtocol
+                                                    .EXTRA_LOCAL_LLM_NATIVE_TOOL_CALLING
+                                    )
+                            ) {
+                                data.getBoolean(
+                                        ChatServiceProtocol.EXTRA_LOCAL_LLM_NATIVE_TOOL_CALLING
+                                )
+                            } else {
+                                nativeToolCalling
+                            },
+                    temperature =
+                            if (data.containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_TEMPERATURE)) {
+                                data.getDouble(
+                                                ChatServiceProtocol.EXTRA_LOCAL_LLM_TEMPERATURE,
+                                                Double.NaN
+                                        )
+                                        .takeIf { it.isFinite() }
+                            } else {
+                                temperature
+                            },
+                    maxTokens =
+                            if (data.containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_MAX_TOKENS)) {
+                                data.getInt(ChatServiceProtocol.EXTRA_LOCAL_LLM_MAX_TOKENS, 0)
+                                        .takeIf { it > 0 }
+                            } else {
+                                maxTokens
+                            },
+                    timeoutMillis =
+                            if (
+                                    data.containsKey(
+                                            ChatServiceProtocol.EXTRA_LOCAL_LLM_TIMEOUT_MILLIS
+                                    )
+                            ) {
+                                data.getLong(
+                                                ChatServiceProtocol
+                                                        .EXTRA_LOCAL_LLM_TIMEOUT_MILLIS,
+                                                0L
+                                        )
+                                        .takeIf { it > 0L }
+                            } else {
+                                timeoutMillis
+                            }
+            )
+
+    private fun Bundle.optionalStringOrExisting(key: String, current: String?): String? =
+            if (containsKey(key)) getString(key)?.trim()?.takeIf { it.isNotEmpty() } else current
+
+    private fun SharedPreferences.Editor.putOptionalString(
+            key: String,
+            value: String?
+    ): SharedPreferences.Editor =
+            if (value.isNullOrBlank()) remove(key) else putString(key, value)
+
+    private fun SharedPreferences.Editor.putOptionalDouble(
+            key: String,
+            value: Double?
+    ): SharedPreferences.Editor =
+            if (value == null) remove(key) else putString(key, value.toString())
+
+    private fun SharedPreferences.Editor.putOptionalInt(
+            key: String,
+            value: Int?
+    ): SharedPreferences.Editor = if (value == null) remove(key) else putInt(key, value)
+
+    private fun SharedPreferences.Editor.putOptionalLong(
+            key: String,
+            value: Long?
+    ): SharedPreferences.Editor = if (value == null) remove(key) else putLong(key, value)
 
     private fun notifyError(message: String) {
         val data = Bundle().apply { putString(ChatServiceProtocol.EXTRA_ERROR_MESSAGE, message) }
@@ -392,5 +547,14 @@ class ChatConnectionService : Service() {
         private const val KEY_NICKNAME = "nickname"
         private const val KEY_RECEIVER_ID = "receiver_user_id"
         private const val KEY_RECEIVER_NICKNAME = "receiver_user_nickname"
+        private const val KEY_LOCAL_LLM_ENABLED = "local_llm_enabled"
+        private const val KEY_LOCAL_LLM_BASE_URL = "local_llm_base_url"
+        private const val KEY_LOCAL_LLM_API_KEY = "local_llm_api_key"
+        private const val KEY_LOCAL_LLM_PLANNER_MODEL = "local_llm_planner_model"
+        private const val KEY_LOCAL_LLM_REPLIER_MODEL = "local_llm_replier_model"
+        private const val KEY_LOCAL_LLM_NATIVE_TOOL_CALLING = "local_llm_native_tool_calling"
+        private const val KEY_LOCAL_LLM_TEMPERATURE = "local_llm_temperature"
+        private const val KEY_LOCAL_LLM_MAX_TOKENS = "local_llm_max_tokens"
+        private const val KEY_LOCAL_LLM_TIMEOUT_MILLIS = "local_llm_timeout_millis"
     }
 }

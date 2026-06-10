@@ -29,6 +29,15 @@ object ChatServiceProtocol {
     const val EXTRA_RECEIVER_ID = "extra_receiver_id"
     const val EXTRA_RECEIVER_NICKNAME = "extra_receiver_nickname"
     const val EXTRA_MODEL_NAME = "extra_model_name"
+    const val EXTRA_LOCAL_LLM_ENABLED = "extra_local_llm_enabled"
+    const val EXTRA_LOCAL_LLM_BASE_URL = "extra_local_llm_base_url"
+    const val EXTRA_LOCAL_LLM_API_KEY = "extra_local_llm_api_key"
+    const val EXTRA_LOCAL_LLM_PLANNER_MODEL = "extra_local_llm_planner_model"
+    const val EXTRA_LOCAL_LLM_REPLIER_MODEL = "extra_local_llm_replier_model"
+    const val EXTRA_LOCAL_LLM_NATIVE_TOOL_CALLING = "extra_local_llm_native_tool_calling"
+    const val EXTRA_LOCAL_LLM_TEMPERATURE = "extra_local_llm_temperature"
+    const val EXTRA_LOCAL_LLM_MAX_TOKENS = "extra_local_llm_max_tokens"
+    const val EXTRA_LOCAL_LLM_TIMEOUT_MILLIS = "extra_local_llm_timeout_millis"
 
     // Event extras
     const val EXTRA_CONNECTION_STATE = "extra_connection_state"

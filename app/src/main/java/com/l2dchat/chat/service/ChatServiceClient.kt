@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
@@ -12,6 +13,7 @@ import android.os.Message
 import android.os.Messenger
 import android.os.RemoteException
 import com.l2dchat.chat.MessageBase
+import com.l2dchat.core.config.LocalLlmSettings
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import kotlinx.coroutines.CoroutineScope
@@ -103,6 +105,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
             )
     private val _lastUrl =
             MutableStateFlow(prefs.getString(KEY_LAST_URL, null)?.takeIf { it.isNotBlank() })
+    private val _localLlmSettings = MutableStateFlow(readLocalLlmSettings(prefs))
     private val _activeModel = MutableStateFlow<String?>(null)
     private var motionCallback: ((String, Int, Boolean) -> Unit)? = null
 
@@ -116,6 +119,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
     val userNickname: StateFlow<String?> = _userNickname.asStateFlow()
     val platform: StateFlow<String?> = _platform.asStateFlow()
     val activeModel: StateFlow<String?> = _activeModel.asStateFlow()
+    val localLlmSettings: StateFlow<LocalLlmSettings> = _localLlmSettings.asStateFlow()
 
     fun bindService() {
         if (isBound) return
@@ -229,6 +233,37 @@ class ChatServiceClient(context: Context) : ServiceConnection {
         sendConfigUpdate { putString(ChatServiceProtocol.EXTRA_URL, sanitized ?: "") }
     }
 
+    fun updateLocalLlmSettings(settings: LocalLlmSettings) {
+        _localLlmSettings.value = settings
+        persistLocalLlmSettings(settings)
+        sendConfigUpdate {
+            putBoolean(ChatServiceProtocol.EXTRA_LOCAL_LLM_ENABLED, settings.enabled)
+            putString(ChatServiceProtocol.EXTRA_LOCAL_LLM_BASE_URL, settings.baseUrl.orEmpty())
+            putString(ChatServiceProtocol.EXTRA_LOCAL_LLM_API_KEY, settings.apiKey.orEmpty())
+            putString(
+                    ChatServiceProtocol.EXTRA_LOCAL_LLM_PLANNER_MODEL,
+                    settings.plannerModel.orEmpty()
+            )
+            putString(
+                    ChatServiceProtocol.EXTRA_LOCAL_LLM_REPLIER_MODEL,
+                    settings.replierModel.orEmpty()
+            )
+            putBoolean(
+                    ChatServiceProtocol.EXTRA_LOCAL_LLM_NATIVE_TOOL_CALLING,
+                    settings.nativeToolCalling
+            )
+            putDouble(
+                    ChatServiceProtocol.EXTRA_LOCAL_LLM_TEMPERATURE,
+                    settings.temperature ?: Double.NaN
+            )
+            putInt(ChatServiceProtocol.EXTRA_LOCAL_LLM_MAX_TOKENS, settings.maxTokens ?: 0)
+            putLong(
+                    ChatServiceProtocol.EXTRA_LOCAL_LLM_TIMEOUT_MILLIS,
+                    settings.timeoutMillis ?: 0L
+            )
+        }
+    }
+
     fun setActiveModel(modelName: String?) {
         val trimmed = modelName?.trim().takeUnless { it.isNullOrEmpty() }
         _activeModel.value = trimmed
@@ -264,6 +299,8 @@ class ChatServiceClient(context: Context) : ServiceConnection {
 
     fun getPlatform(): String? = _platform.value
 
+    fun getLocalLlmSettings(): LocalLlmSettings = _localLlmSettings.value
+
     fun getConnectionStateDescription(): String =
             connectionLabel.value.ifBlank {
                 when (connectionState.value) {
@@ -293,6 +330,68 @@ class ChatServiceClient(context: Context) : ServiceConnection {
         val bundle = Bundle().apply(builder)
         sendCommand(ChatServiceProtocol.MSG_UPDATE_CONFIG, bundle)
     }
+
+    private fun readLocalLlmSettings(prefs: SharedPreferences): LocalLlmSettings =
+            LocalLlmSettings(
+                    enabled = prefs.getBoolean(KEY_LOCAL_LLM_ENABLED, false),
+                    baseUrl = prefs.getString(KEY_LOCAL_LLM_BASE_URL, null),
+                    apiKey = prefs.getString(KEY_LOCAL_LLM_API_KEY, null),
+                    plannerModel = prefs.getString(KEY_LOCAL_LLM_PLANNER_MODEL, null),
+                    replierModel = prefs.getString(KEY_LOCAL_LLM_REPLIER_MODEL, null),
+                    nativeToolCalling =
+                            prefs.getBoolean(KEY_LOCAL_LLM_NATIVE_TOOL_CALLING, true),
+                    temperature =
+                            prefs.getString(KEY_LOCAL_LLM_TEMPERATURE, null)?.toDoubleOrNull(),
+                    maxTokens =
+                            if (prefs.contains(KEY_LOCAL_LLM_MAX_TOKENS)) {
+                                prefs.getInt(KEY_LOCAL_LLM_MAX_TOKENS, 0).takeIf { it > 0 }
+                            } else {
+                                null
+                            },
+                    timeoutMillis =
+                            if (prefs.contains(KEY_LOCAL_LLM_TIMEOUT_MILLIS)) {
+                                prefs.getLong(KEY_LOCAL_LLM_TIMEOUT_MILLIS, 0L)
+                                        .takeIf { it > 0L }
+                            } else {
+                                LocalLlmSettings.DEFAULT_TIMEOUT_MILLIS
+                            }
+            )
+
+    private fun persistLocalLlmSettings(settings: LocalLlmSettings) {
+        prefs.edit()
+                .putBoolean(KEY_LOCAL_LLM_ENABLED, settings.enabled)
+                .putBoolean(KEY_LOCAL_LLM_NATIVE_TOOL_CALLING, settings.nativeToolCalling)
+                .putOptionalString(KEY_LOCAL_LLM_BASE_URL, settings.baseUrl)
+                .putOptionalString(KEY_LOCAL_LLM_API_KEY, settings.apiKey)
+                .putOptionalString(KEY_LOCAL_LLM_PLANNER_MODEL, settings.plannerModel)
+                .putOptionalString(KEY_LOCAL_LLM_REPLIER_MODEL, settings.replierModel)
+                .putOptionalDouble(KEY_LOCAL_LLM_TEMPERATURE, settings.temperature)
+                .putOptionalInt(KEY_LOCAL_LLM_MAX_TOKENS, settings.maxTokens)
+                .putOptionalLong(KEY_LOCAL_LLM_TIMEOUT_MILLIS, settings.timeoutMillis)
+                .apply()
+    }
+
+    private fun SharedPreferences.Editor.putOptionalString(
+            key: String,
+            value: String?
+    ): SharedPreferences.Editor =
+            if (value.isNullOrBlank()) remove(key) else putString(key, value)
+
+    private fun SharedPreferences.Editor.putOptionalDouble(
+            key: String,
+            value: Double?
+    ): SharedPreferences.Editor =
+            if (value == null) remove(key) else putString(key, value.toString())
+
+    private fun SharedPreferences.Editor.putOptionalInt(
+            key: String,
+            value: Int?
+    ): SharedPreferences.Editor = if (value == null) remove(key) else putInt(key, value)
+
+    private fun SharedPreferences.Editor.putOptionalLong(
+            key: String,
+            value: Long?
+    ): SharedPreferences.Editor = if (value == null) remove(key) else putLong(key, value)
 
     private fun handleNewMessage(data: Bundle) {
         val content = data.getString(ChatServiceProtocol.EXTRA_MESSAGE_CONTENT) ?: return
@@ -433,5 +532,14 @@ class ChatServiceClient(context: Context) : ServiceConnection {
         private const val KEY_NICKNAME = "nickname"
         private const val KEY_RECEIVER_ID = "receiver_user_id"
         private const val KEY_RECEIVER_NICKNAME = "receiver_user_nickname"
+        private const val KEY_LOCAL_LLM_ENABLED = "local_llm_enabled"
+        private const val KEY_LOCAL_LLM_BASE_URL = "local_llm_base_url"
+        private const val KEY_LOCAL_LLM_API_KEY = "local_llm_api_key"
+        private const val KEY_LOCAL_LLM_PLANNER_MODEL = "local_llm_planner_model"
+        private const val KEY_LOCAL_LLM_REPLIER_MODEL = "local_llm_replier_model"
+        private const val KEY_LOCAL_LLM_NATIVE_TOOL_CALLING = "local_llm_native_tool_calling"
+        private const val KEY_LOCAL_LLM_TEMPERATURE = "local_llm_temperature"
+        private const val KEY_LOCAL_LLM_MAX_TOKENS = "local_llm_max_tokens"
+        private const val KEY_LOCAL_LLM_TIMEOUT_MILLIS = "local_llm_timeout_millis"
     }
 }

@@ -464,8 +464,10 @@ Progress:
 - Done: `OpenAiCompatibleClient` supports OpenAI-compatible chat completions,
   SSE text streaming, native tool-call request/response conversion, timeout,
   retry, and coroutine cancellation through OkHttp call cancellation.
-- Pending: encrypted provider settings, planner/replier model config selection,
-  and manual real-provider verification.
+- Done: `LocalLlmSettings` can translate provider-neutral local LLM settings into
+  planner/replier runtime configs with separate model selection and native tool
+  calling fallback control.
+- Pending: encrypted provider settings and manual real-provider verification.
 
 ## Phase 6: ReplierTool And ReplierTask
 
@@ -694,10 +696,13 @@ Progress:
   `ReplierTaskManager`, normal and decision registries from
   `LocalToolRegistryFactory`, native tool-calling or JSON fallback planner
   processors, and LLM-backed replier task generation.
+- Done: `ChatServiceClient`, `ChatConnectionService`, `ChatWebSocketManager`,
+  and `LocalTransport` can persist local LLM settings, pass them into
+  `LocalRuntimeFactory`, and rebuild the local runtime when settings change.
 - Pending: wire real app, wallpaper, Live2D lifecycle, touch, chat bubble, and
   snapshot producers into an Android-backed provider.
-- Pending: wire Android UI/service provider settings and real environment/motion
-  adapters into `LocalRuntimeFactory`.
+- Pending: expose Android UI controls for local LLM provider settings and wire
+  real environment/motion adapters into `LocalRuntimeFactory`.
 - Pending: image/content-block capable `look_at` and environment triggers.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood

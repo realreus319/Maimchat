@@ -4,7 +4,13 @@ import com.l2dchat.chat.ChatWebSocketManager.ConnectionState
 import com.l2dchat.chat.ChatWebSocketManager.RuntimeMode
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.core.LocalChatRuntime
+import com.l2dchat.core.LocalRuntimeFactory
+import com.l2dchat.core.LocalRuntimeLlmConfig
 import com.l2dchat.core.context.RoutingKey
+import com.l2dchat.core.environment.EmptyEnvironmentStateProvider
+import com.l2dchat.core.environment.EnvironmentStateProvider
+import com.l2dchat.core.environment.MotionController
+import com.l2dchat.core.environment.NoopMotionController
 import com.l2dchat.core.perception.PerceptionStore
 import com.l2dchat.core.reply.NoopPlannerSessionStore
 import com.l2dchat.core.reply.PlannerSessionStore
@@ -24,17 +30,25 @@ class LocalTransport(
         plannerSessionStoreFactory: (RoutingKey) -> PlannerSessionStore = {
             NoopPlannerSessionStore
         },
-        private val runtime: LocalChatRuntime =
-                LocalChatRuntime(
-                        scope = scope,
-                        perceptionStoreFactory = perceptionStoreFactory,
-                        plannerSessionStoreFactory = plannerSessionStoreFactory
-                )
+        localRuntimeLlmConfigProvider: () -> LocalRuntimeLlmConfig? = { null },
+        environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
+        motionController: MotionController = NoopMotionController,
+        private val runtimeFactory: () -> LocalChatRuntime = {
+            LocalRuntimeFactory.create(
+                    scope = scope,
+                    llmConfig = localRuntimeLlmConfigProvider(),
+                    perceptionStoreFactory = perceptionStoreFactory,
+                    plannerSessionStoreFactory = plannerSessionStoreFactory,
+                    environmentStateProvider = environmentStateProvider,
+                    motionController = motionController
+            )
+        }
 ) : ChatTransport {
     override val mode: RuntimeMode = RuntimeMode.LOCAL
 
     private val logger = L2DLogger.module(LogModule.CHAT)
     private var running = false
+    private var runtime: LocalChatRuntime = runtimeFactory()
     private val replySink =
             object : ReplySink {
                 override suspend fun send(message: MessageBase) {
@@ -48,6 +62,16 @@ class LocalTransport(
         callbacks.onStateChanged(ConnectionState.CONNECTED)
         if (!wasRunning) {
             logger.info("本地聊天运行时已启动")
+        }
+    }
+
+    fun rebuildRuntime(reason: String = "runtime configuration changed") {
+        val previous = runtime
+        runtime = runtimeFactory()
+        previous.cancel()
+        logger.info("本地聊天运行时已重建：$reason")
+        if (running) {
+            callbacks.onStateChanged(ConnectionState.CONNECTED)
         }
     }
 
