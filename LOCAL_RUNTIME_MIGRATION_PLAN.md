@@ -969,6 +969,10 @@ Progress:
   mode starts ready, empty-provider settings can save a nickname, and
   `hello_runtime` receives the fixed local reply without WebSocket or LLM
   endpoint configuration.
+- Done: wallpaper/widget message sending now treats local mode as first-class
+  runtime state: local sends start the embedded runtime without a WebSocket URL,
+  while remote mode still requires and uses the saved backend URL. The decision
+  policy is covered by `WallpaperChatConnectionPolicyTest`.
 - Pending: manual provider parity checks with a configured real LLM endpoint.
 
 ## Implementation Order

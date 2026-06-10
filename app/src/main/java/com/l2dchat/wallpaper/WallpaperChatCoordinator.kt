@@ -1,6 +1,7 @@
 package com.l2dchat.wallpaper
 
 import android.content.Context
+import com.l2dchat.chat.service.ChatRuntimeMode
 import com.l2dchat.chat.service.ChatServiceClient
 import com.l2dchat.chat.service.ChatServiceClient.ChatMessageSnapshot
 import com.l2dchat.logging.L2DLogger
@@ -199,9 +200,12 @@ object WallpaperChatCoordinator {
             val modelName = folder.substringAfterLast('/')
             client.setActiveModel(modelName)
         }
-        // 初始化连接（若已配置 URL）
-        prefs.getString(KEY_LAST_URL, null)?.takeUnless { it.isBlank() }?.let { url ->
-            client.connect(url, platform)
+        when (client.getRuntimeMode()) {
+            ChatRuntimeMode.LOCAL -> client.startLocalRuntime()
+            ChatRuntimeMode.REMOTE ->
+                    prefs.getString(KEY_LAST_URL, null)?.takeUnless { it.isBlank() }?.let { url ->
+                        client.connect(url, platform)
+                    }
         }
         client.requestSnapshot()
     }
@@ -271,25 +275,35 @@ object WallpaperChatCoordinator {
     }
 
     private suspend fun ensureConnection(context: Context, client: ChatServiceClient): Boolean {
-        if (client.connectionState.value == ChatServiceClient.ChatConnectionState.CONNECTED) {
-            return true
-        }
-        if (client.connectionState.value == ChatServiceClient.ChatConnectionState.CONNECTING) {
-            return waitForConnection(client)
-        }
         val prefs = context.getSharedPreferences(CHAT_PREFS, Context.MODE_PRIVATE)
         val url = prefs.getString(KEY_LAST_URL, null)?.takeUnless { it.isBlank() }
         val platform = prefs.getString(KEY_PLATFORM, null)?.takeUnless { it.isBlank() }
-        if (url.isNullOrEmpty()) {
-            logger.warn(
-                    "尚未配置 WebSocket URL，无法建立连接",
-                    throttleMs = 3_000L,
-                    throttleKey = "missing_url"
-            )
-            return false
+        return when (
+                WallpaperChatConnectionPolicy.nextAction(
+                        runtimeMode = client.getRuntimeMode(),
+                        connectionState = client.connectionState.value,
+                        remoteUrl = url
+                )
+        ) {
+            WallpaperChatConnectionPolicy.Action.READY -> true
+            WallpaperChatConnectionPolicy.Action.WAIT_FOR_READY -> waitForConnection(client)
+            WallpaperChatConnectionPolicy.Action.START_LOCAL_RUNTIME -> {
+                client.startLocalRuntime()
+                waitForConnection(client)
+            }
+            WallpaperChatConnectionPolicy.Action.CONNECT_REMOTE -> {
+                client.connect(url, platform)
+                waitForConnection(client)
+            }
+            WallpaperChatConnectionPolicy.Action.FAIL_MISSING_REMOTE_URL -> {
+                logger.warn(
+                        "尚未配置 WebSocket URL，无法建立远端连接",
+                        throttleMs = 3_000L,
+                        throttleKey = "missing_url"
+                )
+                false
+            }
         }
-        client.connect(url, platform)
-        return waitForConnection(client)
     }
 
     private suspend fun waitForConnection(client: ChatServiceClient): Boolean {
