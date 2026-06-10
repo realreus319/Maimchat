@@ -3,6 +3,7 @@ package com.l2dchat.core.tools
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.l2dchat.core.llm.LlmToolDefinition
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.atomic.AtomicInteger
 
 class ReplierTool(
@@ -76,36 +77,32 @@ class ReplierTool(
     ): ToolExecutionResult {
         val content = arguments.stringOrNull("content")?.trim().orEmpty()
         require(content.isNotBlank()) { "replier.content must not be blank" }
-        val taskSnapshot =
-                taskManager
-                        ?.startTask(
-                                ReplierTaskRequest(
-                                        taskId = taskIdFor(context),
-                                        routingKey = context.routingKey,
-                                        trigger = context.trigger,
-                                        content = content,
-                                        replyGuidance =
-                                                arguments
-                                                        .stringOrNull("reply_guidance")
-                                                        ?.trimOrNull(),
-                                        styleOverride =
-                                                arguments
-                                                        .stringOrNull("style_override")
-                                                        ?.trimOrNull(),
-                                        emotionHint =
-                                                arguments
-                                                        .stringOrNull("emotion_hint")
-                                                        ?.trimOrNull(),
-                                        isProgressUpdate =
-                                                arguments.booleanOrNull("is_progress_update")
-                                                        ?: false,
-                                        includeAction =
-                                                arguments.booleanOrNull("include_action") ?: false,
-                                        liveImage =
-                                                arguments.stringOrNull("live_image")?.trimOrNull()
-                                )
+        val task =
+                taskManager?.startTask(
+                        ReplierTaskRequest(
+                                taskId = taskIdFor(context),
+                                routingKey = context.routingKey,
+                                trigger = context.trigger,
+                                content = content,
+                                replyGuidance =
+                                        arguments.stringOrNull("reply_guidance")?.trimOrNull(),
+                                styleOverride =
+                                        arguments.stringOrNull("style_override")?.trimOrNull(),
+                                emotionHint =
+                                        arguments.stringOrNull("emotion_hint")?.trimOrNull(),
+                                isProgressUpdate =
+                                        arguments.booleanOrNull("is_progress_update") ?: false,
+                                includeAction = arguments.booleanOrNull("include_action") ?: false,
+                                liveImage = arguments.stringOrNull("live_image")?.trimOrNull()
                         )
-                        ?.waitForCompletion()
+                )
+        val taskSnapshot =
+                try {
+                    task?.waitForCompletion()
+                } catch (error: CancellationException) {
+                    task?.moveToBackground()
+                    throw error
+                }
 
         if (taskSnapshot != null && taskSnapshot.state != ReplierTaskState.COMPLETED) {
             return ToolExecutionResult(

@@ -536,8 +536,9 @@ Progress:
 - Done: `LlmReplierTaskGenerator` streams `LlmClient.chatCompletionStream()` output
   into `ReplierTaskUpdate` events and rejects accidental tool calls from the
   replier model.
-- Pending: interruption-driven backgrounding and full persona/history/mood/
-  impression context injection.
+- Done: `ReplierTool` moves an unfinished task to `BACKGROUND` when planner-side
+  waiting is cancelled, allowing a later decision turn to adopt or kill it.
+- Pending: full persona/history/mood/impression context injection.
 
 ## Phase 7: Decision Tools And Tool Registry
 

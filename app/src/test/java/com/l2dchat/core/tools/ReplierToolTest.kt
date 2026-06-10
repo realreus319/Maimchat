@@ -6,8 +6,12 @@ import com.l2dchat.core.llm.LlmToolCall
 import com.l2dchat.core.trigger.Trigger
 import com.l2dchat.core.trigger.TriggerPriority
 import com.l2dchat.core.trigger.TriggerType
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -167,6 +171,60 @@ class ReplierToolTest {
         assertEquals("task-1", content["taskId"].asString)
         assertEquals("FAILED", content["state"].asString)
         assertEquals("provider failed", content["error"].asString)
+    }
+
+    @Test
+    fun `replier moves running task to background when planner wait is cancelled`() {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+
+        runBlocking {
+            val taskManager =
+                    ReplierTaskManager(
+                            scope = this,
+                            generator =
+                                    ReplierTaskGenerator {
+                                        flow {
+                                            emit(ReplierTaskUpdate.TextDelta("draft"))
+                                            started.complete(Unit)
+                                            release.await()
+                                            emit(ReplierTaskUpdate.TextDelta(" reply"))
+                                        }
+                                    }
+                    )
+            val registry =
+                    ToolRegistry(
+                            listOf(
+                                    ReplierTool(
+                                            taskManager = taskManager,
+                                            taskIdFactory = { "task-1" }
+                                    )
+                            )
+                    )
+
+            val job =
+                    launch {
+                        registry.execute(
+                                context,
+                                LlmToolCall(
+                                        id = "call-1",
+                                        name = ReplierTool.NAME,
+                                        argumentsJson = """{"content":"seed reply"}"""
+                                )
+                        )
+                    }
+            withTimeout(1_000L) { started.await() }
+
+            job.cancelAndJoin()
+
+            val task = taskManager.getTask("task-1") ?: error("task should exist")
+            assertEquals(ReplierTaskState.BACKGROUND, task.snapshot.state)
+
+            release.complete(Unit)
+            val completed = withTimeout(1_000L) { task.waitForCompletion() }
+            assertEquals(ReplierTaskState.COMPLETED, completed.state)
+            assertEquals("draft reply", completed.replyText)
+        }
     }
 
     @Test
