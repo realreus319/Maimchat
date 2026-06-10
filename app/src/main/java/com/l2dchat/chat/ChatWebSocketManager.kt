@@ -26,8 +26,10 @@ import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -42,6 +44,7 @@ class ChatWebSocketManager {
         private const val HISTORY_PREFS = "chat_history"
         private const val HISTORY_LIMIT = 200
         private const val ROOM_IMPORT_PREFIX = "room_imported_"
+        private const val IDLE_TRIGGER_DELAY_MILLIS = 5 * 60 * 1000L
     }
     private val logger = L2DLogger.module(LogModule.CHAT)
     private val gson = Gson()
@@ -107,6 +110,10 @@ class ChatWebSocketManager {
     private var historyLoadGeneration: Long = 0L
     private var receiverUserIdOverride: String? = null
     private var receiverUserNicknameOverride: String? = null
+    private var idleTimerJob: Job? = null
+    private var lastActivityMillis: Long = System.currentTimeMillis()
+    private var idleAppVisible: Boolean = false
+    private var idleWallpaperVisible: Boolean = false
 
     enum class ConnectionState {
         DISCONNECTED,
@@ -152,6 +159,7 @@ class ChatWebSocketManager {
         return if (trimmed.isEmpty()) DEFAULT_PLATFORM else trimmed
     }
     fun connect(url: String, platform: String? = null, authToken: String? = null) {
+        cancelIdleEnvironmentTimer()
         if (activeTransport.mode != RuntimeMode.REMOTE) {
             activeTransport.stop("切换到远程 WebSocket", userInitiated = false)
             activeTransport = remoteTransport
@@ -167,6 +175,7 @@ class ChatWebSocketManager {
             activeTransport = localTransport
         }
         localTransport.start()
+        scheduleIdleEnvironmentTimer()
     }
 
     fun isLocalMode(): Boolean = activeTransport.mode == RuntimeMode.LOCAL
@@ -204,11 +213,18 @@ class ChatWebSocketManager {
         )
         activeModelKey?.let { loadHistory(app, it) }
         emitModelChangedEnvironmentTrigger()
+        noteIdleActivity()
     }
 
     fun updateEnvironmentState(update: ChatEnvironmentUpdate) {
+        updateIdleVisibility(update)
         environmentStateProvider.update(update)
         emitEnvironmentUpdateTriggers(update)
+        if (update.isIdleActivity()) {
+            noteIdleActivity()
+        } else {
+            scheduleIdleEnvironmentTimer()
+        }
     }
     fun reportMotionFinished(
             group: String? = null,
@@ -233,6 +249,7 @@ class ChatWebSocketManager {
                                 context = environmentTriggerContext()
                         )
         )
+        noteIdleActivity()
     }
     fun setReceiverInfo(userId: String?, userNickname: String?) {
         receiverUserIdOverride = userId?.ifBlank { null }
@@ -401,6 +418,7 @@ class ChatWebSocketManager {
         val key = activeModelKey
         val ctx = appContext
         if (key != null && ctx != null) saveHistory(ctx, key)
+        noteIdleActivity()
     }
     private fun addStandardMessage(message: MessageBase) {
         val list = _standardMessages.value.toMutableList()
@@ -475,6 +493,7 @@ class ChatWebSocketManager {
         _standardMessages.value = emptyList()
         environmentStateProvider.clearRecentMessages()
         lastServerMessageTime = 0L
+        noteIdleActivity()
         val key = activeModelKey
         val ctx = appContext
         if (key != null && ctx != null) {
@@ -487,6 +506,7 @@ class ChatWebSocketManager {
         _standardMessages.value = emptyList()
         environmentStateProvider.clearRecentMessages()
         lastServerMessageTime = 0L
+        noteIdleActivity()
     }
     fun loadHistory(context: Context, modelKey: String) {
         val app = context.applicationContext
@@ -801,6 +821,62 @@ class ChatWebSocketManager {
         )
     }
 
+    private fun emitIdleTimerEnvironmentTrigger(idleMillis: Long, timestampMillis: Long) {
+        val transport = localEnvironmentTransport() ?: return
+        submitEnvironmentTriggers(
+                transport = transport,
+                submissions =
+                        environmentTriggerEmitter.onIdleTimer(
+                                idle =
+                                        ChatEnvironmentIdleTimer(
+                                                idleMillis = idleMillis,
+                                                appVisible = idleAppVisible,
+                                                wallpaperVisible = idleWallpaperVisible,
+                                                timestampMillis = timestampMillis
+                                        ),
+                                context = environmentTriggerContext()
+                        )
+        )
+    }
+
+    private fun noteIdleActivity() {
+        lastActivityMillis = System.currentTimeMillis()
+        scheduleIdleEnvironmentTimer()
+    }
+
+    private fun updateIdleVisibility(update: ChatEnvironmentUpdate) {
+        if (update.hasAppVisible) idleAppVisible = update.appVisible == true
+        if (update.hasWallpaperVisible) idleWallpaperVisible = update.wallpaperVisible == true
+    }
+
+    private fun scheduleIdleEnvironmentTimer() {
+        idleTimerJob?.cancel()
+        idleTimerJob = null
+        if (!isLocalMode() || !hasVisibleIdleSurface()) return
+        val scheduledActivityMillis = lastActivityMillis
+        idleTimerJob =
+                scope.launch {
+                    delay(IDLE_TRIGGER_DELAY_MILLIS)
+                    if (!isLocalMode() || !hasVisibleIdleSurface()) return@launch
+                    if (lastActivityMillis != scheduledActivityMillis) return@launch
+                    val firedAtMillis = System.currentTimeMillis()
+                    idleTimerJob = null
+                    emitIdleTimerEnvironmentTrigger(
+                            idleMillis = firedAtMillis - scheduledActivityMillis,
+                            timestampMillis = firedAtMillis
+                    )
+                    lastActivityMillis = firedAtMillis
+                    scheduleIdleEnvironmentTimer()
+                }
+    }
+
+    private fun cancelIdleEnvironmentTimer() {
+        idleTimerJob?.cancel()
+        idleTimerJob = null
+    }
+
+    private fun hasVisibleIdleSurface(): Boolean = idleAppVisible || idleWallpaperVisible
+
     private fun localEnvironmentTransport(): LocalTransport? =
             if (activeTransport.mode == RuntimeMode.LOCAL) activeTransport as? LocalTransport
             else null
@@ -840,6 +916,7 @@ class ChatWebSocketManager {
     private fun generateUserId(): String =
             "u_${System.currentTimeMillis()}_${(Math.random()*1000).toInt()}"
     fun disconnect() {
+        cancelIdleEnvironmentTimer()
         activeTransport.stop("用户断开", userInitiated = true)
     }
 
@@ -854,3 +931,18 @@ class ChatWebSocketManager {
 
     fun getPlatform(): String = platform
 }
+
+private fun ChatEnvironmentUpdate.isIdleActivity(): Boolean =
+        hasAppVisible ||
+                hasWallpaperVisible ||
+                hasBackgroundPath ||
+                hasVisualSnapshot ||
+                interaction != null ||
+                modelKey.isMeaningful() ||
+                modelName.isMeaningful() ||
+                modelFolderPath.isMeaningful() ||
+                modelFile.isMeaningful() ||
+                lifecycleState.isMeaningful() ||
+                motionFiles != null
+
+private fun String?.isMeaningful(): Boolean = !isNullOrBlank()

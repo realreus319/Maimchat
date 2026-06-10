@@ -176,6 +176,76 @@ class ChatEnvironmentTriggerEmitterTest {
         assertEquals(1, repeat.size)
     }
 
+    @Test
+    fun `idle timer emits low priority environment trigger when a surface is visible`() {
+        var now = 40_000L
+        val emitter = ChatEnvironmentTriggerEmitter(clockMillis = { now })
+        val context = triggerContext()
+
+        assertTrue(
+                emitter
+                        .onIdleTimer(
+                                ChatEnvironmentIdleTimer(
+                                        idleMillis = 300_000L,
+                                        appVisible = false,
+                                        wallpaperVisible = false,
+                                        timestampMillis = now
+                                ),
+                                context
+                        )
+                        .isEmpty()
+        )
+
+        val submissions =
+                emitter.onIdleTimer(
+                        ChatEnvironmentIdleTimer(
+                                idleMillis = 301_000L,
+                                appVisible = true,
+                                wallpaperVisible = false,
+                                timestampMillis = now
+                        ),
+                        context
+                )
+
+        assertEquals(1, submissions.size)
+        val submission = submissions.single()
+        assertEquals(TriggerPriority.LOW, submission.priority)
+        assertEquals("android_environment", submission.source)
+        assertEquals("idle_timer", submission.metadata["event_type"])
+        assertEquals(301_000L, submission.metadata["idle_millis"])
+        assertEquals(301L, submission.metadata["idle_seconds"])
+        assertEquals("app", submission.metadata["idle_surface"])
+        assertEquals(true, submission.metadata["app_visible"])
+        assertEquals(false, submission.metadata["wallpaper_visible"])
+        assertEquals(40_000L, submission.metadata["idle_fired_at_millis"])
+
+        now += 1_000L
+        assertTrue(
+                emitter
+                        .onIdleTimer(
+                                ChatEnvironmentIdleTimer(
+                                        idleMillis = 302_000L,
+                                        appVisible = true,
+                                        timestampMillis = now
+                                ),
+                                context
+                        )
+                        .isEmpty()
+        )
+
+        now += 300_000L
+        val repeat =
+                emitter.onIdleTimer(
+                        ChatEnvironmentIdleTimer(
+                                idleMillis = 300_000L,
+                                appVisible = true,
+                                timestampMillis = now
+                        ),
+                        context
+                )
+        assertEquals(1, repeat.size)
+    }
+
     private fun triggerContext(): ChatEnvironmentTriggerContext =
             ChatEnvironmentTriggerContext(
                     routingKey = RoutingKey(contextId = "room-shizuku", agentId = "shizuku"),

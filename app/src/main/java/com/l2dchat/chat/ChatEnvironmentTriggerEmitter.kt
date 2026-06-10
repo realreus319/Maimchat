@@ -23,6 +23,13 @@ data class ChatEnvironmentMotionFinished(
         val timestampMillis: Long? = null
 )
 
+data class ChatEnvironmentIdleTimer(
+        val idleMillis: Long,
+        val appVisible: Boolean = false,
+        val wallpaperVisible: Boolean = false,
+        val timestampMillis: Long? = null
+)
+
 class ChatEnvironmentTriggerEmitter(
         private val clockMillis: () -> Long = { System.currentTimeMillis() },
         private val minIntervalsMillis: Map<String, Long> = DEFAULT_MIN_INTERVALS_MILLIS
@@ -138,6 +145,50 @@ class ChatEnvironmentTriggerEmitter(
                                 "motion_file_path" to filePath,
                                 "motion_loop" to motion.loop,
                                 "motion_finished_at_millis" to timestamp
+                        )
+                )
+    }
+
+    fun onIdleTimer(
+            idle: ChatEnvironmentIdleTimer,
+            context: ChatEnvironmentTriggerContext
+    ): List<EnvironmentTriggerSubmission> {
+        if (!idle.appVisible && !idle.wallpaperVisible) return emptyList()
+        val idleMillis = idle.idleMillis.coerceAtLeast(0L)
+        val idleSeconds = idleMillis / 1000L
+        val timestamp = idle.timestampMillis?.takeIf { it >= 0L } ?: clockMillis()
+        val surface =
+                when {
+                    idle.appVisible && idle.wallpaperVisible -> "app_and_wallpaper"
+                    idle.appVisible -> "app"
+                    else -> "wallpaper"
+                }
+        val surfaceText =
+                when (surface) {
+                    "app_and_wallpaper" -> "应用和壁纸画面"
+                    "app" -> "应用画面"
+                    else -> "壁纸画面"
+                }
+        return emit(
+                context = context,
+                eventType = EVENT_IDLE_TIMER,
+                signature =
+                        signatureOf(
+                                surface,
+                                idleSeconds / 60L,
+                                timestamp / IDLE_SIGNATURE_BUCKET_MILLIS
+                        ),
+                text = "用户已空闲 ${idleSeconds} 秒，Live2D $surfaceText 仍可见。",
+                source = SOURCE_ANDROID_ENVIRONMENT,
+                priority = TriggerPriority.LOW,
+                metadata =
+                        mapOf(
+                                "idle_millis" to idleMillis,
+                                "idle_seconds" to idleSeconds,
+                                "idle_surface" to surface,
+                                "app_visible" to idle.appVisible,
+                                "wallpaper_visible" to idle.wallpaperVisible,
+                                "idle_fired_at_millis" to timestamp
                         )
         )
     }
@@ -292,10 +343,14 @@ class ChatEnvironmentTriggerEmitter(
         const val EVENT_LIVE2D_INTERACTION = "live2d_interaction"
         const val EVENT_VISUAL_SNAPSHOT_READY = "visual_snapshot_ready"
         const val EVENT_MOTION_FINISHED = "motion_finished"
+        const val EVENT_IDLE_TIMER = "idle_timer"
 
         const val SOURCE_ANDROID_APP = "android_app"
         const val SOURCE_ANDROID_WALLPAPER = "android_wallpaper"
         const val SOURCE_ANDROID_LIVE2D = "android_live2d"
+        const val SOURCE_ANDROID_ENVIRONMENT = EnvironmentTriggerSubmission.DEFAULT_SOURCE
+
+        private const val IDLE_SIGNATURE_BUCKET_MILLIS = 5 * 60 * 1000L
 
         val DEFAULT_MIN_INTERVALS_MILLIS =
                 mapOf(
@@ -305,7 +360,8 @@ class ChatEnvironmentTriggerEmitter(
                         EVENT_BACKGROUND_CHANGED to 5_000L,
                         EVENT_LIVE2D_INTERACTION to 500L,
                         EVENT_VISUAL_SNAPSHOT_READY to 10_000L,
-                        EVENT_MOTION_FINISHED to 500L
+                        EVENT_MOTION_FINISHED to 500L,
+                        EVENT_IDLE_TIMER to 5 * 60 * 1000L
                 )
     }
 }

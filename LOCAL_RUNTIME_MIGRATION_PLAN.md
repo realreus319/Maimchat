@@ -734,7 +734,11 @@ Progress:
 - Done: app-side Live2D motion completion is reported from the SDK finish
   callback through `ChatServiceClient` into local ENV planner turns, preserving
   group/index, file path, loop flag, and completion timestamp metadata.
-- Pending: image/content-block capable `look_at` and idle timer triggers.
+- Done: local idle timer ENV triggers are emitted while the app or wallpaper
+  surface remains visible in local runtime mode; chat messages, replies,
+  Live2D interactions, model/background updates, visual snapshots, and surface
+  visibility changes reset the idle window.
+- Pending: image/content-block capable `look_at`.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood
 
