@@ -680,9 +680,15 @@ Progress:
   extension metadata without coupling to Android UI classes.
 - Done: `get_world_state` returns a bounded, planner-readable JSON summary of
   that environment state and is exposed only in normal tool mode.
+- Done: core `trigger_motion` tool validates group/index or file path requests,
+  calls a `MotionController`, reports accepted/rejected motion queue state as
+  planner-readable JSON, and includes a Live2D adapter over
+  `Live2DModelLifecycleManager.playMotionByGroup()` / `playMotionByFile()`.
 - Pending: wire real app, wallpaper, Live2D lifecycle, touch, chat bubble, and
   snapshot producers into an Android-backed provider.
-- Pending: `trigger_motion`, `look_at`, and environment triggers.
+- Pending: wire `trigger_motion` into the local planner registry from UI/service
+  runtime construction.
+- Pending: `look_at` and environment triggers.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood
 
@@ -920,7 +926,7 @@ Tools:
 - [x] `kill_background_reply`
 - [x] `get_world_state`
 - [ ] `look_at`
-- [ ] `trigger_motion`
+- [x] `trigger_motion`
 - [ ] memory/impression tools
 
 Android integration:
