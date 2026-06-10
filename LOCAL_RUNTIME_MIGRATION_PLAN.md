@@ -455,8 +455,11 @@ Progress:
   response, stream event, generation config, and client contracts are in place.
 - Done: fake-client contract tests cover assistant tool calls, tool result messages,
   streaming completion events, and tool executor wiring shape.
-- Pending: `OpenAiCompatibleClient`, encrypted provider settings, and planner/replier
-  model config selection.
+- Done: `OpenAiCompatibleClient` supports OpenAI-compatible chat completions,
+  SSE text streaming, native tool-call request/response conversion, timeout,
+  retry, and coroutine cancellation through OkHttp call cancellation.
+- Pending: encrypted provider settings, planner/replier model config selection,
+  and manual real-provider verification.
 
 ## Phase 6: ReplierTool And ReplierTask
 
