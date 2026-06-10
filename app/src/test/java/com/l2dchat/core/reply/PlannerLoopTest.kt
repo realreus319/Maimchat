@@ -138,6 +138,51 @@ class PlannerLoopTest {
         }
     }
 
+    @Test
+    fun `loop persists planner round trigger user and assistant messages`() {
+        var now = 1_000L
+        val store = RecordingPlannerSessionStore()
+        val replyDone = CompletableDeferred<PlannerReply>()
+
+        runBlocking {
+            val loop =
+                    PlannerLoop(
+                            routingKey = routingKey,
+                            scope = this,
+                            processor =
+                                    PlannerTriggerProcessor { context ->
+                                        context.sendReply("stored reply")
+                                    },
+                            replySink = PlannerReplySink { replyDone.complete(it) },
+                            sessionStore = store,
+                            clockMillis = { now++ }
+                    )
+            loop.start()
+            loop.submitTrigger(trigger("msg-1"))
+
+            withTimeout(1_000L) { replyDone.await() }
+            withTimeout(1_000L) { store.completed.await() }
+
+            assertEquals(
+                    listOf(PlannerSessionState.GENERATING, PlannerSessionState.COMPLETED),
+                    store.rounds.map { it.state }
+            )
+            assertEquals("msg-1", store.rounds.first().triggerMessageId)
+            assertEquals(
+                    listOf(
+                            PlannerSessionRole.TRIGGER,
+                            PlannerSessionRole.USER,
+                            PlannerSessionRole.ASSISTANT
+                    ),
+                    store.messages.map { it.role }
+            )
+            assertEquals("MSG", store.messages[0].content)
+            assertEquals("msg-1", store.messages[1].content)
+            assertEquals("stored reply", store.messages[2].content)
+            loop.shutdown()
+        }
+    }
+
     private fun trigger(
             messageId: String,
             contextId: String = routingKey.contextId,
@@ -155,4 +200,21 @@ class PlannerLoopTest {
                     timestampSeconds = timestamp,
                     payload = mapOf("text" to messageId)
             )
+
+    private class RecordingPlannerSessionStore : PlannerSessionStore {
+        val rounds = mutableListOf<PlannerRoundRecord>()
+        val messages = mutableListOf<PlannerSessionMessageRecord>()
+        val completed = CompletableDeferred<Unit>()
+
+        override suspend fun upsertRound(round: PlannerRoundRecord) {
+            rounds.add(round)
+            if (round.state == PlannerSessionState.COMPLETED) {
+                completed.complete(Unit)
+            }
+        }
+
+        override suspend fun appendMessage(message: PlannerSessionMessageRecord) {
+            messages.add(message)
+        }
+    }
 }

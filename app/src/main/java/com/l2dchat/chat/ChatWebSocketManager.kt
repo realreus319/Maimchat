@@ -12,9 +12,12 @@ import com.l2dchat.chat.transport.RemoteWebSocketTransport
 import com.l2dchat.core.message.RuntimeMessageMapper
 import com.l2dchat.core.message.VisibleMessageRecord
 import com.l2dchat.core.perception.PerceptionStore
+import com.l2dchat.core.reply.NoopPlannerSessionStore
+import com.l2dchat.core.reply.PlannerSessionStore
 import com.l2dchat.core.storage.ChatDatabase
 import com.l2dchat.core.storage.ChatHistoryStore
 import com.l2dchat.core.storage.RoomChatHistoryStore
+import com.l2dchat.core.storage.RoomPlannerSessionStore
 import com.l2dchat.core.storage.RoomPerceptionStore
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
@@ -71,7 +74,8 @@ class ChatWebSocketManager {
                     callbacks = transportCallbacks,
                     platformProvider = { platform },
                     agentNameProvider = { receiverModelName },
-                    perceptionStoreFactory = { localPerceptionStoreFor() }
+                    perceptionStoreFactory = { localPerceptionStoreFor() },
+                    plannerSessionStoreFactory = { localPlannerSessionStoreFor() }
             )
     private val remoteTransport =
             RemoteWebSocketTransport(scope = scope, callbacks = transportCallbacks)
@@ -660,6 +664,12 @@ class ChatWebSocketManager {
                 messageDao = database.runtimeMessageDao(),
                 stateDao = database.runtimeStateDao()
         )
+    }
+
+    private fun localPlannerSessionStoreFor(): PlannerSessionStore {
+        val context = appContext ?: return NoopPlannerSessionStore
+        val database = ChatDatabase.getInstance(context.applicationContext)
+        return RoomPlannerSessionStore(database.plannerStateDao())
     }
 
     private fun historyContextId(modelKey: String?): String =

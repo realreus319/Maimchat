@@ -11,6 +11,9 @@ class ReplyLayerFactory(
             NoopPlannerTriggerProcessor
         },
         private val replySinkFactory: (RoutingKey) -> PlannerReplySink = { PlannerReplySink {} },
+        private val sessionStoreFactory: (RoutingKey) -> PlannerSessionStore = {
+            NoopPlannerSessionStore
+        },
         private val onError: (RoutingKey, Trigger, Throwable) -> Unit = { _, _, _ -> }
 ) : TriggerSink {
     private val lock = Any()
@@ -41,6 +44,7 @@ class ReplyLayerFactory(
                                     scope = scope,
                                     processor = processorFactory(routingKey),
                                     replySink = replySinkFactory(routingKey),
+                                    sessionStore = sessionStoreFactory(routingKey),
                                     onError = onError
                             )
                             .also { it.start() }

@@ -13,8 +13,10 @@ import com.l2dchat.core.inbound.InboundMessage
 import com.l2dchat.core.perception.PerceptionDispatcher
 import com.l2dchat.core.perception.PerceptionProcessor
 import com.l2dchat.core.perception.PerceptionStore
+import com.l2dchat.core.reply.NoopPlannerSessionStore
 import com.l2dchat.core.reply.PlannerReply
 import com.l2dchat.core.reply.PlannerReplySink
+import com.l2dchat.core.reply.PlannerSessionStore
 import com.l2dchat.core.reply.PlannerTriggerProcessor
 import com.l2dchat.core.reply.ReplyLayerFactory
 import com.l2dchat.core.reply.ReplySink
@@ -33,7 +35,10 @@ import kotlinx.coroutines.SupervisorJob
  */
 class LocalChatRuntime(
         scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
-        private val perceptionStoreFactory: (RoutingKey) -> PerceptionStore? = { null }
+        private val perceptionStoreFactory: (RoutingKey) -> PerceptionStore? = { null },
+        private val plannerSessionStoreFactory: (RoutingKey) -> PlannerSessionStore = {
+            NoopPlannerSessionStore
+        }
 ) {
     private val inboundBuilder = InboundBuilder()
     private val perceptionProcessor = PerceptionProcessor()
@@ -48,6 +53,7 @@ class LocalChatRuntime(
                         }
                     },
                     replySinkFactory = { PlannerReplySink { reply -> handlePlannerReply(reply) } },
+                    sessionStoreFactory = plannerSessionStoreFactory,
                     onError = { _, trigger, throwable ->
                         removePending(trigger.toPendingKey())?.completion?.completeExceptionally(throwable)
                     }
