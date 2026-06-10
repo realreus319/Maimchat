@@ -904,6 +904,9 @@ Progress:
 - Done: local runtime/provider failures now propagate a compact diagnostic from
   `ChatConnectionService` through `ChatServiceClient` into the main chat status
   line while preserving the existing Messenger error event.
+- Done: local runtime settings validation no longer blocks fixed local runtime
+  fallback when Endpoint/Planner are both empty; provider fields are required
+  only after Endpoint, API key, Planner, or Replier input is present.
 - Pending: parity verification against the old backend.
 
 Acceptance:
@@ -962,8 +965,11 @@ Progress:
   and model selection entry are visible on a fresh emulator.
 - Done: `LocalTransportTest` covers sending a user message without explicitly
   starting the local transport, locking the no-WebSocket lazy-start path.
-- Pending: manual chat/provider parity checks with an actual Live2D model and
-  configured LLM endpoint.
+- Done: manual emulator check with a temporary ignored Haru asset verified local
+  mode starts ready, empty-provider settings can save a nickname, and
+  `hello_runtime` receives the fixed local reply without WebSocket or LLM
+  endpoint configuration.
+- Pending: manual provider parity checks with a configured real LLM endpoint.
 
 ## Implementation Order
 

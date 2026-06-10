@@ -1260,26 +1260,7 @@ private fun validateConfig(
         url: String,
         nickname: String,
         localLlmSettings: LocalLlmSettings = LocalLlmSettings()
-): List<String> {
-    val errors = mutableListOf<String>()
-    if (nickname.isBlank()) errors.add("昵称不能为空")
-    if (localLlmSettings.enabled) {
-        val baseUrl = localLlmSettings.baseUrl.orEmpty()
-        if (baseUrl.isBlank()) {
-            errors.add("LLM Endpoint 不能为空")
-        } else if (!(baseUrl.startsWith("http://") || baseUrl.startsWith("https://"))) {
-            errors.add("LLM Endpoint 必须以 http:// 或 https:// 开头")
-        }
-        if (localLlmSettings.plannerModel.isNullOrBlank()) {
-            errors.add("Planner 模型不能为空")
-        }
-    } else {
-        if (url.isBlank()) errors.add("WebSocket 地址不能为空")
-        else if (!(url.startsWith("ws://") || url.startsWith("wss://")))
-                errors.add("WebSocket 地址必须以 ws:// 或 wss:// 开头")
-    }
-    return errors
-}
+): List<String> = RuntimeSettingsValidation.validateConfig(url, nickname, localLlmSettings)
 
 private fun buildRuntimeStatusLine(
         runtimeMode: ChatRuntimeMode,
@@ -1373,26 +1354,13 @@ private fun validateLocalLlmNumericInput(
         temperature: String,
         maxTokens: String,
         timeoutMillis: String
-): List<String> {
-    if (!enabled) return emptyList()
-    val errors = mutableListOf<String>()
-    val rawTemperature = temperature.trim()
-    if (rawTemperature.isNotEmpty()) {
-        val parsed = rawTemperature.toDoubleOrNull()
-        if (parsed == null || !parsed.isFinite()) {
-            errors.add("Temperature 必须是数字")
-        }
-    }
-    val rawMaxTokens = maxTokens.trim()
-    if (rawMaxTokens.isNotEmpty() && (rawMaxTokens.toIntOrNull() ?: 0) <= 0) {
-        errors.add("Max tokens 必须是正整数")
-    }
-    val rawTimeout = timeoutMillis.trim()
-    if (rawTimeout.isNotEmpty() && (rawTimeout.toLongOrNull() ?: 0L) <= 0L) {
-        errors.add("超时必须是正整数毫秒")
-    }
-    return errors
-}
+): List<String> =
+        RuntimeSettingsValidation.validateLocalLlmNumericInput(
+                enabled,
+                temperature,
+                maxTokens,
+                timeoutMillis
+        )
 
 @Composable
 private fun AgentProfileConfigDialog(
