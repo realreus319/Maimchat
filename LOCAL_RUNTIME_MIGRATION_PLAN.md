@@ -829,8 +829,14 @@ Progress:
 - Done: `AgentProfileRepository` centralizes editable per-agent config,
   backend-aligned prompt template names, and profile JSON import/export on top
   of Room.
-- Pending: wire prompt import/export and editable agent config into the Compose
-  UI. Provider API keys already use encrypted storage through
+- Done: `ChatWithModelScreen` exposes a per-current-model role config dialog
+  for editing agent persona/provider/model/settings, overriding
+  `planner_system`, `decision_system`, `replier_system`, and `replier_user`
+  prompts, and importing/exporting profile JSON through Android document
+  pickers.
+- Pending: verify the role config dialog on emulator/device and wire
+  per-agent provider/model overrides into the actual planner/replier LLM
+  selection. Provider API keys already use encrypted storage through
   `LocalLlmSettingsStore`.
 
 ## Phase 10: UI And Service Migration

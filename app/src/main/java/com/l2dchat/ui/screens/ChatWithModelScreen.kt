@@ -52,7 +52,12 @@ import androidx.core.content.FileProvider
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.chat.MotionCommand
 import com.l2dchat.chat.service.ChatServiceClient
+import com.l2dchat.core.config.AgentProfileRepository
+import com.l2dchat.core.config.AgentPromptTemplateNames
+import com.l2dchat.core.config.DefaultAgentProfileSeeder
+import com.l2dchat.core.config.EditableAgentProfile
 import com.l2dchat.core.config.LocalLlmSettings
+import com.l2dchat.core.storage.ChatDatabase
 import com.l2dchat.live2d.ImprovedLive2DRenderer
 import com.l2dchat.live2d.Live2DModelLifecycleManager
 import com.l2dchat.live2d.Live2DModelManager
@@ -84,6 +89,8 @@ private const val ENVIRONMENT_VISUAL_SNAPSHOT_MIME_TYPE =
         "application/vnd.l2dchat.environment-snapshot+json"
 
 private data class ConnectionErrorBanner(val id: Long, val message: String)
+
+private data class AgentProfileImportEvent(val id: Long, val json: String)
 
 private val uiLogger = L2DLogger.module(LogModule.MAIN_VIEW)
 
@@ -124,6 +131,7 @@ fun ChatWithModelScreen(
             }
     var inputText by remember { mutableStateOf("") }
     var showConnectionDialog by remember { mutableStateOf(false) }
+    var showAgentProfileDialog by remember { mutableStateOf(false) }
     var serverUrl by remember { mutableStateOf("ws://localhost:8080/ws") }
     var nickname by remember { mutableStateOf(chatManager.getUserNickname() ?: "") }
     var receiverUserId by remember { mutableStateOf("") }
@@ -142,6 +150,8 @@ fun ChatWithModelScreen(
     var visualSurfaceHeightPx by remember { mutableStateOf(0) }
     val connectionErrorBanners = remember { mutableStateListOf<ConnectionErrorBanner>() }
     var suppressMissingUrlWarning by rememberSaveable { mutableStateOf(true) }
+    var pendingAgentProfileExportJson by remember { mutableStateOf<String?>(null) }
+    var agentProfileImportEvent by remember { mutableStateOf<AgentProfileImportEvent?>(null) }
 
     var isLoadingDefaultModel by remember { mutableStateOf(selectedModel == null) }
     var currentModel by remember(modelKey) { mutableStateOf(selectedModel) }
@@ -207,6 +217,40 @@ fun ChatWithModelScreen(
                     } catch (e: Exception) {
                         uiLogger.error("启动裁剪失败", e)
                         context.deleteTempCacheFile(destFile)
+                    }
+                }
+            }
+
+    val agentProfileExportLauncher =
+            rememberLauncherForActivityResult(
+                    ActivityResultContracts.CreateDocument("application/json")
+            ) { uri ->
+                val json = pendingAgentProfileExportJson
+                pendingAgentProfileExportJson = null
+                if (uri != null && json != null) {
+                    scope.launch {
+                        val saved = writeTextToUri(context, uri, json)
+                        Toast.makeText(
+                                        context,
+                                        if (saved) "角色配置已导出" else "角色配置导出失败",
+                                        Toast.LENGTH_SHORT
+                                )
+                                .show()
+                    }
+                }
+            }
+
+    val agentProfileImportLauncher =
+            rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                if (uri != null) {
+                    scope.launch {
+                        val json = readTextFromUri(context, uri)
+                        if (json == null) {
+                            Toast.makeText(context, "角色配置导入失败", Toast.LENGTH_SHORT).show()
+                        } else {
+                            agentProfileImportEvent =
+                                    AgentProfileImportEvent(System.nanoTime(), json)
+                        }
                     }
                 }
             }
@@ -603,6 +647,13 @@ fun ChatWithModelScreen(
                                         onDismissRequest = { overflowExpanded = false }
                                 ) {
                                     DropdownMenuItem(
+                                            text = { Text("角色配置") },
+                                            onClick = {
+                                                overflowExpanded = false
+                                                showAgentProfileDialog = true
+                                            }
+                                    )
+                                    DropdownMenuItem(
                                             text = { Text("查看日志") },
                                             onClick = {
                                                 overflowExpanded = false
@@ -751,6 +802,41 @@ fun ChatWithModelScreen(
                         }
                     },
                     onDismiss = { showConnectionDialog = false }
+            )
+        }
+        if (showAgentProfileDialog) {
+            AgentProfileConfigDialog(
+                    modelName = currentModel?.name,
+                    importEvent = agentProfileImportEvent,
+                    onImportEventConsumed = { event ->
+                        if (agentProfileImportEvent?.id == event.id) {
+                            agentProfileImportEvent = null
+                        }
+                    },
+                    onImportRequest = {
+                        runCatching {
+                                    agentProfileImportLauncher.launch(
+                                            arrayOf("application/json", "text/*", "*/*")
+                                    )
+                                }
+                                .onFailure { error ->
+                                    uiLogger.warn("启动角色配置导入失败", error)
+                                    Toast.makeText(context, "无法打开文件选择器", Toast.LENGTH_SHORT)
+                                            .show()
+                                }
+                    },
+                    onExportJson = { fileName, json ->
+                        pendingAgentProfileExportJson = json
+                        runCatching { agentProfileExportLauncher.launch(fileName) }
+                                .onFailure { error ->
+                                    pendingAgentProfileExportJson = null
+                                    uiLogger.warn("启动角色配置导出失败", error)
+                                    Toast.makeText(context, "无法打开文件保存器", Toast.LENGTH_SHORT)
+                                            .show()
+                                }
+                    },
+                    onSaved = { chatManager.startLocalRuntime() },
+                    onDismiss = { showAgentProfileDialog = false }
             )
         }
         if (showLogViewer) {
@@ -1193,6 +1279,282 @@ private fun validateLocalLlmNumericInput(
     return errors
 }
 
+@Composable
+private fun AgentProfileConfigDialog(
+        modelName: String?,
+        importEvent: AgentProfileImportEvent?,
+        onImportEventConsumed: (AgentProfileImportEvent) -> Unit,
+        onImportRequest: () -> Unit,
+        onExportJson: (String, String) -> Unit,
+        onSaved: () -> Unit,
+        onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val database = remember(context) { ChatDatabase.getInstance(context.applicationContext) }
+    val repository = remember(database) { AgentProfileRepository(database.runtimeStateDao()) }
+    val agentId = remember(modelName) { agentIdFromModelName(modelName) }
+
+    var isLoading by remember { mutableStateOf(false) }
+    var isSaving by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var displayName by remember { mutableStateOf(modelName.orEmpty()) }
+    var persona by remember { mutableStateOf("") }
+    var provider by remember { mutableStateOf("") }
+    var providerModel by remember { mutableStateOf("") }
+    var settingsJson by remember { mutableStateOf("") }
+    var plannerSystemPrompt by remember { mutableStateOf("") }
+    var decisionSystemPrompt by remember { mutableStateOf("") }
+    var replierSystemPrompt by remember { mutableStateOf("") }
+    var replierUserPrompt by remember { mutableStateOf("") }
+
+    fun applyProfile(profile: EditableAgentProfile) {
+        displayName = profile.displayName
+        persona = profile.persona.orEmpty()
+        provider = profile.provider.orEmpty()
+        providerModel = profile.model.orEmpty()
+        settingsJson = profile.settingsJson.orEmpty()
+        plannerSystemPrompt = profile.prompts[AgentPromptTemplateNames.PLANNER_SYSTEM].orEmpty()
+        decisionSystemPrompt = profile.prompts[AgentPromptTemplateNames.DECISION_SYSTEM].orEmpty()
+        replierSystemPrompt = profile.prompts[AgentPromptTemplateNames.REPLIER_SYSTEM].orEmpty()
+        replierUserPrompt = profile.prompts[AgentPromptTemplateNames.REPLIER_USER].orEmpty()
+    }
+
+    fun currentProfile(): EditableAgentProfile? {
+        val id = agentId ?: return null
+        return EditableAgentProfile(
+                agentId = id,
+                displayName = displayName,
+                persona = persona,
+                provider = provider,
+                model = providerModel,
+                settingsJson = settingsJson,
+                prompts =
+                        mapOf(
+                                AgentPromptTemplateNames.PLANNER_SYSTEM to plannerSystemPrompt,
+                                AgentPromptTemplateNames.DECISION_SYSTEM to decisionSystemPrompt,
+                                AgentPromptTemplateNames.REPLIER_SYSTEM to replierSystemPrompt,
+                                AgentPromptTemplateNames.REPLIER_USER to replierUserPrompt
+                        )
+        )
+    }
+
+    LaunchedEffect(database, agentId, modelName) {
+        val id = agentId
+        if (id == null) {
+            loadError = "当前模型没有可用的 Agent ID"
+            return@LaunchedEffect
+        }
+        isLoading = true
+        loadError = null
+        val result =
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val stateDao = database.runtimeStateDao()
+                        DefaultAgentProfileSeeder.seed(
+                                context = context.applicationContext,
+                                stateDao = stateDao,
+                                agentId = id,
+                                displayName = modelName
+                        )
+                        repository.load(id, modelName)
+                    }
+                }
+        result.onSuccess { applyProfile(it) }
+                .onFailure { error ->
+                    uiLogger.error("加载角色配置失败", error)
+                    loadError = error.message ?: "角色配置加载失败"
+                }
+        isLoading = false
+    }
+
+    LaunchedEffect(importEvent?.id, agentId) {
+        val event = importEvent ?: return@LaunchedEffect
+        val id = agentId
+        if (id == null) {
+            Toast.makeText(context, "当前模型没有可用的 Agent ID", Toast.LENGTH_SHORT).show()
+            onImportEventConsumed(event)
+            return@LaunchedEffect
+        }
+        val result =
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        repository.importJson(
+                                json = event.json,
+                                targetAgentId = id,
+                                fallbackDisplayName = modelName
+                        )
+                    }
+                }
+        result.onSuccess { profile ->
+                    applyProfile(profile)
+                    Toast.makeText(context, "角色配置已载入", Toast.LENGTH_SHORT).show()
+                }
+                .onFailure { error ->
+                    uiLogger.error("解析角色配置失败", error)
+                    Toast.makeText(context, "角色配置 JSON 无效", Toast.LENGTH_SHORT).show()
+                }
+        onImportEventConsumed(event)
+    }
+
+    AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("角色配置") },
+            text = {
+                Column(
+                        modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (isLoading) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    loadError?.let { error ->
+                        Text(
+                                text = error,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    OutlinedTextField(
+                            value = agentId.orEmpty(),
+                            onValueChange = {},
+                            label = { Text("Agent ID") },
+                            singleLine = true,
+                            enabled = false,
+                            modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                            value = displayName,
+                            onValueChange = { displayName = it },
+                            label = { Text("显示名称") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                            value = persona,
+                            onValueChange = { persona = it },
+                            label = { Text("人格设定") },
+                            minLines = 3,
+                            maxLines = 6,
+                            modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                                value = provider,
+                                onValueChange = { provider = it },
+                                label = { Text("Provider") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                                value = providerModel,
+                                onValueChange = { providerModel = it },
+                                label = { Text("Model") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                        )
+                    }
+                    OutlinedTextField(
+                            value = settingsJson,
+                            onValueChange = { settingsJson = it },
+                            label = { Text("Settings JSON") },
+                            minLines = 2,
+                            maxLines = 5,
+                            modifier = Modifier.fillMaxWidth()
+                    )
+                    HorizontalDivider()
+                    AgentPromptField(
+                            label = "Planner system",
+                            value = plannerSystemPrompt,
+                            onValueChange = { plannerSystemPrompt = it }
+                    )
+                    AgentPromptField(
+                            label = "Decision system",
+                            value = decisionSystemPrompt,
+                            onValueChange = { decisionSystemPrompt = it }
+                    )
+                    AgentPromptField(
+                            label = "Replier system",
+                            value = replierSystemPrompt,
+                            onValueChange = { replierSystemPrompt = it }
+                    )
+                    AgentPromptField(
+                            label = "Replier user",
+                            value = replierUserPrompt,
+                            onValueChange = { replierUserPrompt = it }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                        enabled = !isLoading && !isSaving && agentId != null,
+                        onClick = {
+                            val profile = currentProfile()
+                            if (profile == null) {
+                                Toast.makeText(context, "当前模型没有可用的 Agent ID", Toast.LENGTH_SHORT)
+                                        .show()
+                                return@TextButton
+                            }
+                            scope.launch {
+                                isSaving = true
+                                val result =
+                                        runCatching {
+                                            withContext(Dispatchers.IO) {
+                                                repository.save(profile)
+                                            }
+                                        }
+                                result.onSuccess {
+                                            onSaved()
+                                            Toast.makeText(context, "角色配置已保存", Toast.LENGTH_SHORT)
+                                                    .show()
+                                        }
+                                        .onFailure { error ->
+                                            uiLogger.error("保存角色配置失败", error)
+                                            Toast.makeText(context, "角色配置保存失败", Toast.LENGTH_SHORT)
+                                                    .show()
+                                        }
+                                isSaving = false
+                            }
+                        }
+                ) { Text(if (isSaving) "保存中" else "保存") }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(enabled = !isLoading && !isSaving, onClick = onImportRequest) {
+                        Text("导入")
+                    }
+                    TextButton(
+                            enabled = !isLoading && !isSaving && agentId != null,
+                            onClick = {
+                                val profile = currentProfile() ?: return@TextButton
+                                val json = repository.exportJson(profile)
+                                onExportJson(agentProfileExportFileName(profile.agentId), json)
+                            }
+                    ) {
+                        Text("导出")
+                    }
+                    TextButton(enabled = !isSaving, onClick = onDismiss) { Text("关闭") }
+                }
+            }
+    )
+}
+
+@Composable
+private fun AgentPromptField(
+        label: String,
+        value: String,
+        onValueChange: (String) -> Unit
+) {
+    OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = { Text(label) },
+            minLines = 4,
+            maxLines = 8,
+            modifier = Modifier.fillMaxWidth()
+    )
+}
+
 private tailrec fun Context.findActivity(): Activity? =
         when (this) {
             is Activity -> this
@@ -1517,6 +1879,39 @@ private fun ConnectionConfigDialog(
 
 // 提供默认 platform（保持与服务端默认值一致）
 private fun chatManagerPlatformDefault(): String = "live2d_chat"
+
+private fun agentIdFromModelName(modelName: String?): String? =
+        modelName?.trim()?.takeIf { it.isNotEmpty() }
+                ?.lowercase()
+                ?.replace(Regex("[^a-z0-9_-]+"), "_")
+                ?.takeIf { it.isNotEmpty() }
+
+private fun agentProfileExportFileName(agentId: String): String =
+        "maimchat_${agentId.ifBlank { "agent" }}_profile.json"
+
+private suspend fun readTextFromUri(context: Context, uri: Uri): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use {
+                    it.readText()
+                }
+            } catch (e: Exception) {
+                uiLogger.error("读取角色配置失败", e)
+                null
+            }
+        }
+
+private suspend fun writeTextToUri(context: Context, uri: Uri, text: String): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val output = context.contentResolver.openOutputStream(uri) ?: return@withContext false
+                output.bufferedWriter().use { it.write(text) }
+                true
+            } catch (e: Exception) {
+                uiLogger.error("写入角色配置失败", e)
+                false
+            }
+        }
 
 private suspend fun loadBackgroundBitmap(path: String): Bitmap? =
         withContext(Dispatchers.IO) {
