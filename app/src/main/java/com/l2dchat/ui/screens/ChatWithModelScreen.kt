@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import com.l2dchat.chat.MessageBase
+import com.l2dchat.chat.MotionCommand
 import com.l2dchat.chat.service.ChatServiceClient
 import com.l2dchat.core.config.LocalLlmSettings
 import com.l2dchat.live2d.ImprovedLive2DRenderer
@@ -325,8 +326,8 @@ fun ChatWithModelScreen(
                 )
                 if (newManager.initialize()) {
                     lifecycleManager = newManager
-                    chatManager.setMotionTriggerCallback { group, index, loop ->
-                        newManager.playMotionByGroup(group, index, loop)
+                    chatManager.setMotionCommandCallback { command ->
+                        newManager.playMotionCommand(command)
                     }
                     chatManager.clearMessagesEphemeral()
                     chatManager.setActiveModel(currentModel?.name)
@@ -734,6 +735,17 @@ fun ChatWithModelScreen(
                     }
             )
         }
+    }
+}
+
+private fun Live2DModelLifecycleManager.playMotionCommand(command: MotionCommand): Boolean {
+    val group = command.group
+    val index = command.index
+    return if (group != null && index != null) {
+        playMotionByGroup(group, index, command.loop)
+    } else {
+        val filePath = command.filePath ?: return false
+        playMotionByFile(filePath, command.loop)
     }
 }
 

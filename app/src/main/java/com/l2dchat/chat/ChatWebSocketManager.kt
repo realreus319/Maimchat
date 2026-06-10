@@ -56,6 +56,8 @@ class ChatWebSocketManager {
                     onBufferOverflow = BufferOverflow.DROP_OLDEST
             )
     val errors: SharedFlow<String> = _errors.asSharedFlow()
+    private val localMotionController =
+            ChatMotionController { command -> emitMotionMessage(command) }
     private val transportCallbacks =
             object : ChatTransportCallbacks {
                 override fun onStateChanged(state: ConnectionState) {
@@ -78,7 +80,8 @@ class ChatWebSocketManager {
                     agentNameProvider = { receiverModelName },
                     perceptionStoreFactory = { localPerceptionStoreFor() },
                     plannerSessionStoreFactory = { localPlannerSessionStoreFor() },
-                    localRuntimeLlmConfigProvider = { localLlmSettings.toRuntimeConfig() }
+                    localRuntimeLlmConfigProvider = { localLlmSettings.toRuntimeConfig() },
+                    motionController = localMotionController
             )
     private val remoteTransport =
             RemoteWebSocketTransport(scope = scope, callbacks = transportCallbacks)
@@ -321,21 +324,9 @@ class ChatWebSocketManager {
     }
 
     fun sendMotionMessage(group: String, index: Int, loop: Boolean = false) {
-        val m =
-                buildStandardMessage(
-                        listOf(Seg("text", "播放动作: $group[$index]")),
-                        "motion",
-                        additional =
-                                mapOf(
-                                        "motion" to
-                                                mapOf(
-                                                        "group" to group,
-                                                        "index" to index,
-                                                        "loop" to loop
-                                                )
-                                )
-                )
-        sendStandardMessage(m)
+        sendStandardMessage(
+                buildMotionMessage(MotionCommand(group = group, index = index, loop = loop))
+        )
     }
     fun triggerModelMotion(group: String, index: Int, loop: Boolean = false) {
         onMotionTrigger?.invoke(group, index, loop)
@@ -345,6 +336,22 @@ class ChatWebSocketManager {
         onMotionTrigger = callback
     }
     fun getMessageEvents() = messageHandler.messageEvents
+    private fun emitMotionMessage(command: MotionCommand): Boolean {
+        if (command.group != null && command.index != null) {
+            onMotionTrigger?.invoke(command.group, command.index, command.loop)
+        }
+        addStandardMessage(buildMotionMessage(command))
+        return true
+    }
+
+    private fun buildMotionMessage(command: MotionCommand): MessageBase =
+            buildStandardMessage(
+                    listOf(Seg("text", MotionMessage.displayText(command))),
+                    MotionMessage.TYPE,
+                    raw = MotionMessage.displayText(command),
+                    additional = MotionMessage.additionalConfig(command)
+            )
+
     private fun addMessage(message: ChatMessage) {
         val list = _messages.value.toMutableList()
         if (list.any { it.id == message.id }) return

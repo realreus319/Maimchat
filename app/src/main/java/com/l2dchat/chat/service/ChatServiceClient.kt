@@ -13,6 +13,8 @@ import android.os.Message
 import android.os.Messenger
 import android.os.RemoteException
 import com.l2dchat.chat.MessageBase
+import com.l2dchat.chat.MotionCommand
+import com.l2dchat.chat.MotionMessage
 import com.l2dchat.core.config.LocalLlmSettings
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
@@ -107,7 +109,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
             MutableStateFlow(prefs.getString(KEY_LAST_URL, null)?.takeIf { it.isNotBlank() })
     private val _localLlmSettings = MutableStateFlow(readLocalLlmSettings(prefs))
     private val _activeModel = MutableStateFlow<String?>(null)
-    private var motionCallback: ((String, Int, Boolean) -> Unit)? = null
+    private var motionCallback: ((MotionCommand) -> Unit)? = null
 
     val connectionState: StateFlow<ChatConnectionState> = _connectionState.asStateFlow()
     val connectionLabel: StateFlow<String> = _connectionLabel.asStateFlow()
@@ -291,6 +293,16 @@ class ChatServiceClient(context: Context) : ServiceConnection {
     }
 
     fun setMotionTriggerCallback(callback: (String, Int, Boolean) -> Unit) {
+        motionCallback = { command ->
+            val group = command.group
+            val index = command.index
+            if (group != null && index != null) {
+                callback(group, index, command.loop)
+            }
+        }
+    }
+
+    fun setMotionCommandCallback(callback: (MotionCommand) -> Unit) {
         motionCallback = callback
     }
 
@@ -414,9 +426,12 @@ class ChatServiceClient(context: Context) : ServiceConnection {
         val json = data.getString(ChatServiceProtocol.EXTRA_STANDARD_MESSAGE_JSON) ?: return
         val message = runCatching { MessageBase.fromJsonString(json) }.getOrNull() ?: return
         val messageId = message.messageInfo.messageId
-        _standardMessages.update { current ->
-            if (messageId != null && current.any { it.messageInfo.messageId == messageId }) current
-            else current + message
+        val isDuplicate =
+                messageId != null &&
+                        _standardMessages.value.any { it.messageInfo.messageId == messageId }
+        if (!isDuplicate) {
+            _standardMessages.update { current -> current + message }
+            MotionMessage.parse(message)?.let { command -> motionCallback?.invoke(command) }
         }
     }
 
@@ -502,6 +517,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                 ChatServiceProtocol.MSG_REQUEST_SNAPSHOT -> "MSG_REQUEST_SNAPSHOT"
                 ChatServiceProtocol.MSG_CLEAR_MESSAGES -> "MSG_CLEAR_MESSAGES"
                 ChatServiceProtocol.MSG_CLEAR_MESSAGES_EPHEMERAL -> "MSG_CLEAR_MESSAGES_EPHEMERAL"
+                ChatServiceProtocol.MSG_START_LOCAL_RUNTIME -> "MSG_START_LOCAL_RUNTIME"
                 ChatServiceProtocol.MSG_EVENT_CONNECTION_STATE -> "MSG_EVENT_CONNECTION_STATE"
                 ChatServiceProtocol.MSG_EVENT_NEW_MESSAGE -> "MSG_EVENT_NEW_MESSAGE"
                 ChatServiceProtocol.MSG_EVENT_SNAPSHOT -> "MSG_EVENT_SNAPSHOT"
