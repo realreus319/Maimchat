@@ -130,6 +130,77 @@ class LocalLlmSettingsStoreTest {
                 prefs.getLong(LocalLlmSettingsStore.KEY_LOCAL_LLM_TIMEOUT_MILLIS, 0L)
         )
     }
+
+    @Test
+    fun `runtime mode defaults to local for fresh install`() {
+        val prefs = InMemorySharedPreferences()
+
+        val mode =
+                ChatRuntimeModeStore.read(
+                        prefs = prefs,
+                        legacyLocalLlmEnabled = false,
+                        legacyRemoteUrl = null
+                )
+
+        assertEquals(ChatRuntimeMode.LOCAL, mode)
+    }
+
+    @Test
+    fun `runtime mode preserves legacy remote websocket installs`() {
+        val prefs = InMemorySharedPreferences()
+
+        val mode =
+                ChatRuntimeModeStore.read(
+                        prefs = prefs,
+                        legacyLocalLlmEnabled = false,
+                        legacyRemoteUrl = "ws://example.test/ws"
+                )
+
+        assertEquals(ChatRuntimeMode.REMOTE, mode)
+    }
+
+    @Test
+    fun `runtime mode keeps legacy local llm installs local`() {
+        val prefs = InMemorySharedPreferences()
+
+        val mode =
+                ChatRuntimeModeStore.read(
+                        prefs = prefs,
+                        legacyLocalLlmEnabled = true,
+                        legacyRemoteUrl = "ws://example.test/ws"
+                )
+
+        assertEquals(ChatRuntimeMode.LOCAL, mode)
+    }
+
+    @Test
+    fun `runtime mode explicit value wins over legacy inference`() {
+        val prefs =
+                InMemorySharedPreferences(
+                        ChatRuntimeModeStore.KEY_RUNTIME_MODE to ChatRuntimeMode.LOCAL.wireValue
+                )
+
+        val mode =
+                ChatRuntimeModeStore.read(
+                        prefs = prefs,
+                        legacyLocalLlmEnabled = false,
+                        legacyRemoteUrl = "ws://example.test/ws"
+                )
+
+        assertEquals(ChatRuntimeMode.LOCAL, mode)
+    }
+
+    @Test
+    fun `runtime mode persist stores wire value`() {
+        val prefs = InMemorySharedPreferences()
+
+        ChatRuntimeModeStore.persist(prefs, ChatRuntimeMode.REMOTE)
+
+        assertEquals(
+                ChatRuntimeMode.REMOTE.wireValue,
+                prefs.getString(ChatRuntimeModeStore.KEY_RUNTIME_MODE, null)
+        )
+    }
 }
 
 private class InMemorySecretStringStore(vararg entries: Pair<String, String>) : SecretStringStore {

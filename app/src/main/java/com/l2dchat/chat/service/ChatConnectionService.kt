@@ -49,6 +49,7 @@ class ChatConnectionService : Service() {
     private var lastKnownReceiverId: String? = null
     private var lastKnownReceiverNickname: String? = null
     private var localLlmSettings = LocalLlmSettings()
+    private var runtimeMode = ChatRuntimeMode.LOCAL
 
     override fun onCreate() {
         super.onCreate()
@@ -98,8 +99,16 @@ class ChatConnectionService : Service() {
             manager.setReceiverInfo(lastKnownReceiverId, lastKnownReceiverNickname)
         }
         localLlmSettings = LocalLlmSettingsStore.read(prefs, secureStore)
+        runtimeMode =
+                ChatRuntimeModeStore.read(
+                        prefs = prefs,
+                        legacyLocalLlmEnabled = localLlmSettings.enabled,
+                        legacyRemoteUrl = lastKnownUrl
+                )
         manager.setLocalLlmSettings(localLlmSettings)
-        manager.startLocalRuntime()
+        if (runtimeMode == ChatRuntimeMode.LOCAL) {
+            manager.startLocalRuntime()
+        }
     }
 
     private fun startObservers() {
@@ -141,6 +150,7 @@ class ChatConnectionService : Service() {
                                 ConnectionState.ERROR -> "错误"
                             }
                     )
+                    putString(ChatServiceProtocol.EXTRA_RUNTIME_MODE, runtimeMode.wireValue)
                 }
         sendToClients(ChatServiceProtocol.MSG_EVENT_CONNECTION_STATE, bundle)
     }
@@ -225,6 +235,10 @@ class ChatConnectionService : Service() {
             }
 
     private fun ensureConnected(triggerReconnect: Boolean = true) {
+        if (runtimeMode == ChatRuntimeMode.LOCAL) {
+            manager.startLocalRuntime()
+            return
+        }
         val state = manager.connectionState.value
         if (state == ConnectionState.CONNECTED || state == ConnectionState.CONNECTING) return
         if (!triggerReconnect) return
@@ -247,7 +261,7 @@ class ChatConnectionService : Service() {
             notifyError("发送内容不能为空")
             return
         }
-        if (manager.isLocalMode()) {
+        if (runtimeMode == ChatRuntimeMode.LOCAL) {
             manager.startLocalRuntime()
         } else {
             ensureConnected()
@@ -275,6 +289,7 @@ class ChatConnectionService : Service() {
                         "authPresent=${auth != null} caller=${data.keySet()}"
         )
 
+        applyRuntimeMode(ChatRuntimeMode.REMOTE, startLocal = false)
         lastKnownUrl = url
         lastKnownPlatform = platform
         lastKnownAuth = auth
@@ -289,6 +304,17 @@ class ChatConnectionService : Service() {
 
     private fun handleConfigUpdate(data: Bundle) {
         var needReconnect = false
+        val requestedMode =
+                data.runtimeModeOverride()
+                        ?: if (data.containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_ENABLED)) {
+                            if (data.getBoolean(ChatServiceProtocol.EXTRA_LOCAL_LLM_ENABLED)) {
+                                ChatRuntimeMode.LOCAL
+                            } else {
+                                ChatRuntimeMode.REMOTE
+                            }
+                        } else {
+                            null
+                        }
         data.getString(ChatServiceProtocol.EXTRA_PLATFORM)?.let { platform ->
             val trimmed = platform.trim()
             lastKnownPlatform = trimmed.ifBlank { null }
@@ -318,18 +344,33 @@ class ChatConnectionService : Service() {
         if (data.containsLocalLlmSettings()) {
             localLlmSettings = localLlmSettings.updatedFrom(data)
             manager.setLocalLlmSettings(localLlmSettings)
-            if (localLlmSettings.enabled) {
-                manager.startLocalRuntime()
-            }
         }
         data.getString(ChatServiceProtocol.EXTRA_URL)?.let { url ->
             val trimmed = url.trim()
             lastKnownUrl = trimmed.ifBlank { null }
             needReconnect = true
         }
+        requestedMode?.let { applyRuntimeMode(it) }
         persistConnectionConfig()
-        if (needReconnect) {
+        if (needReconnect && runtimeMode == ChatRuntimeMode.REMOTE) {
             ensureConnected(triggerReconnect = true)
+        }
+    }
+
+    private fun applyRuntimeMode(mode: ChatRuntimeMode, startLocal: Boolean = true) {
+        val previous = runtimeMode
+        runtimeMode = mode
+        when (mode) {
+            ChatRuntimeMode.LOCAL -> {
+                if (startLocal) {
+                    manager.startLocalRuntime()
+                }
+            }
+            ChatRuntimeMode.REMOTE -> {
+                if (previous != ChatRuntimeMode.REMOTE && manager.isLocalMode()) {
+                    manager.disconnect()
+                }
+            }
         }
     }
 
@@ -500,6 +541,7 @@ class ChatConnectionService : Service() {
         else editor.remove(KEY_RECEIVER_NICKNAME)
         editor.apply()
         LocalLlmSettingsStore.persist(prefs, secureStore, localLlmSettings)
+        ChatRuntimeModeStore.persist(prefs, runtimeMode)
     }
 
     private fun Bundle.containsLocalLlmSettings(): Boolean =
@@ -512,6 +554,9 @@ class ChatConnectionService : Service() {
                     containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_TEMPERATURE) ||
                     containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_MAX_TOKENS) ||
                     containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_TIMEOUT_MILLIS)
+
+    private fun Bundle.runtimeModeOverride(): ChatRuntimeMode? =
+            ChatRuntimeMode.fromWireValue(getString(ChatServiceProtocol.EXTRA_RUNTIME_MODE))
 
     private fun LocalLlmSettings.updatedFrom(data: Bundle): LocalLlmSettings =
             copy(
@@ -617,7 +662,10 @@ class ChatConnectionService : Service() {
                 ChatServiceProtocol.MSG_DISCONNECT -> service.manager.disconnect()
                 ChatServiceProtocol.MSG_SEND_MESSAGE -> service.handleSendMessage(msg.data)
                 ChatServiceProtocol.MSG_UPDATE_CONFIG -> service.handleConfigUpdate(msg.data)
-                ChatServiceProtocol.MSG_START_LOCAL_RUNTIME -> service.manager.startLocalRuntime()
+                ChatServiceProtocol.MSG_START_LOCAL_RUNTIME -> {
+                    service.applyRuntimeMode(ChatRuntimeMode.LOCAL)
+                    service.persistConnectionConfig()
+                }
                 ChatServiceProtocol.MSG_REQUEST_SNAPSHOT -> {
                     val target = msg.replyTo
                     if (target != null) service.sendSnapshot(target) else service.sendSnapshot()

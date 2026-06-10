@@ -51,6 +51,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.chat.MotionCommand
+import com.l2dchat.chat.service.ChatRuntimeMode
 import com.l2dchat.chat.service.ChatServiceClient
 import com.l2dchat.core.config.AgentProfileRepository
 import com.l2dchat.core.config.AgentPromptTemplateNames
@@ -111,6 +112,11 @@ fun ChatWithModelScreen(
     val standardMessages by chatManager.standardMessages.collectAsState()
     val currentUserNickname by chatManager.userNickname.collectAsState()
     val localLlmSettings by chatManager.localLlmSettings.collectAsState()
+    val runtimeMode by chatManager.runtimeMode.collectAsState()
+    val effectiveLocalLlmSettings =
+            remember(localLlmSettings, runtimeMode) {
+                localLlmSettings.copy(enabled = runtimeMode == ChatRuntimeMode.LOCAL)
+            }
     val prefs =
             remember(context) {
                 context.getSharedPreferences(
@@ -597,13 +603,13 @@ fun ChatWithModelScreen(
                                                     validateConfig(
                                                             serverUrl,
                                                             nickname,
-                                                            localLlmSettings
+                                                            effectiveLocalLlmSettings
                                                     )
                                             uiLogger.debug(
                                                     "Connect action tapped state=${connectionState.name} url=$serverUrl nickname=$nickname errors=${errors.joinToString()}"
                                             )
                                             if (errors.isEmpty()) {
-                                                if (localLlmSettings.enabled) {
+                                                if (runtimeMode == ChatRuntimeMode.LOCAL) {
                                                     val sanitizedPlatform = platform.trim()
                                                     platform = sanitizedPlatform
                                                     chatManager.updatePlatformPreference(
@@ -615,7 +621,7 @@ fun ChatWithModelScreen(
                                                             receiverUserNickname.ifBlank { null }
                                                     )
                                                     chatManager.updateLocalLlmSettings(
-                                                            localLlmSettings
+                                                            effectiveLocalLlmSettings
                                                     )
                                                     chatManager.startLocalRuntime()
                                                 } else {
@@ -768,7 +774,8 @@ fun ChatWithModelScreen(
                     platform = platform,
                     receiverUserId = receiverUserId,
                     receiverUserNickname = receiverUserNickname,
-                    localLlmSettings = localLlmSettings,
+                    runtimeMode = runtimeMode,
+                    localLlmSettings = effectiveLocalLlmSettings,
                     onUrlChange = { serverUrl = it },
                     onNicknameChange = { nickname = it },
                     onPlatformChange = { platform = it },
@@ -1569,6 +1576,7 @@ private fun ConnectionConfigDialog(
         platform: String,
         receiverUserId: String,
         receiverUserNickname: String,
+        runtimeMode: ChatRuntimeMode,
         localLlmSettings: LocalLlmSettings,
         onUrlChange: (String) -> Unit,
         onNicknameChange: (String) -> Unit,
@@ -1583,7 +1591,9 @@ private fun ConnectionConfigDialog(
     var tempPlatform by remember { mutableStateOf(platform) }
     var tempRecvId by remember { mutableStateOf(receiverUserId) }
     var tempRecvNick by remember { mutableStateOf(receiverUserNickname) }
-    var tempLocalEnabled by remember { mutableStateOf(localLlmSettings.enabled) }
+    var tempLocalEnabled by remember {
+        mutableStateOf(runtimeMode == ChatRuntimeMode.LOCAL || localLlmSettings.enabled)
+    }
     var tempLocalBaseUrl by remember { mutableStateOf(localLlmSettings.baseUrl.orEmpty()) }
     var tempLocalApiKey by remember { mutableStateOf(localLlmSettings.apiKey.orEmpty()) }
     var tempPlannerModel by remember { mutableStateOf(localLlmSettings.plannerModel.orEmpty()) }

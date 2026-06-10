@@ -32,6 +32,7 @@ object ChatServiceProtocol {
     const val EXTRA_RECEIVER_ID = "extra_receiver_id"
     const val EXTRA_RECEIVER_NICKNAME = "extra_receiver_nickname"
     const val EXTRA_MODEL_NAME = "extra_model_name"
+    const val EXTRA_RUNTIME_MODE = "extra_runtime_mode"
     const val EXTRA_LOCAL_LLM_ENABLED = "extra_local_llm_enabled"
     const val EXTRA_LOCAL_LLM_BASE_URL = "extra_local_llm_base_url"
     const val EXTRA_LOCAL_LLM_API_KEY = "extra_local_llm_api_key"

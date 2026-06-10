@@ -51,6 +51,12 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                                     msg.data.getString(ChatServiceProtocol.EXTRA_CONNECTION_LABEL)
                             _connectionState.value = ChatConnectionState.fromOrdinal(ordinal)
                             _connectionLabel.value = label.orEmpty()
+                            ChatRuntimeMode.fromWireValue(
+                                            msg.data.getString(
+                                                    ChatServiceProtocol.EXTRA_RUNTIME_MODE
+                                            )
+                                    )
+                                    ?.let { updateRuntimeModeCache(it) }
                         }
                         ChatServiceProtocol.MSG_EVENT_NEW_MESSAGE -> handleNewMessage(msg.data)
                         ChatServiceProtocol.MSG_EVENT_SNAPSHOT -> handleSnapshot(msg.data)
@@ -108,6 +114,14 @@ class ChatServiceClient(context: Context) : ServiceConnection {
     private val _lastUrl =
             MutableStateFlow(prefs.getString(KEY_LAST_URL, null)?.takeIf { it.isNotBlank() })
     private val _localLlmSettings = MutableStateFlow(LocalLlmSettingsStore.read(prefs, secureStore))
+    private val _runtimeMode =
+            MutableStateFlow(
+                    ChatRuntimeModeStore.read(
+                            prefs = prefs,
+                            legacyLocalLlmEnabled = _localLlmSettings.value.enabled,
+                            legacyRemoteUrl = _lastUrl.value
+                    )
+            )
     private val _activeModel = MutableStateFlow<String?>(null)
     private var motionCallback: ((MotionCommand) -> Unit)? = null
 
@@ -122,6 +136,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
     val platform: StateFlow<String?> = _platform.asStateFlow()
     val activeModel: StateFlow<String?> = _activeModel.asStateFlow()
     val localLlmSettings: StateFlow<LocalLlmSettings> = _localLlmSettings.asStateFlow()
+    val runtimeMode: StateFlow<ChatRuntimeMode> = _runtimeMode.asStateFlow()
 
     fun bindService() {
         if (isBound) return
@@ -180,10 +195,15 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                 "connect() called resolvedUrl=$resolvedUrl platform=${platform ?: _platform.value} " +
                         "bound=$isBound messengerReady=${serviceMessenger != null}"
         )
+        updateRuntimeModeCache(ChatRuntimeMode.REMOTE)
         _lastUrl.value = resolvedUrl
         platform?.takeIf { it.isNotBlank() }?.let { _platform.value = it }
         val bundle =
                 Bundle().apply {
+                    putString(
+                            ChatServiceProtocol.EXTRA_RUNTIME_MODE,
+                            ChatRuntimeMode.REMOTE.wireValue
+                    )
                     putString(ChatServiceProtocol.EXTRA_URL, resolvedUrl)
                     _platform.value?.let { putString(ChatServiceProtocol.EXTRA_PLATFORM, it) }
                     authToken?.takeIf { it.isNotBlank() }?.let {
@@ -198,8 +218,16 @@ class ChatServiceClient(context: Context) : ServiceConnection {
     }
 
     fun startLocalRuntime() {
+        setRuntimeMode(ChatRuntimeMode.LOCAL)
+    }
+
+    fun setRuntimeMode(mode: ChatRuntimeMode) {
         ensureBound()
-        sendCommand(ChatServiceProtocol.MSG_START_LOCAL_RUNTIME)
+        updateRuntimeModeCache(mode)
+        sendConfigUpdate { putString(ChatServiceProtocol.EXTRA_RUNTIME_MODE, mode.wireValue) }
+        if (mode == ChatRuntimeMode.LOCAL) {
+            sendCommand(ChatServiceProtocol.MSG_START_LOCAL_RUNTIME)
+        }
     }
 
     fun sendUserMessage(text: String) {
@@ -241,9 +269,12 @@ class ChatServiceClient(context: Context) : ServiceConnection {
     }
 
     fun updateLocalLlmSettings(settings: LocalLlmSettings) {
+        val nextMode = if (settings.enabled) ChatRuntimeMode.LOCAL else ChatRuntimeMode.REMOTE
         _localLlmSettings.value = settings
+        updateRuntimeModeCache(nextMode)
         LocalLlmSettingsStore.persist(prefs, secureStore, settings)
         sendConfigUpdate {
+            putString(ChatServiceProtocol.EXTRA_RUNTIME_MODE, nextMode.wireValue)
             putBoolean(ChatServiceProtocol.EXTRA_LOCAL_LLM_ENABLED, settings.enabled)
             putString(ChatServiceProtocol.EXTRA_LOCAL_LLM_BASE_URL, settings.baseUrl.orEmpty())
             putString(ChatServiceProtocol.EXTRA_LOCAL_LLM_API_KEY, settings.apiKey.orEmpty())
@@ -459,6 +490,8 @@ class ChatServiceClient(context: Context) : ServiceConnection {
 
     fun getLocalLlmSettings(): LocalLlmSettings = _localLlmSettings.value
 
+    fun getRuntimeMode(): ChatRuntimeMode = _runtimeMode.value
+
     fun getConnectionStateDescription(): String =
             connectionLabel.value.ifBlank {
                 when (connectionState.value) {
@@ -487,6 +520,12 @@ class ChatServiceClient(context: Context) : ServiceConnection {
     private fun sendConfigUpdate(builder: Bundle.() -> Unit) {
         val bundle = Bundle().apply(builder)
         sendCommand(ChatServiceProtocol.MSG_UPDATE_CONFIG, bundle)
+    }
+
+    private fun updateRuntimeModeCache(mode: ChatRuntimeMode) {
+        if (_runtimeMode.value == mode) return
+        _runtimeMode.value = mode
+        ChatRuntimeModeStore.persist(prefs, mode)
     }
 
     private fun handleNewMessage(data: Bundle) {
