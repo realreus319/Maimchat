@@ -149,7 +149,7 @@ fun ChatWithModelScreen(
     var backgroundBitmap by remember { mutableStateOf<Bitmap?>(null) }
     // 可选平台字段（不填写则使用默认）
     var platform by remember { mutableStateOf(chatManager.getPlatform().orEmpty()) }
-    // 连接确认弹窗
+    // 远端连接确认弹窗
     var showConnectConfirm by remember { mutableStateOf(false) }
     var chatInputHeightPx by remember { mutableStateOf(0) }
     var visualSurfaceWidthPx by remember { mutableStateOf(0) }
@@ -262,9 +262,17 @@ fun ChatWithModelScreen(
             }
 
     LaunchedEffect(chatManager) {
-        val missingUrlKeywords = listOf("未设置服务器地址", "未提供有效的服务器地址", "未配置连接地址", "尚未配置 WebSocket URL")
+        val missingUrlKeywords =
+                listOf(
+                        "未设置服务器地址",
+                        "未提供有效的服务器地址",
+                        "未设置远端 WebSocket 地址",
+                        "未提供有效的远端 WebSocket 地址",
+                        "未配置连接地址",
+                        "尚未配置 WebSocket 地址"
+                )
         chatManager.errors.collect { raw ->
-            val message = raw.trim().ifEmpty { "连接出现未知错误" }
+            val message = raw.trim().ifEmpty { "运行时出现未知错误" }
             val suppressThis =
                     suppressMissingUrlWarning &&
                             missingUrlKeywords.any { keyword -> keyword in message }
@@ -589,9 +597,9 @@ fun ChatWithModelScreen(
                             ) { Icon(Icons.Default.Image, contentDescription = "壁纸背景设置") }
                             // 配置按钮
                             IconButton(onClick = { showConnectionDialog = true }) {
-                                Icon(Icons.Default.Settings, contentDescription = "连接配置")
+                                Icon(Icons.Default.Settings, contentDescription = "运行设置")
                             }
-                            // 连接按钮（仅在未连接时显示）
+                            // 启动按钮（仅在未运行时显示）
                             if (connectionState ==
                                             ChatServiceClient.ChatConnectionState.DISCONNECTED ||
                                             connectionState ==
@@ -632,16 +640,34 @@ fun ChatWithModelScreen(
                                                 showConnectionDialog = true
                                             }
                                         }
-                                ) { Icon(Icons.Filled.PlayArrow, contentDescription = "连接") }
+                                ) {
+                                    Icon(
+                                            Icons.Filled.PlayArrow,
+                                            contentDescription =
+                                                    if (runtimeMode == ChatRuntimeMode.LOCAL) {
+                                                        "启动本地运行时"
+                                                    } else {
+                                                        "连接远端 WebSocket"
+                                                    }
+                                    )
+                                }
                             }
-                            // 断开按钮（仅在连接中或已连接时显示）
+                            // 停止按钮（仅在运行中显示）
                             if (connectionState ==
                                             ChatServiceClient.ChatConnectionState.CONNECTED ||
                                             connectionState ==
                                                     ChatServiceClient.ChatConnectionState.CONNECTING
                             ) {
                                 IconButton(onClick = { chatManager.disconnect() }) {
-                                    Icon(Icons.Filled.Stop, contentDescription = "断开")
+                                    Icon(
+                                            Icons.Filled.Stop,
+                                            contentDescription =
+                                                    if (runtimeMode == ChatRuntimeMode.LOCAL) {
+                                                        "停止本地运行时"
+                                                    } else {
+                                                        "断开远端 WebSocket"
+                                                    }
+                                    )
                                 }
                             }
                             Box {
@@ -802,6 +828,9 @@ fun ChatWithModelScreen(
                                     )
                                     .apply()
                             chatManager.updateLocalLlmSettings(nextLocalLlmSettings)
+                            if (!nextLocalLlmSettings.enabled) {
+                                chatManager.updateConnectionUrl(serverUrl)
+                            }
                             if (nextLocalLlmSettings.enabled) {
                                 chatManager.startLocalRuntime()
                             }
@@ -852,10 +881,10 @@ fun ChatWithModelScreen(
         if (showConnectConfirm) {
             AlertDialog(
                     onDismissRequest = { showConnectConfirm = false },
-                    title = { Text("确认连接配置") },
+                    title = { Text("确认远端连接") },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("URL: $serverUrl")
+                            Text("WebSocket: $serverUrl")
                             Text("我的昵称: ${nickname.ifBlank { "(未填写)" }}")
                             val previewPlatform = platform.trim()
                             Text("Platform: ${previewPlatform.ifBlank { "(默认)" }}")
@@ -879,7 +908,7 @@ fun ChatWithModelScreen(
                         TextButton(
                                 onClick = {
                                     showConnectConfirm = false
-                                    // 最终连接
+                                    // 最终连接远端
                                     val sanitizedPlatform = platform.trim()
                                     platform = sanitizedPlatform
                                     chatManager.setUserProfile(nickname)
@@ -894,7 +923,7 @@ fun ChatWithModelScreen(
                                     )
                                     chatManager.connect(serverUrl, sanitizedPlatform)
                                 }
-                        ) { Text("连接") }
+                        ) { Text("连接远端") }
                     },
                     dismissButton = {
                         TextButton(onClick = { showConnectConfirm = false }) { Text("取消") }
@@ -1220,17 +1249,17 @@ private fun validateConfig(
     if (localLlmSettings.enabled) {
         val baseUrl = localLlmSettings.baseUrl.orEmpty()
         if (baseUrl.isBlank()) {
-            errors.add("本地 LLM 地址不能为空")
+            errors.add("LLM Endpoint 不能为空")
         } else if (!(baseUrl.startsWith("http://") || baseUrl.startsWith("https://"))) {
-            errors.add("本地 LLM 地址必须以 http:// 或 https:// 开头")
+            errors.add("LLM Endpoint 必须以 http:// 或 https:// 开头")
         }
         if (localLlmSettings.plannerModel.isNullOrBlank()) {
             errors.add("Planner 模型不能为空")
         }
     } else {
-        if (url.isBlank()) errors.add("URL 不能为空")
+        if (url.isBlank()) errors.add("WebSocket 地址不能为空")
         else if (!(url.startsWith("ws://") || url.startsWith("wss://")))
-                errors.add("URL 必须以 ws:// 或 wss:// 开头")
+                errors.add("WebSocket 地址必须以 ws:// 或 wss:// 开头")
     }
     return errors
 }
@@ -1655,7 +1684,7 @@ private fun ConnectionConfigDialog(
             }
     AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("连接配置") },
+            title = { Text("运行设置") },
             text = {
                 Column(
                         modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
@@ -1667,14 +1696,14 @@ private fun ConnectionConfigDialog(
                                 tempUrl = it
                                 onUrlChange(it)
                             },
-                            label = { Text("WebSocket 地址") },
+                            label = { Text("远端 WebSocket 地址") },
                             placeholder = { Text("ws://host:port/path") },
                             enabled = !tempLocalEnabled,
                             singleLine = true,
                             isError =
                                     showErrors &&
                                             !tempLocalEnabled &&
-                                            errors.any { it.contains("URL") },
+                                            errors.any { it.contains("WebSocket 地址") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             modifier = Modifier.fillMaxWidth()
                     )
@@ -1728,7 +1757,7 @@ private fun ConnectionConfigDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("本地 LLM")
+                        Text("本地 LLM 模式")
                         Switch(
                                 checked = tempLocalEnabled,
                                 onCheckedChange = { tempLocalEnabled = it }
@@ -1738,12 +1767,12 @@ private fun ConnectionConfigDialog(
                         OutlinedTextField(
                                 value = tempLocalBaseUrl,
                                 onValueChange = { tempLocalBaseUrl = it },
-                                label = { Text("本地 LLM 地址") },
+                                label = { Text("LLM Endpoint") },
                                 placeholder = { Text("http://127.0.0.1:11434/v1") },
                                 singleLine = true,
                                 isError =
                                         showErrors &&
-                                                errors.any { it.contains("本地 LLM 地址") },
+                                                errors.any { it.contains("LLM Endpoint") },
                                 keyboardOptions =
                                         KeyboardOptions(keyboardType = KeyboardType.Uri),
                                 modifier = Modifier.fillMaxWidth()
@@ -1833,16 +1862,16 @@ private fun ConnectionConfigDialog(
                         }
                     } else {
                         val summary = buildString {
-                            append("将使用此配置进行连接：\n")
+                            append("将使用此运行设置：\n")
                             append(
-                                    "运行方式: ${if (nextLocalLlmSettings.enabled) "本地 LLM" else "WebSocket"}\n"
+                                    "运行模式: ${if (nextLocalLlmSettings.enabled) "本地 LLM" else "远端 WebSocket"}\n"
                             )
                             if (nextLocalLlmSettings.enabled) {
                                 append(
                                         "LLM: ${nextLocalLlmSettings.baseUrl ?: "(未填写)"} / ${nextLocalLlmSettings.plannerModel ?: "(未填写)"}\n"
                                 )
                             } else {
-                                append("URL: ${tempUrl}\n")
+                                append("WebSocket: ${tempUrl}\n")
                             }
                             append("我: ${tempNickname.ifBlank { "(未填写)" }}\n")
                             append(

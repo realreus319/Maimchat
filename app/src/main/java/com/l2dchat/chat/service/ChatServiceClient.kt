@@ -188,7 +188,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
         ensureBound()
         val resolvedUrl = url?.takeIf { it.isNotBlank() } ?: _lastUrl.value
         if (resolvedUrl.isNullOrBlank()) {
-            scope.launch { _errors.emit("未设置服务器地址") }
+            scope.launch { _errors.emit("未设置远端 WebSocket 地址") }
             return
         }
         logger.debug(

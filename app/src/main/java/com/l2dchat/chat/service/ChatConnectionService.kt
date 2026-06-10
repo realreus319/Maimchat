@@ -244,7 +244,7 @@ class ChatConnectionService : Service() {
         if (!triggerReconnect) return
         val url = lastKnownUrl
         if (url.isNullOrBlank()) {
-            notifyError("未设置服务器地址，无法连接")
+            notifyError("未设置远端 WebSocket 地址，无法连接")
             return
         }
         logger.debug(
@@ -274,7 +274,7 @@ class ChatConnectionService : Service() {
                 data.getString(ChatServiceProtocol.EXTRA_URL)?.takeIf { it.isNotBlank() }
                         ?: lastKnownUrl
         if (url.isNullOrBlank()) {
-            notifyError("未提供有效的服务器地址")
+            notifyError("未提供有效的远端 WebSocket 地址")
             return
         }
         val platform =

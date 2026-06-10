@@ -893,8 +893,11 @@ Progress:
 - Done: the main chat screen derives its default connection dialog mode from
   runtime mode, so local mode opens provider settings instead of requiring a
   WebSocket URL.
-- Pending: replace remaining "连接配置"/"WebSocket" wording with provider-first
-  labels and add visible local engine states (`stopped`/`starting`/`ready`/`error`).
+- Done: the main chat screen labels the configuration surface as runtime
+  settings, keeps remote WebSocket wording scoped to remote mode, and persists
+  remote URLs only when remote mode is selected.
+- Pending: add visible local engine states (`stopped`/`starting`/`ready`/`error`)
+  and provider-first status display.
 
 Acceptance:
 
