@@ -339,7 +339,8 @@ Progress:
 - Done: `LocalChatRuntime` now reads inbound text through the inbound/perception path while keeping fixed local reply behavior.
 - Done: `processAndPersist()` can persist parsed standard messages and ordered media blocks into Room.
 - Done: image, emoji, and voice `seglist` blocks are preserved through inbound, trigger payload, and media block storage.
-- Pending: queued per-agent processor lifecycle and routing into the planner layer.
+- Done: `PerceptionDispatcher` and `PerceptionWorker` queue inbound messages per `(contextId, agentId)`, optionally persist parsed messages, and submit triggers through `TriggerSink`.
+- Pending: routing into the concrete planner layer.
 
 ## Phase 4: PlannerLoop Core
 
