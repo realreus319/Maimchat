@@ -7,9 +7,19 @@ import com.l2dchat.chat.ReceiverInfo
 import com.l2dchat.chat.Seg
 import com.l2dchat.chat.SenderInfo
 import com.l2dchat.chat.UserInfo
+import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.inbound.InboundBuilder
+import com.l2dchat.core.inbound.InboundMessage
+import com.l2dchat.core.perception.PerceptionDispatcher
 import com.l2dchat.core.perception.PerceptionProcessor
+import com.l2dchat.core.perception.TriggerSink
 import com.l2dchat.core.reply.ReplySink
+import com.l2dchat.core.trigger.Trigger
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 /**
  * First local runtime slice.
@@ -17,9 +27,26 @@ import com.l2dchat.core.reply.ReplySink
  * This is intentionally small: it proves the app can receive a local standard
  * message and emit a local assistant standard message without a backend.
  */
-class LocalChatRuntime {
+class LocalChatRuntime(
+        scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+) {
     private val inboundBuilder = InboundBuilder()
     private val perceptionProcessor = PerceptionProcessor()
+    private val pendingLock = Any()
+    private val pendingTriggers = linkedMapOf<PendingTriggerKey, CompletableDeferred<Trigger>>()
+    private val perceptionDispatcher =
+            PerceptionDispatcher(
+                    scope = scope,
+                    triggerSink =
+                            object : TriggerSink {
+                                override suspend fun submit(trigger: Trigger) {
+                                    removePending(trigger.toPendingKey())?.complete(trigger)
+                                }
+                            },
+                    onError = { _, message, throwable ->
+                        removePending(message.toPendingKey())?.completeExceptionally(throwable)
+                    }
+            )
 
     fun shouldReply(message: MessageBase): Boolean {
         val messageType =
@@ -39,23 +66,77 @@ class LocalChatRuntime {
         if (!shouldReply(inbound)) {
             return false
         }
-        val perception =
-                perceptionProcessor.process(
-                        inboundBuilder.fromMessageBase(
-                                message = inbound,
-                                fallbackPlatform = fallbackPlatform
-                        )
+        val inboundMessage =
+                inboundBuilder.fromMessageBase(
+                        message = inbound,
+                        fallbackPlatform = fallbackPlatform
                 )
-        replySink.send(
-                createReply(
-                        inbound = inbound,
-                        fallbackPlatform = fallbackPlatform,
-                        fallbackAgentName = fallbackAgentName,
-                        inboundText = perception.parsedMessage.text
-                )
-        )
-        return true
+        val pending = registerPending(inboundMessage)
+
+        try {
+            perceptionDispatcher.submit(inboundMessage)
+            val trigger = pending.await()
+            replySink.send(
+                    createReply(
+                            inbound = inbound,
+                            fallbackPlatform = fallbackPlatform,
+                            fallbackAgentName = fallbackAgentName,
+                            inboundText = trigger.payload["text"]?.toString().orEmpty()
+                    )
+            )
+            return true
+        } catch (throwable: Throwable) {
+            removePending(inboundMessage.toPendingKey())
+            throw throwable
+        }
     }
+
+    suspend fun stopAndDrain() {
+        perceptionDispatcher.stopAndDrain()
+    }
+
+    fun cancel() {
+        perceptionDispatcher.cancel()
+        failPending(CancellationException("Local chat runtime cancelled"))
+    }
+
+    fun activePerceptionWorkerCount(): Int = perceptionDispatcher.workerCount
+
+    private fun registerPending(message: InboundMessage): CompletableDeferred<Trigger> {
+        val key = message.toPendingKey()
+        val pending = CompletableDeferred<Trigger>()
+        synchronized(pendingLock) {
+            require(!pendingTriggers.containsKey(key)) {
+                "Duplicate pending inbound message ${message.messageId} for ${message.routingKey}"
+            }
+            pendingTriggers[key] = pending
+        }
+        return pending
+    }
+
+    private fun removePending(key: PendingTriggerKey): CompletableDeferred<Trigger>? =
+            synchronized(pendingLock) { pendingTriggers.remove(key) }
+
+    private fun failPending(cause: Throwable) {
+        val pending =
+                synchronized(pendingLock) {
+                    val pending = pendingTriggers.values.toList()
+                    pendingTriggers.clear()
+                    pending
+                }
+        pending.forEach { it.completeExceptionally(cause) }
+    }
+
+    private fun InboundMessage.toPendingKey(): PendingTriggerKey =
+            PendingTriggerKey(routingKey = routingKey, messageId = messageId)
+
+    private fun Trigger.toPendingKey(): PendingTriggerKey =
+            PendingTriggerKey(
+                    routingKey = RoutingKey(contextId = contextId, agentId = agentId),
+                    messageId = messageId
+            )
+
+    private data class PendingTriggerKey(val routingKey: RoutingKey, val messageId: String)
 
     fun createReply(
             inbound: MessageBase,

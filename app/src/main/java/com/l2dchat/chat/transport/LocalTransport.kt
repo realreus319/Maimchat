@@ -16,7 +16,7 @@ class LocalTransport(
         private val callbacks: ChatTransportCallbacks,
         private val platformProvider: () -> String,
         private val agentNameProvider: () -> String?,
-        private val runtime: LocalChatRuntime = LocalChatRuntime()
+        private val runtime: LocalChatRuntime = LocalChatRuntime(scope = scope)
 ) : ChatTransport {
     override val mode: RuntimeMode = RuntimeMode.LOCAL
 

@@ -14,54 +14,58 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LocalChatRuntimeTest {
-    private val runtime = LocalChatRuntime()
-
     @Test
     fun `handleMessage emits fixed chat reply through sink`() {
         val emitted = mutableListOf<MessageBase>()
 
-        val handled =
-                runBlocking {
+        runBlocking {
+            val runtime = LocalChatRuntime(scope = this)
+            val handled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "你好"),
                             fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
-                }
 
-        assertTrue(handled)
-        val reply = emitted.single()
-        assertEquals("test_platform", reply.messageInfo.platform)
-        assertEquals("bot-id", reply.messageInfo.senderInfo?.userInfo?.userId)
-        assertEquals("user-id", reply.messageInfo.receiverInfo?.userInfo?.userId)
-        assertEquals("chat", reply.messageInfo.additionalConfig?.get("message_type"))
-        assertEquals("local", reply.messageInfo.additionalConfig?.get("runtime"))
-        assertTrue(reply.rawMessage.orEmpty().contains("你好"))
+            assertTrue(handled)
+            assertEquals(1, runtime.activePerceptionWorkerCount())
+            val reply = emitted.single()
+            assertEquals("test_platform", reply.messageInfo.platform)
+            assertEquals("bot-id", reply.messageInfo.senderInfo?.userInfo?.userId)
+            assertEquals("user-id", reply.messageInfo.receiverInfo?.userInfo?.userId)
+            assertEquals("chat", reply.messageInfo.additionalConfig?.get("message_type"))
+            assertEquals("local", reply.messageInfo.additionalConfig?.get("runtime"))
+            assertTrue(reply.rawMessage.orEmpty().contains("你好"))
+            runtime.stopAndDrain()
+        }
     }
 
     @Test
     fun `handleMessage ignores non chat messages`() {
         val emitted = mutableListOf<MessageBase>()
 
-        val handled =
-                runBlocking {
+        runBlocking {
+            val runtime = LocalChatRuntime(scope = this)
+            val handled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "播放动作", messageType = "motion"),
                             fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
-                }
 
-        assertFalse(handled)
-        assertTrue(emitted.isEmpty())
+            assertFalse(handled)
+            assertEquals(0, runtime.activePerceptionWorkerCount())
+            assertTrue(emitted.isEmpty())
+            runtime.stopAndDrain()
+        }
     }
 
     @Test
     fun `createReply uses fallback agent when receiver is missing`() {
         val reply =
-                runtime.createReply(
+                LocalChatRuntime().createReply(
                         inbound = buildMessage(content = "", receiver = null),
                         fallbackPlatform = "fallback_platform",
                         fallbackAgentName = "Fallback Agent"
