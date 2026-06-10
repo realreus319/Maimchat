@@ -280,6 +280,24 @@ class RoomReplierPromptContextProviderTest {
                         )
                         .take(limit)
 
+        override suspend fun searchMemories(
+                contextId: String,
+                agentId: String,
+                query: String,
+                limit: Int
+        ): List<MemoryEntity> =
+                memories
+                        .filter {
+                            it.contextId == contextId &&
+                                    it.agentId == agentId &&
+                                    it.content.contains(query)
+                        }
+                        .sortedWith(
+                                compareByDescending<MemoryEntity> { it.importance }
+                                        .thenByDescending { it.updatedAtMillis }
+                        )
+                        .take(limit)
+
         override suspend fun queryImpression(
                 contextId: String,
                 agentId: String,
@@ -288,6 +306,16 @@ class RoomReplierPromptContextProviderTest {
                 impressions.firstOrNull {
                     it.contextId == contextId && it.agentId == agentId && it.subjectId == subjectId
                 }
+
+        override suspend fun queryImpressions(
+                contextId: String,
+                agentId: String,
+                limit: Int
+        ): List<ImpressionEntity> =
+                impressions
+                        .filter { it.contextId == contextId && it.agentId == agentId }
+                        .sortedByDescending { it.updatedAtMillis }
+                        .take(limit)
 
         override suspend fun queryMoodState(contextId: String, agentId: String): MoodStateEntity? =
                 moodState?.takeIf { it.contextId == contextId && it.agentId == agentId }

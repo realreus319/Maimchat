@@ -806,8 +806,11 @@ Progress:
 - Done: local runtime prompt context lookup is dynamically resolved from the
   current Android app/model context, so replier context still works when
   `LocalTransport` was created before `setActiveModel()`.
-- Pending: prompt import/export UI, encrypted editable agent config, and
-  memory/impression update tools.
+- Done: local Room-backed state tools are available to the normal planner when
+  `RuntimeStateDao` is present: `memory_store`, `memory_search`,
+  `tool_get_user_impressions`, `tool_update_user_impression`,
+  `tool_query_impression`, and `tool_update_mood_state`.
+- Pending: prompt import/export UI and encrypted editable agent config.
 
 ## Phase 10: UI And Service Migration
 
@@ -1008,7 +1011,7 @@ Tools:
 - [x] `get_world_state`
 - [x] `look_at`
 - [x] `trigger_motion`
-- [ ] memory/impression tools
+- [x] memory/impression/mood tools
 
 Android integration:
 

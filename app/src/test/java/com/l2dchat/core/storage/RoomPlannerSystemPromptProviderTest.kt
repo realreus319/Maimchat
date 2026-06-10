@@ -169,11 +169,24 @@ class RoomPlannerSystemPromptProviderTest {
                 limit: Int
         ): List<MemoryEntity> = emptyList()
 
+        override suspend fun searchMemories(
+                contextId: String,
+                agentId: String,
+                query: String,
+                limit: Int
+        ): List<MemoryEntity> = emptyList()
+
         override suspend fun queryImpression(
                 contextId: String,
                 agentId: String,
                 subjectId: String
         ): ImpressionEntity? = null
+
+        override suspend fun queryImpressions(
+                contextId: String,
+                agentId: String,
+                limit: Int
+        ): List<ImpressionEntity> = emptyList()
 
         override suspend fun queryMoodState(contextId: String, agentId: String): MoodStateEntity? =
                 null

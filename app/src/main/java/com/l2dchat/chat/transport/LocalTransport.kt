@@ -19,6 +19,7 @@ import com.l2dchat.core.reply.PlannerSessionStore
 import com.l2dchat.core.reply.PlannerSystemPromptProvider
 import com.l2dchat.core.reply.PlannerTurnContext
 import com.l2dchat.core.reply.ReplySink
+import com.l2dchat.core.storage.RuntimeStateDao
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
 import com.l2dchat.core.tools.ReplierPromptContextProvider
 import com.l2dchat.core.tools.ReplierTaskRequest
@@ -49,6 +50,7 @@ class LocalTransport(
         localRuntimeLlmConfigProvider: () -> LocalRuntimeLlmConfig? = { null },
         environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
         motionController: MotionController = NoopMotionController,
+        runtimeStateDaoProvider: () -> RuntimeStateDao? = { null },
         private val runtimeFactory: () -> LocalChatRuntime = {
             LocalRuntimeFactory.create(
                     scope = scope,
@@ -73,7 +75,8 @@ class LocalTransport(
                                         replierPromptContextProvider().contextFor(request)
                             },
                     environmentStateProvider = environmentStateProvider,
-                    motionController = motionController
+                    motionController = motionController,
+                    runtimeStateDaoProvider = runtimeStateDaoProvider
             )
         }
 ) : ChatTransport {

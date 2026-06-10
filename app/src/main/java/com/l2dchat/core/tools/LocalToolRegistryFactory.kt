@@ -5,12 +5,14 @@ import com.l2dchat.core.environment.EmptyEnvironmentStateProvider
 import com.l2dchat.core.environment.EnvironmentStateProvider
 import com.l2dchat.core.environment.MotionController
 import com.l2dchat.core.environment.NoopMotionController
+import com.l2dchat.core.storage.RuntimeStateDao
 
 object LocalToolRegistryFactory {
     fun normalTools(
             gson: Gson = Gson(),
             environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
             motionController: MotionController = NoopMotionController,
+            runtimeStateDao: RuntimeStateDao? = null,
             replierTaskManager: ReplierTaskManager? = null,
             replierTaskIdFactory: ((ToolExecutionContext) -> String)? = null
     ): List<Tool> {
@@ -28,6 +30,14 @@ object LocalToolRegistryFactory {
         tools += GetWorldStateTool(stateProvider = environmentStateProvider, gson = gson)
         tools += LookAtTool(stateProvider = environmentStateProvider, gson = gson)
         tools += TriggerMotionTool(motionController = motionController, gson = gson)
+        if (runtimeStateDao != null) {
+            tools += MemoryStoreTool(stateDao = runtimeStateDao, gson = gson)
+            tools += MemorySearchTool(stateDao = runtimeStateDao, gson = gson)
+            tools += GetUserImpressionsTool(stateDao = runtimeStateDao, gson = gson)
+            tools += UpdateUserImpressionTool(stateDao = runtimeStateDao, gson = gson)
+            tools += QueryImpressionTool(stateDao = runtimeStateDao, gson = gson)
+            tools += UpdateMoodStateTool(stateDao = runtimeStateDao, gson = gson)
+        }
         return tools
     }
 
@@ -35,6 +45,7 @@ object LocalToolRegistryFactory {
             gson: Gson = Gson(),
             environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
             motionController: MotionController = NoopMotionController,
+            runtimeStateDao: RuntimeStateDao? = null,
             replierTaskManager: ReplierTaskManager? = null,
             replierTaskIdFactory: ((ToolExecutionContext) -> String)? = null
     ): ToolRegistry =
@@ -43,6 +54,7 @@ object LocalToolRegistryFactory {
                             gson = gson,
                             environmentStateProvider = environmentStateProvider,
                             motionController = motionController,
+                            runtimeStateDao = runtimeStateDao,
                             replierTaskManager = replierTaskManager,
                             replierTaskIdFactory = replierTaskIdFactory
                     )

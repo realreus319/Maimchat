@@ -18,6 +18,7 @@ import com.l2dchat.core.reply.PlannerSessionStore
 import com.l2dchat.core.reply.PlannerSystemPromptProvider
 import com.l2dchat.core.reply.PlannerTriggerProcessor
 import com.l2dchat.core.reply.ToolCallingPlannerTriggerProcessor
+import com.l2dchat.core.storage.RuntimeStateDao
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
 import com.l2dchat.core.tools.LlmReplierTaskGenerator
 import com.l2dchat.core.tools.LocalToolRegistryFactory
@@ -55,6 +56,7 @@ object LocalRuntimeFactory {
                     EmptyReplierPromptContextProvider,
             environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
             motionController: MotionController = NoopMotionController,
+            runtimeStateDaoProvider: () -> RuntimeStateDao? = { null },
             gson: Gson = Gson()
     ): LocalChatRuntime {
         if (llmConfig == null) {
@@ -99,6 +101,7 @@ object LocalRuntimeFactory {
                                             gson = gson,
                                             environmentStateProvider = environmentStateProvider,
                                             motionController = motionController,
+                                            runtimeStateDao = runtimeStateDaoProvider(),
                                             replierTaskManager = taskManager,
                                             replierTaskIdFactory = taskIdFactory
                                     ),

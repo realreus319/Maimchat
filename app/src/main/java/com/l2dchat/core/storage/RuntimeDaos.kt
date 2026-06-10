@@ -188,6 +188,23 @@ interface RuntimeStateDao {
 
     @Query(
             """
+            SELECT * FROM memories
+            WHERE context_id = :contextId
+              AND agent_id = :agentId
+              AND content LIKE '%' || :query || '%' ESCAPE '\'
+            ORDER BY importance DESC, updated_at_ms DESC
+            LIMIT :limit
+            """
+    )
+    suspend fun searchMemories(
+            contextId: String,
+            agentId: String,
+            query: String,
+            limit: Int
+    ): List<MemoryEntity>
+
+    @Query(
+            """
             SELECT * FROM impressions
             WHERE context_id = :contextId
               AND agent_id = :agentId
@@ -200,6 +217,21 @@ interface RuntimeStateDao {
             agentId: String,
             subjectId: String
     ): ImpressionEntity?
+
+    @Query(
+            """
+            SELECT * FROM impressions
+            WHERE context_id = :contextId
+              AND agent_id = :agentId
+            ORDER BY updated_at_ms DESC
+            LIMIT :limit
+            """
+    )
+    suspend fun queryImpressions(
+            contextId: String,
+            agentId: String,
+            limit: Int
+    ): List<ImpressionEntity>
 
     @Query(
             """

@@ -28,6 +28,7 @@ import com.l2dchat.core.storage.RoomPlannerSessionStore
 import com.l2dchat.core.storage.RoomPlannerSystemPromptProvider
 import com.l2dchat.core.storage.RoomPerceptionStore
 import com.l2dchat.core.storage.RoomReplierPromptContextProvider
+import com.l2dchat.core.storage.RuntimeStateDao
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
 import com.l2dchat.core.tools.ReplierPromptContext
 import com.l2dchat.core.tools.ReplierPromptContextProvider
@@ -110,7 +111,8 @@ class ChatWebSocketManager {
                     replierPromptContextProvider = { localReplierPromptContextProviderFor() },
                     localRuntimeLlmConfigProvider = { localLlmSettings.toRuntimeConfig() },
                     environmentStateProvider = environmentStateProvider,
-                    motionController = localMotionController
+                    motionController = localMotionController,
+                    runtimeStateDaoProvider = { localRuntimeStateDaoForTools() }
             )
     private val remoteTransport =
             RemoteWebSocketTransport(scope = scope, callbacks = transportCallbacks)
@@ -770,6 +772,11 @@ class ChatWebSocketManager {
         val context = appContext ?: return NoopPlannerSessionStore
         val database = ChatDatabase.getInstance(context.applicationContext)
         return RoomPlannerSessionStore(database.plannerStateDao())
+    }
+
+    private fun localRuntimeStateDaoForTools(): RuntimeStateDao? {
+        val context = appContext ?: return null
+        return ChatDatabase.getInstance(context.applicationContext).runtimeStateDao()
     }
 
     private fun localPlannerSystemPromptProviderFor(
