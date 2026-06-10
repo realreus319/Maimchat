@@ -79,6 +79,40 @@ class ChatEnvironmentStateProviderTest {
         assertNull(state.surface.backgroundPath)
     }
 
+    @Test
+    fun `interaction update preserves existing environment state`() {
+        val provider = ChatEnvironmentStateProvider()
+        provider.update(
+                ChatEnvironmentUpdate(
+                        modelName = "Mao",
+                        motionFiles = listOf("models/mao/motions/wave.motion3.json"),
+                        appVisible = true,
+                        backgroundPath = "/tmp/bg.png"
+                )
+        )
+
+        provider.update(
+                ChatEnvironmentUpdate(
+                        interaction =
+                                ChatEnvironmentInteraction(
+                                        type = "drag",
+                                        x = 120.5f,
+                                        y = 64f,
+                                        timestampMillis = 300L
+                                )
+                )
+        )
+
+        val state = provider.currentState(context())
+        assertEquals("Mao", state.model?.name)
+        assertEquals(1, state.motions.size)
+        assertEquals("/tmp/bg.png", state.surface.backgroundPath)
+        assertEquals("drag", state.lastInteraction?.type)
+        assertEquals(120.5f, state.lastInteraction?.x)
+        assertEquals(64f, state.lastInteraction?.y)
+        assertEquals(300L, state.lastInteraction?.timestampMillis)
+    }
+
     private fun context(): ToolExecutionContext {
         val routingKey = RoutingKey(contextId = "room-a", agentId = "agent-a")
         return ToolExecutionContext(

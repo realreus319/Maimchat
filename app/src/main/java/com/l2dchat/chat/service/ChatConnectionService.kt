@@ -11,6 +11,7 @@ import android.os.Message
 import android.os.Messenger
 import android.os.Process
 import android.os.RemoteException
+import com.l2dchat.chat.ChatEnvironmentInteraction
 import com.l2dchat.chat.ChatEnvironmentUpdate
 import com.l2dchat.chat.ChatWebSocketManager
 import com.l2dchat.chat.ChatWebSocketManager.ChatMessage
@@ -393,7 +394,26 @@ class ChatConnectionService : Service() {
                                         ChatServiceProtocol.EXTRA_ENV_BACKGROUND_PATH
                                 ),
                         hasBackgroundPath =
-                                data.containsKey(ChatServiceProtocol.EXTRA_ENV_BACKGROUND_PATH)
+                                data.containsKey(ChatServiceProtocol.EXTRA_ENV_BACKGROUND_PATH),
+                        interaction =
+                                data.optionalString(ChatServiceProtocol.EXTRA_ENV_INTERACTION_TYPE)
+                                        ?.let { type ->
+                                            ChatEnvironmentInteraction(
+                                                    type = type,
+                                                    x =
+                                                            data.optionalFloat(
+                                                                    ChatServiceProtocol.EXTRA_ENV_INTERACTION_X
+                                                            ),
+                                                    y =
+                                                            data.optionalFloat(
+                                                                    ChatServiceProtocol.EXTRA_ENV_INTERACTION_Y
+                                                            ),
+                                                    timestampMillis =
+                                                            data.optionalLong(
+                                                                    ChatServiceProtocol.EXTRA_ENV_INTERACTION_TIMESTAMP_MILLIS
+                                                            )
+                                            )
+                                        }
                 )
         )
     }
@@ -626,3 +646,9 @@ class ChatConnectionService : Service() {
 
 private fun Bundle.optionalString(key: String): String? =
         getString(key)?.trim()?.takeIf { it.isNotEmpty() }
+
+private fun Bundle.optionalFloat(key: String): Float? =
+        if (containsKey(key)) getFloat(key).takeIf { it.isFinite() } else null
+
+private fun Bundle.optionalLong(key: String): Long? =
+        if (containsKey(key)) getLong(key).takeIf { it >= 0L } else null

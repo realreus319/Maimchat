@@ -277,10 +277,11 @@ class ChatServiceClient(context: Context) : ServiceConnection {
             modelFolderPath: String? = null,
             modelFile: String? = null,
             lifecycleState: String? = null,
-            motionFiles: List<String> = emptyList(),
+            motionFiles: List<String>? = null,
             appVisible: Boolean? = null,
             wallpaperVisible: Boolean? = null,
-            backgroundPath: String? = null
+            backgroundPath: String? = null,
+            hasBackgroundPath: Boolean = backgroundPath != null
     ) {
         sendCommand(
                 ChatServiceProtocol.MSG_UPDATE_ENVIRONMENT_STATE,
@@ -296,19 +297,47 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                             ChatServiceProtocol.EXTRA_ENV_MODEL_LIFECYCLE_STATE,
                             lifecycleState.orEmpty()
                     )
-                    putStringArrayList(
-                            ChatServiceProtocol.EXTRA_ENV_MOTION_FILES,
-                            ArrayList(motionFiles)
-                    )
+                    motionFiles?.let {
+                        putStringArrayList(
+                                ChatServiceProtocol.EXTRA_ENV_MOTION_FILES,
+                                ArrayList(it)
+                        )
+                    }
                     appVisible?.let {
                         putBoolean(ChatServiceProtocol.EXTRA_ENV_APP_VISIBLE, it)
                     }
                     wallpaperVisible?.let {
                         putBoolean(ChatServiceProtocol.EXTRA_ENV_WALLPAPER_VISIBLE, it)
                     }
-                    putString(
-                            ChatServiceProtocol.EXTRA_ENV_BACKGROUND_PATH,
-                            backgroundPath.orEmpty()
+                    if (hasBackgroundPath) {
+                        putString(
+                                ChatServiceProtocol.EXTRA_ENV_BACKGROUND_PATH,
+                                backgroundPath.orEmpty()
+                        )
+                    }
+                }
+        )
+    }
+
+    fun updateEnvironmentInteraction(
+            type: String,
+            x: Float? = null,
+            y: Float? = null,
+            timestampMillis: Long = System.currentTimeMillis()
+    ) {
+        val cleanType = type.trim()
+        if (cleanType.isBlank()) return
+        sendCommand(
+                ChatServiceProtocol.MSG_UPDATE_ENVIRONMENT_STATE,
+                Bundle().apply {
+                    putString(ChatServiceProtocol.EXTRA_ENV_INTERACTION_TYPE, cleanType)
+                    x?.takeIf { it.isFinite() }
+                            ?.let { putFloat(ChatServiceProtocol.EXTRA_ENV_INTERACTION_X, it) }
+                    y?.takeIf { it.isFinite() }
+                            ?.let { putFloat(ChatServiceProtocol.EXTRA_ENV_INTERACTION_Y, it) }
+                    putLong(
+                            ChatServiceProtocol.EXTRA_ENV_INTERACTION_TIMESTAMP_MILLIS,
+                            timestampMillis.coerceAtLeast(0L)
                     )
                 }
         )

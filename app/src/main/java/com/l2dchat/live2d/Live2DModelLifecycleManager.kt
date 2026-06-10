@@ -4,6 +4,7 @@ import android.content.Context
 import android.opengl.GLSurfaceView
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import com.live2d.demo.full.LAppDelegate
 import com.live2d.demo.full.LAppLive2DManager
@@ -48,6 +49,7 @@ private constructor(
 
     companion object {
         private const val TAG = "Live2DModelLifecycleManager"
+        private const val INTERACTION_MOVE_REPORT_INTERVAL_MS = 120L
         private val instanceCounter = AtomicInteger(0)
         private val resetLock = Any()
         fun create(
@@ -126,18 +128,28 @@ private constructor(
         fun onError(error: String, exception: Throwable? = null) {}
     }
 
+    interface InteractionCallback {
+        fun onInteraction(type: String, x: Float?, y: Float?, timestampMillis: Long)
+    }
+
     private val state = AtomicReference(LifecycleState.CREATED)
     private val isInstanceInitialized = AtomicBoolean(false)
     private val isGLContextReady = AtomicBoolean(false)
     private val isDestroyed = AtomicBoolean(false)
     private var stateCallback: StateCallback? = null
+    @Volatile private var interactionCallback: InteractionCallback? = null
     private val gestureLogTag = "${TAG}_Gesture"
+    private var lastMoveInteractionReportMillis = 0L
 
     private var renderer: ModelRenderer? = null
     private var glSurfaceView: GLSurfaceView? = null
 
     fun setStateCallback(cb: StateCallback) {
         stateCallback = cb
+    }
+
+    fun setInteractionCallback(cb: InteractionCallback?) {
+        interactionCallback = cb
     }
 
     fun initialize(): Boolean {
@@ -198,14 +210,17 @@ private constructor(
                                         object : Live2DGestureDispatcher.Callbacks {
                                             override fun onSingleDown(x: Float, y: Float) {
                                                 Log.d(gestureLogTag, "singleDown x=$x y=$y")
+                                                reportInteraction("touch", x, y)
                                                 LAppDelegate.getInstance().onTouchBegan(x, y)
                                             }
                                             override fun onSingleMove(x: Float, y: Float) {
                                                 Log.v(gestureLogTag, "singleMove x=$x y=$y")
+                                                reportInteraction("drag", x, y, throttle = true)
                                                 LAppDelegate.getInstance().onTouchMoved(x, y)
                                             }
                                             override fun onSingleUp(x: Float, y: Float) {
                                                 Log.d(gestureLogTag, "singleUp x=$x y=$y")
+                                                reportInteraction("touch_end", x, y)
                                                 LAppDelegate.getInstance().onTouchEnd(x, y)
                                             }
                                             override fun onMultiStart(
@@ -217,6 +232,11 @@ private constructor(
                                                 Log.d(
                                                         gestureLogTag,
                                                         "multiStart p1=($x1,$y1) p2=($x2,$y2)"
+                                                )
+                                                reportInteraction(
+                                                        "multi_touch",
+                                                        centerOf(x1, x2),
+                                                        centerOf(y1, y2)
                                                 )
                                                 LAppDelegate.getInstance()
                                                         .onMultiTouchBegan(x1, y1, x2, y2)
@@ -231,11 +251,18 @@ private constructor(
                                                         gestureLogTag,
                                                         "multiMove p1=($x1,$y1) p2=($x2,$y2)"
                                                 )
+                                                reportInteraction(
+                                                        "multi_drag",
+                                                        centerOf(x1, x2),
+                                                        centerOf(y1, y2),
+                                                        throttle = true
+                                                )
                                                 LAppDelegate.getInstance()
                                                         .onMultiTouchMoved(x1, y1, x2, y2)
                                             }
                                             override fun onMultiEnd() {
                                                 Log.d(gestureLogTag, "multiEnd")
+                                                reportInteraction("multi_touch_end", null, null)
                                             }
                                         }
                                 )
@@ -269,6 +296,7 @@ private constructor(
         if (isDestroyed.getAndSet(true)) return
         try {
             setState(LifecycleState.DESTROYING, "清理中")
+            interactionCallback = null
             glSurfaceView?.onPause()
             renderer?.cleanup()
             renderer = null
@@ -302,6 +330,27 @@ private constructor(
         Log.e(TAG, err, ex)
         stateCallback?.onError(err, ex)
     }
+
+    private fun reportInteraction(
+            type: String,
+            x: Float?,
+            y: Float?,
+            throttle: Boolean = false
+    ) {
+        val elapsed = SystemClock.uptimeMillis()
+        if (throttle && elapsed - lastMoveInteractionReportMillis < INTERACTION_MOVE_REPORT_INTERVAL_MS) {
+            return
+        }
+        if (throttle) lastMoveInteractionReportMillis = elapsed
+        interactionCallback?.onInteraction(
+                type,
+                x?.takeIf { it.isFinite() },
+                y?.takeIf { it.isFinite() },
+                System.currentTimeMillis()
+        )
+    }
+
+    private fun centerOf(first: Float, second: Float): Float = (first + second) * 0.5f
 
     fun updateBackgroundTexture(path: String?) {
         backgroundPathRef.set(path)

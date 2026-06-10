@@ -1,6 +1,7 @@
 package com.l2dchat.chat
 
 import com.l2dchat.core.environment.EnvironmentChatBubble
+import com.l2dchat.core.environment.EnvironmentInteraction
 import com.l2dchat.core.environment.EnvironmentModelState
 import com.l2dchat.core.environment.EnvironmentMotion
 import com.l2dchat.core.environment.EnvironmentState
@@ -20,12 +21,20 @@ data class ChatEnvironmentUpdate(
         val wallpaperVisible: Boolean? = null,
         val hasWallpaperVisible: Boolean = wallpaperVisible != null,
         val backgroundPath: String? = null,
-        val hasBackgroundPath: Boolean = backgroundPath != null
+        val hasBackgroundPath: Boolean = backgroundPath != null,
+        val interaction: ChatEnvironmentInteraction? = null
 )
 
 data class ChatEnvironmentMessage(
         val text: String,
         val fromUser: Boolean,
+        val timestampMillis: Long? = null
+)
+
+data class ChatEnvironmentInteraction(
+        val type: String,
+        val x: Float? = null,
+        val y: Float? = null,
         val timestampMillis: Long? = null
 )
 
@@ -68,6 +77,7 @@ class ChatEnvironmentStateProvider : EnvironmentStateProvider {
             val model: EnvironmentModelState? = null,
             val motions: List<EnvironmentMotion> = emptyList(),
             val surface: EnvironmentSurfaceState = EnvironmentSurfaceState(),
+            val lastInteraction: EnvironmentInteraction? = null,
             val recentBubbles: List<EnvironmentChatBubble> = emptyList(),
             val updatedAtMillis: Long = now()
     ) {
@@ -91,6 +101,8 @@ class ChatEnvironmentStateProvider : EnvironmentStateProvider {
                     model = nextModel,
                     motions = nextMotions,
                     surface = nextSurface,
+                    lastInteraction =
+                            update.interaction?.toEnvironmentInteraction() ?: lastInteraction,
                     updatedAtMillis = now()
             )
         }
@@ -122,6 +134,7 @@ class ChatEnvironmentStateProvider : EnvironmentStateProvider {
                         model = model,
                         motions = motions,
                         surface = surface,
+                        lastInteraction = lastInteraction,
                         recentBubbles = recentBubbles,
                         metadata =
                                 mapOf(
@@ -204,6 +217,16 @@ private fun displayNameForMotion(filePath: String): String {
 
 private fun stableModelKey(vararg candidates: String?): String? =
         candidates.mapNotNull { it.cleanOrNull() }.firstOrNull()
+
+private fun ChatEnvironmentInteraction.toEnvironmentInteraction(): EnvironmentInteraction? {
+    val cleanType = type.cleanOrNull() ?: return null
+    return EnvironmentInteraction(
+            type = cleanType,
+            x = x?.takeIf { it.isFinite() },
+            y = y?.takeIf { it.isFinite() },
+            timestampMillis = timestampMillis?.takeIf { it >= 0L }
+    )
+}
 
 private fun String?.cleanOrNull(): String? = this?.trim()?.takeIf { it.isNotBlank() }
 

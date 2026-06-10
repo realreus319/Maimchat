@@ -271,7 +271,8 @@ fun ChatWithModelScreen(
                 lifecycleState = lifecycleStateName,
                 motionFiles = model?.motionFiles.orEmpty(),
                 appVisible = true,
-                backgroundPath = wallpaperBgPath.takeIf { it.isNotBlank() }
+                backgroundPath = wallpaperBgPath.takeIf { it.isNotBlank() },
+                hasBackgroundPath = true
         )
     }
 
@@ -325,6 +326,7 @@ fun ChatWithModelScreen(
         if (currentModel != null) {
             isResetting = true
             try {
+                lifecycleManager?.setInteractionCallback(null)
                 lifecycleManager?.destroy()
                 lifecycleManager = null
                 lifecycleStateName = null
@@ -346,6 +348,23 @@ fun ChatWithModelScreen(
                             }
                         }
                 )
+                newManager.setInteractionCallback(
+                        object : Live2DModelLifecycleManager.InteractionCallback {
+                            override fun onInteraction(
+                                    type: String,
+                                    x: Float?,
+                                    y: Float?,
+                                    timestampMillis: Long
+                            ) {
+                                chatManager.updateEnvironmentInteraction(
+                                        type = type,
+                                        x = x,
+                                        y = y,
+                                        timestampMillis = timestampMillis
+                                )
+                            }
+                        }
+                )
                 if (newManager.initialize()) {
                     lifecycleManager = newManager
                     lifecycleStateName = newManager.getCurrentState().name
@@ -362,7 +381,13 @@ fun ChatWithModelScreen(
         }
     }
 
-    DisposableEffect(modelKey) { onDispose { lifecycleManager?.destroy() } }
+    DisposableEffect(modelKey) {
+        onDispose {
+            lifecycleManager?.setInteractionCallback(null)
+            lifecycleManager?.destroy()
+            chatManager.updateEnvironmentState(appVisible = false)
+        }
+    }
 
     val chatInputHeightDp = with(LocalDensity.current) { chatInputHeightPx.toDp() }
     val floatingBottomPadding = maxOf(ReservedBottomHeight, chatInputHeightDp) + 8.dp

@@ -49,6 +49,11 @@ object ChatServiceProtocol {
     const val EXTRA_ENV_APP_VISIBLE = "extra_env_app_visible"
     const val EXTRA_ENV_WALLPAPER_VISIBLE = "extra_env_wallpaper_visible"
     const val EXTRA_ENV_BACKGROUND_PATH = "extra_env_background_path"
+    const val EXTRA_ENV_INTERACTION_TYPE = "extra_env_interaction_type"
+    const val EXTRA_ENV_INTERACTION_X = "extra_env_interaction_x"
+    const val EXTRA_ENV_INTERACTION_Y = "extra_env_interaction_y"
+    const val EXTRA_ENV_INTERACTION_TIMESTAMP_MILLIS =
+            "extra_env_interaction_timestamp_millis"
 
     // Event extras
     const val EXTRA_CONNECTION_STATE = "extra_connection_state"
