@@ -606,6 +606,9 @@ Progress:
   error results.
 - Done: `ToolExecutionMode` and `ToolRegistry.definitionsFor()` gate normal and
   decision-mode tools, rejecting disallowed calls before execution.
+- Done: `LocalToolRegistryFactory` centralizes the default normal-mode tool set
+  (`replier`, optional `wait_for`, `get_world_state`, `look_at`,
+  `trigger_motion`) and exposes only decision-mode tools for decision turns.
 - Done: `wait_for`, `adopt_background_reply`, and `kill_background_reply` operate
   on `ReplierTaskManager`; adopt returns planner-managed `replyText`, while kill
   cancels running background tasks.
@@ -689,8 +692,8 @@ Progress:
   screenshot pixels or image content blocks.
 - Pending: wire real app, wallpaper, Live2D lifecycle, touch, chat bubble, and
   snapshot producers into an Android-backed provider.
-- Pending: wire `trigger_motion` into the local planner registry from UI/service
-  runtime construction.
+- Pending: wire `LocalToolRegistryFactory` into the local runtime construction
+  path used by UI/service mode selection.
 - Pending: image/content-block capable `look_at` and environment triggers.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood
