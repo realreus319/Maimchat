@@ -840,8 +840,10 @@ Progress:
   `temperature`, `max_tokens`, `timeout_millis`, and `native_tool_calling`.
   Provider API keys remain in encrypted global storage through
   `LocalLlmSettingsStore`.
-- Pending: verify the role config dialog on emulator/device and add a named
-  provider registry if provider labels such as `openai` should map to base URLs.
+- Done: named provider labels can resolve runtime endpoints through
+  `LlmProviderRegistry`; `openai` maps to `https://api.openai.com/v1`, while
+  explicit `settings_json.base_url` and direct provider URLs remain supported.
+- Pending: verify the role config dialog on emulator/device.
 
 ## Phase 10: UI And Service Migration
 

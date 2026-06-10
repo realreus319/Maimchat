@@ -160,6 +160,35 @@ class LocalLlmSettingsTest {
     }
 
     @Test
+    fun `agent provider label can supply runtime base url`() {
+        val override =
+                AgentLlmSettingsOverride.fromAgentConfig(
+                        agentConfig(provider = " OpenAI ", model = "profile")
+                )
+
+        assertEquals("https://api.openai.com/v1", override?.baseUrl)
+
+        val config = LocalLlmSettings(enabled = true).toRuntimeConfig(agentOverride = override)
+
+        checkNotNull(config)
+        assertEquals("profile", config.plannerConfig.model)
+    }
+
+    @Test
+    fun `settings json base url overrides provider label`() {
+        val override =
+                AgentLlmSettingsOverride.fromAgentConfig(
+                        agentConfig(
+                                provider = "openai",
+                                model = "profile",
+                                settingsJson = """{"base_url":"https://agent.example.com/v1"}"""
+                        )
+                )
+
+        assertEquals("https://agent.example.com/v1", override?.baseUrl)
+    }
+
+    @Test
     fun `invalid agent settings json and unsafe values are ignored`() {
         assertNull(
                 AgentLlmSettingsOverride.fromAgentConfig(agentConfig(settingsJson = "{not-json"))

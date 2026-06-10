@@ -95,7 +95,11 @@ data class LocalLlmSettings(
 private fun AgentConfigEntity.toLocalLlmSettingsOverride(): AgentLlmSettingsOverride? {
     val settings = settingsJson.toSettingsObjectOrNull()
     val profileModel = model.trimmedOrNull()
-    val providerBaseUrl = provider.trimmedOrNull()?.takeIf { it.isHttpUrlLike() }
+    val providerLabel = provider.trimmedOrNull()
+    val providerBaseUrl =
+            providerLabel?.let { label ->
+                LlmProviderRegistry.resolveBaseUrl(label) ?: label.takeIf { it.isHttpUrlLike() }
+            }
     return AgentLlmSettingsOverride(
                     baseUrl =
                             settings?.stringOrNull("base_url", "baseUrl")
