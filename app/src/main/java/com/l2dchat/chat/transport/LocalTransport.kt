@@ -18,6 +18,7 @@ import com.l2dchat.core.reply.PlannerSessionStore
 import com.l2dchat.core.reply.ReplySink
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
 import com.l2dchat.core.tools.ReplierPromptContextProvider
+import com.l2dchat.core.tools.ReplierTaskRequest
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import kotlinx.coroutines.CoroutineScope
@@ -45,7 +46,11 @@ class LocalTransport(
                     llmConfig = localRuntimeLlmConfigProvider(),
                     perceptionStoreFactory = perceptionStoreFactory,
                     plannerSessionStoreFactory = plannerSessionStoreFactory,
-                    replierPromptContextProvider = replierPromptContextProvider(),
+                    replierPromptContextProvider =
+                            object : ReplierPromptContextProvider {
+                                override suspend fun contextFor(request: ReplierTaskRequest) =
+                                        replierPromptContextProvider().contextFor(request)
+                            },
                     environmentStateProvider = environmentStateProvider,
                     motionController = motionController
             )

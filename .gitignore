@@ -47,6 +47,8 @@ app/CubismSdkForJava-*/
 app/libs/Live2DCubismCore*.aar
 app/src/main/assets/**
 !app/src/main/assets/README.md
+!app/src/main/assets/agents/
+!app/src/main/assets/agents/**
 
 # Possible signing config/property files
 signing.properties

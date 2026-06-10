@@ -9,6 +9,7 @@ import com.l2dchat.chat.transport.ChatTransportCallbacks
 import com.l2dchat.chat.transport.LocalTransport
 import com.l2dchat.chat.transport.RemoteWebSocketConfig
 import com.l2dchat.chat.transport.RemoteWebSocketTransport
+import com.l2dchat.core.config.DefaultAgentProfileSeeder
 import com.l2dchat.core.config.LocalLlmSettings
 import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.environment.EnvironmentTriggerSubmission
@@ -24,7 +25,9 @@ import com.l2dchat.core.storage.RoomPlannerSessionStore
 import com.l2dchat.core.storage.RoomPerceptionStore
 import com.l2dchat.core.storage.RoomReplierPromptContextProvider
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
+import com.l2dchat.core.tools.ReplierPromptContext
 import com.l2dchat.core.tools.ReplierPromptContextProvider
+import com.l2dchat.core.tools.ReplierTaskRequest
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import kotlinx.coroutines.CoroutineScope
@@ -215,6 +218,7 @@ class ChatWebSocketManager {
         environmentStateProvider.update(
                 ChatEnvironmentUpdate(modelKey = activeModelKey, modelName = receiverModelName)
         )
+        seedDefaultAgentProfile(app, activeModelKey)
         activeModelKey?.let { loadHistory(app, it) }
         emitModelChangedEnvironmentTrigger()
         noteIdleActivity()
@@ -757,10 +761,40 @@ class ChatWebSocketManager {
     private fun localReplierPromptContextProviderFor(): ReplierPromptContextProvider {
         val context = appContext ?: return EmptyReplierPromptContextProvider
         val database = ChatDatabase.getInstance(context.applicationContext)
-        return RoomReplierPromptContextProvider(
-                historyStore = historyStoreFor(context),
-                stateDao = database.runtimeStateDao()
-        )
+        val stateDao = database.runtimeStateDao()
+        val roomProvider =
+                RoomReplierPromptContextProvider(
+                        historyStore = historyStoreFor(context),
+                        stateDao = stateDao
+                )
+        return object : ReplierPromptContextProvider {
+            override suspend fun contextFor(request: ReplierTaskRequest): ReplierPromptContext {
+                DefaultAgentProfileSeeder.seed(
+                        context = context.applicationContext,
+                        stateDao = stateDao,
+                        agentId = request.routingKey.agentId,
+                        displayName = receiverModelName
+                )
+                return roomProvider.contextFor(request)
+            }
+        }
+    }
+
+    private fun seedDefaultAgentProfile(context: Context, modelKey: String?) {
+        val agentId = historyAgentId(modelKey) ?: return
+        val database = ChatDatabase.getInstance(context.applicationContext)
+        scope.launch {
+            try {
+                DefaultAgentProfileSeeder.seed(
+                        context = context.applicationContext,
+                        stateDao = database.runtimeStateDao(),
+                        agentId = agentId,
+                        displayName = receiverModelName
+                )
+            } catch (e: Exception) {
+                logger.error("写入默认本地角色配置失败", e)
+            }
+        }
     }
 
     private fun historyContextId(modelKey: String?): String =

@@ -794,8 +794,16 @@ Progress:
   placeholders including `persona_prompt`, `current_time`, `mood_state`,
   `impression_text`, `history_text`, `history_section`, `content`,
   `reply_guidance`, `guidance_section`, and `current_trigger`.
-- Pending: default packaged agent assets, prompt import/export UI, encrypted
-  editable agent config, and memory/impression update tools.
+- Done: default agent assets are packaged under `assets/agents/default/`,
+  including `agent.json`, planner/decision/replier prompt templates, and parser
+  defaults.
+- Done: `DefaultAgentProfileSeeder` writes default agent config and global
+  prompt templates into Room without overwriting an existing per-agent config.
+- Done: local runtime prompt context lookup is dynamically resolved from the
+  current Android app/model context, so replier context still works when
+  `LocalTransport` was created before `setActiveModel()`.
+- Pending: prompt import/export UI, encrypted editable agent config, and
+  memory/impression update tools.
 
 ## Phase 10: UI And Service Migration
 
