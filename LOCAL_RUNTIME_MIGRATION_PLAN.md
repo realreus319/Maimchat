@@ -530,9 +530,14 @@ Progress:
 - Done: `ReplierTool` can optionally create a `ReplierTask`, wait for completion,
   return the generated task reply text to the planner, and convert task failures
   into LLM tool error results.
-- Pending: LLM-backed replier generator, interruption-driven backgrounding, and
-  full replier prompt builder with persona/history/mood/impression/live image
-  context.
+- Done: `ReplierPromptBuilder` builds a replier-specific prompt from the planner
+  request, current trigger, style/guidance/emotion flags, trigger images, and
+  optional live image input.
+- Done: `LlmReplierTaskGenerator` streams `LlmClient.chatCompletionStream()` output
+  into `ReplierTaskUpdate` events and rejects accidental tool calls from the
+  replier model.
+- Pending: interruption-driven backgrounding and full persona/history/mood/
+  impression context injection.
 
 ## Phase 7: Decision Tools And Tool Registry
 
