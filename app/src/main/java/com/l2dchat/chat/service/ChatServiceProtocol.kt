@@ -12,6 +12,7 @@ object ChatServiceProtocol {
     const val MSG_CLEAR_MESSAGES = 8
     const val MSG_SET_ACTIVE_MODEL = 9
     const val MSG_CLEAR_MESSAGES_EPHEMERAL = 10
+    const val MSG_START_LOCAL_RUNTIME = 11
 
     // Service -> Client events
     const val MSG_EVENT_CONNECTION_STATE = 101

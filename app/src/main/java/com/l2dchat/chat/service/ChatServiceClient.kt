@@ -195,6 +195,11 @@ class ChatServiceClient(context: Context) : ServiceConnection {
         sendCommand(ChatServiceProtocol.MSG_DISCONNECT)
     }
 
+    fun startLocalRuntime() {
+        ensureBound()
+        sendCommand(ChatServiceProtocol.MSG_START_LOCAL_RUNTIME)
+    }
+
     fun sendUserMessage(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return

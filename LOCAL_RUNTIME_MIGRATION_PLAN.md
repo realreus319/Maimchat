@@ -699,10 +699,11 @@ Progress:
 - Done: `ChatServiceClient`, `ChatConnectionService`, `ChatWebSocketManager`,
   and `LocalTransport` can persist local LLM settings, pass them into
   `LocalRuntimeFactory`, and rebuild the local runtime when settings change.
+- Done: the Android chat configuration dialog exposes local LLM provider
+  settings and can switch the service back to the local runtime when enabled.
 - Pending: wire real app, wallpaper, Live2D lifecycle, touch, chat bubble, and
   snapshot producers into an Android-backed provider.
-- Pending: expose Android UI controls for local LLM provider settings and wire
-  real environment/motion adapters into `LocalRuntimeFactory`.
+- Pending: wire real environment/motion adapters into `LocalRuntimeFactory`.
 - Pending: image/content-block capable `look_at` and environment triggers.
 
 ## Phase 9: Agent Config, Prompts, Memory, And Mood

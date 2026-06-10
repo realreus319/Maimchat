@@ -313,6 +313,9 @@ class ChatConnectionService : Service() {
         if (data.containsLocalLlmSettings()) {
             localLlmSettings = localLlmSettings.updatedFrom(data)
             manager.setLocalLlmSettings(localLlmSettings)
+            if (localLlmSettings.enabled) {
+                manager.startLocalRuntime()
+            }
         }
         data.getString(ChatServiceProtocol.EXTRA_URL)?.let { url ->
             val trimmed = url.trim()
@@ -526,6 +529,7 @@ class ChatConnectionService : Service() {
                 ChatServiceProtocol.MSG_DISCONNECT -> service.manager.disconnect()
                 ChatServiceProtocol.MSG_SEND_MESSAGE -> service.handleSendMessage(msg.data)
                 ChatServiceProtocol.MSG_UPDATE_CONFIG -> service.handleConfigUpdate(msg.data)
+                ChatServiceProtocol.MSG_START_LOCAL_RUNTIME -> service.manager.startLocalRuntime()
                 ChatServiceProtocol.MSG_REQUEST_SNAPSHOT -> {
                     val target = msg.replyTo
                     if (target != null) service.sendSnapshot(target) else service.sendSnapshot()

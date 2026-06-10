@@ -18,7 +18,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
@@ -41,11 +44,14 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.chat.service.ChatServiceClient
+import com.l2dchat.core.config.LocalLlmSettings
 import com.l2dchat.live2d.ImprovedLive2DRenderer
 import com.l2dchat.live2d.Live2DModelLifecycleManager
 import com.l2dchat.live2d.Live2DModelManager
@@ -93,6 +99,7 @@ fun ChatWithModelScreen(
     val messages by chatManager.messages.collectAsState()
     val standardMessages by chatManager.standardMessages.collectAsState()
     val currentUserNickname by chatManager.userNickname.collectAsState()
+    val localLlmSettings by chatManager.localLlmSettings.collectAsState()
     val prefs =
             remember(context) {
                 context.getSharedPreferences(
@@ -431,12 +438,34 @@ fun ChatWithModelScreen(
                             ) {
                                 IconButton(
                                         onClick = {
-                                            val errors = validateConfig(serverUrl, nickname)
+                                            val errors =
+                                                    validateConfig(
+                                                            serverUrl,
+                                                            nickname,
+                                                            localLlmSettings
+                                                    )
                                             uiLogger.debug(
                                                     "Connect action tapped state=${connectionState.name} url=$serverUrl nickname=$nickname errors=${errors.joinToString()}"
                                             )
                                             if (errors.isEmpty()) {
-                                                showConnectConfirm = true
+                                                if (localLlmSettings.enabled) {
+                                                    val sanitizedPlatform = platform.trim()
+                                                    platform = sanitizedPlatform
+                                                    chatManager.updatePlatformPreference(
+                                                            sanitizedPlatform
+                                                    )
+                                                    chatManager.setUserProfile(nickname)
+                                                    chatManager.setReceiverInfo(
+                                                            receiverUserId.ifBlank { null },
+                                                            receiverUserNickname.ifBlank { null }
+                                                    )
+                                                    chatManager.updateLocalLlmSettings(
+                                                            localLlmSettings
+                                                    )
+                                                    chatManager.startLocalRuntime()
+                                                } else {
+                                                    showConnectConfirm = true
+                                                }
                                             } else {
                                                 // 打开配置对话框并提示
                                                 showConnectionDialog = true
@@ -577,12 +606,13 @@ fun ChatWithModelScreen(
                     platform = platform,
                     receiverUserId = receiverUserId,
                     receiverUserNickname = receiverUserNickname,
+                    localLlmSettings = localLlmSettings,
                     onUrlChange = { serverUrl = it },
                     onNicknameChange = { nickname = it },
                     onPlatformChange = { platform = it },
                     onReceiverUserIdChange = { receiverUserId = it },
                     onReceiverUserNicknameChange = { receiverUserNickname = it },
-                    onSave = { valid ->
+                    onSave = { valid, nextLocalLlmSettings ->
                         if (valid) {
                             val sanitizedPlatform = platform.trim()
                             platform = sanitizedPlatform
@@ -602,6 +632,10 @@ fun ChatWithModelScreen(
                                             receiverUserNickname.ifBlank { null }
                                     )
                                     .apply()
+                            chatManager.updateLocalLlmSettings(nextLocalLlmSettings)
+                            if (nextLocalLlmSettings.enabled) {
+                                chatManager.startLocalRuntime()
+                            }
                             showConnectionDialog = false
                         }
                     },
@@ -961,12 +995,79 @@ private fun applyLiveWallpaper(context: Context) {
     }
 }
 
-private fun validateConfig(url: String, nickname: String): List<String> {
+private fun validateConfig(
+        url: String,
+        nickname: String,
+        localLlmSettings: LocalLlmSettings = LocalLlmSettings()
+): List<String> {
     val errors = mutableListOf<String>()
     if (nickname.isBlank()) errors.add("昵称不能为空")
-    if (url.isBlank()) errors.add("URL 不能为空")
-    else if (!(url.startsWith("ws://") || url.startsWith("wss://")))
-            errors.add("URL 必须以 ws:// 或 wss:// 开头")
+    if (localLlmSettings.enabled) {
+        val baseUrl = localLlmSettings.baseUrl.orEmpty()
+        if (baseUrl.isBlank()) {
+            errors.add("本地 LLM 地址不能为空")
+        } else if (!(baseUrl.startsWith("http://") || baseUrl.startsWith("https://"))) {
+            errors.add("本地 LLM 地址必须以 http:// 或 https:// 开头")
+        }
+        if (localLlmSettings.plannerModel.isNullOrBlank()) {
+            errors.add("Planner 模型不能为空")
+        }
+    } else {
+        if (url.isBlank()) errors.add("URL 不能为空")
+        else if (!(url.startsWith("ws://") || url.startsWith("wss://")))
+                errors.add("URL 必须以 ws:// 或 wss:// 开头")
+    }
+    return errors
+}
+
+private fun buildLocalLlmSettings(
+        enabled: Boolean,
+        baseUrl: String,
+        apiKey: String,
+        plannerModel: String,
+        replierModel: String,
+        nativeToolCalling: Boolean,
+        temperature: String,
+        maxTokens: String,
+        timeoutMillis: String
+): LocalLlmSettings =
+        LocalLlmSettings(
+                enabled = enabled,
+                baseUrl = baseUrl.trim().ifBlank { null },
+                apiKey = apiKey.trim().ifBlank { null },
+                plannerModel = plannerModel.trim().ifBlank { null },
+                replierModel = replierModel.trim().ifBlank { null },
+                nativeToolCalling = nativeToolCalling,
+                temperature = temperature.trim().takeIf { it.isNotEmpty() }?.toDoubleOrNull(),
+                maxTokens = maxTokens.trim().takeIf { it.isNotEmpty() }?.toIntOrNull(),
+                timeoutMillis =
+                        timeoutMillis.trim().takeIf { it.isNotEmpty() }?.toLongOrNull()
+                                ?: LocalLlmSettings.DEFAULT_TIMEOUT_MILLIS
+        )
+
+private fun validateLocalLlmNumericInput(
+        enabled: Boolean,
+        temperature: String,
+        maxTokens: String,
+        timeoutMillis: String
+): List<String> {
+    if (!enabled) return emptyList()
+    val errors = mutableListOf<String>()
+    val rawTemperature = temperature.trim()
+    if (rawTemperature.isNotEmpty()) {
+        val parsed = rawTemperature.toDoubleOrNull()
+        if (parsed == null || !parsed.isFinite()) {
+            errors.add("Temperature 必须是数字")
+        }
+    }
+    val rawMaxTokens = maxTokens.trim()
+    if (rawMaxTokens.isNotEmpty() && (rawMaxTokens.toIntOrNull() ?: 0) <= 0) {
+        errors.add("Max tokens 必须是正整数")
+    }
+    val rawTimeout = timeoutMillis.trim()
+    if (rawTimeout.isNotEmpty() && (rawTimeout.toLongOrNull() ?: 0L) <= 0L) {
+        errors.add("超时必须是正整数毫秒")
+    }
     return errors
 }
 
@@ -984,12 +1085,13 @@ private fun ConnectionConfigDialog(
         platform: String,
         receiverUserId: String,
         receiverUserNickname: String,
+        localLlmSettings: LocalLlmSettings,
         onUrlChange: (String) -> Unit,
         onNicknameChange: (String) -> Unit,
         onPlatformChange: (String) -> Unit,
         onReceiverUserIdChange: (String) -> Unit,
         onReceiverUserNicknameChange: (String) -> Unit,
-        onSave: (Boolean) -> Unit,
+        onSave: (Boolean, LocalLlmSettings) -> Unit,
         onDismiss: () -> Unit
 ) {
     var tempUrl by remember { mutableStateOf(currentUrl) }
@@ -997,13 +1099,74 @@ private fun ConnectionConfigDialog(
     var tempPlatform by remember { mutableStateOf(platform) }
     var tempRecvId by remember { mutableStateOf(receiverUserId) }
     var tempRecvNick by remember { mutableStateOf(receiverUserNickname) }
+    var tempLocalEnabled by remember { mutableStateOf(localLlmSettings.enabled) }
+    var tempLocalBaseUrl by remember { mutableStateOf(localLlmSettings.baseUrl.orEmpty()) }
+    var tempLocalApiKey by remember { mutableStateOf(localLlmSettings.apiKey.orEmpty()) }
+    var tempPlannerModel by remember { mutableStateOf(localLlmSettings.plannerModel.orEmpty()) }
+    var tempReplierModel by remember { mutableStateOf(localLlmSettings.replierModel.orEmpty()) }
+    var tempNativeTools by remember { mutableStateOf(localLlmSettings.nativeToolCalling) }
+    var tempTemperature by remember {
+        mutableStateOf(localLlmSettings.temperature?.toString().orEmpty())
+    }
+    var tempMaxTokens by remember {
+        mutableStateOf(localLlmSettings.maxTokens?.toString().orEmpty())
+    }
+    var tempTimeoutMillis by remember {
+        mutableStateOf(
+                localLlmSettings.timeoutMillis?.toString()
+                        ?: LocalLlmSettings.DEFAULT_TIMEOUT_MILLIS.toString()
+        )
+    }
     var showErrors by remember { mutableStateOf(false) }
-    val errors = remember(tempUrl, tempNickname) { validateConfig(tempUrl, tempNickname) }
+    val nextLocalLlmSettings =
+            remember(
+                    tempLocalEnabled,
+                    tempLocalBaseUrl,
+                    tempLocalApiKey,
+                    tempPlannerModel,
+                    tempReplierModel,
+                    tempNativeTools,
+                    tempTemperature,
+                    tempMaxTokens,
+                    tempTimeoutMillis
+            ) {
+                buildLocalLlmSettings(
+                        enabled = tempLocalEnabled,
+                        baseUrl = tempLocalBaseUrl,
+                        apiKey = tempLocalApiKey,
+                        plannerModel = tempPlannerModel,
+                        replierModel = tempReplierModel,
+                        nativeToolCalling = tempNativeTools,
+                        temperature = tempTemperature,
+                        maxTokens = tempMaxTokens,
+                        timeoutMillis = tempTimeoutMillis
+                )
+            }
+    val errors =
+            remember(
+                    tempUrl,
+                    tempNickname,
+                    nextLocalLlmSettings,
+                    tempTemperature,
+                    tempMaxTokens,
+                    tempTimeoutMillis
+            ) {
+                validateConfig(tempUrl, tempNickname, nextLocalLlmSettings) +
+                        validateLocalLlmNumericInput(
+                                enabled = tempLocalEnabled,
+                                temperature = tempTemperature,
+                                maxTokens = tempMaxTokens,
+                                timeoutMillis = tempTimeoutMillis
+                        )
+            }
     AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text("连接配置") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(
+                        modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     OutlinedTextField(
                             value = tempUrl,
                             onValueChange = {
@@ -1012,8 +1175,14 @@ private fun ConnectionConfigDialog(
                             },
                             label = { Text("WebSocket 地址") },
                             placeholder = { Text("ws://host:port/path") },
+                            enabled = !tempLocalEnabled,
                             singleLine = true,
-                            isError = showErrors && errors.any { it.contains("URL") }
+                            isError =
+                                    showErrors &&
+                                            !tempLocalEnabled &&
+                                            errors.any { it.contains("URL") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                             value = tempNickname,
@@ -1024,7 +1193,8 @@ private fun ConnectionConfigDialog(
                             label = { Text("我的昵称 (必填)") },
                             placeholder = { Text("请输入昵称") },
                             singleLine = true,
-                            isError = showErrors && errors.any { it.contains("昵称") }
+                            isError = showErrors && errors.any { it.contains("昵称") },
+                            modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                             value = tempPlatform,
@@ -1034,7 +1204,8 @@ private fun ConnectionConfigDialog(
                             },
                             label = { Text("Platform(可选，默认: ${chatManagerPlatformDefault()})") },
                             placeholder = { Text("留空使用默认") },
-                            singleLine = true
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
                     )
                     HorizontalDivider()
                     OutlinedTextField(
@@ -1044,7 +1215,8 @@ private fun ConnectionConfigDialog(
                                 onReceiverUserNicknameChange(it)
                             },
                             label = { Text("对方昵称(可选)") },
-                            singleLine = true
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                             value = tempRecvId,
@@ -1053,8 +1225,110 @@ private fun ConnectionConfigDialog(
                                 onReceiverUserIdChange(it)
                             },
                             label = { Text("对方ID(可选)") },
-                            singleLine = true
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
                     )
+                    HorizontalDivider()
+                    Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("本地 LLM")
+                        Switch(
+                                checked = tempLocalEnabled,
+                                onCheckedChange = { tempLocalEnabled = it }
+                        )
+                    }
+                    if (tempLocalEnabled) {
+                        OutlinedTextField(
+                                value = tempLocalBaseUrl,
+                                onValueChange = { tempLocalBaseUrl = it },
+                                label = { Text("本地 LLM 地址") },
+                                placeholder = { Text("http://127.0.0.1:11434/v1") },
+                                singleLine = true,
+                                isError =
+                                        showErrors &&
+                                                errors.any { it.contains("本地 LLM 地址") },
+                                keyboardOptions =
+                                        KeyboardOptions(keyboardType = KeyboardType.Uri),
+                                modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                                value = tempLocalApiKey,
+                                onValueChange = { tempLocalApiKey = it },
+                                label = { Text("API Key(可选)") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions =
+                                        KeyboardOptions(keyboardType = KeyboardType.Password),
+                                modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                                value = tempPlannerModel,
+                                onValueChange = { tempPlannerModel = it },
+                                label = { Text("Planner 模型") },
+                                singleLine = true,
+                                isError =
+                                        showErrors &&
+                                                errors.any { it.contains("Planner 模型") },
+                                modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                                value = tempReplierModel,
+                                onValueChange = { tempReplierModel = it },
+                                label = { Text("Replier 模型(可选)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("原生工具调用")
+                            Switch(
+                                    checked = tempNativeTools,
+                                    onCheckedChange = { tempNativeTools = it }
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                    value = tempTemperature,
+                                    onValueChange = { tempTemperature = it },
+                                    label = { Text("Temperature") },
+                                    singleLine = true,
+                                    isError =
+                                            showErrors &&
+                                                    errors.any { it.contains("Temperature") },
+                                    keyboardOptions =
+                                            KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                    value = tempMaxTokens,
+                                    onValueChange = { tempMaxTokens = it },
+                                    label = { Text("Max tokens") },
+                                    singleLine = true,
+                                    isError =
+                                            showErrors &&
+                                                    errors.any { it.contains("Max tokens") },
+                                    keyboardOptions =
+                                            KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.weight(1f)
+                            )
+                        }
+                        OutlinedTextField(
+                                value = tempTimeoutMillis,
+                                onValueChange = { tempTimeoutMillis = it },
+                                label = { Text("超时(ms)") },
+                                singleLine = true,
+                                isError = showErrors && errors.any { it.contains("超时") },
+                                keyboardOptions =
+                                        KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                     if (showErrors && errors.isNotEmpty()) {
                         errors.forEach { err ->
                             Text(
@@ -1066,7 +1340,16 @@ private fun ConnectionConfigDialog(
                     } else {
                         val summary = buildString {
                             append("将使用此配置进行连接：\n")
-                            append("URL: ${tempUrl}\n")
+                            append(
+                                    "运行方式: ${if (nextLocalLlmSettings.enabled) "本地 LLM" else "WebSocket"}\n"
+                            )
+                            if (nextLocalLlmSettings.enabled) {
+                                append(
+                                        "LLM: ${nextLocalLlmSettings.baseUrl ?: "(未填写)"} / ${nextLocalLlmSettings.plannerModel ?: "(未填写)"}\n"
+                                )
+                            } else {
+                                append("URL: ${tempUrl}\n")
+                            }
                             append("我: ${tempNickname.ifBlank { "(未填写)" }}\n")
                             append(
                                     "Platform: ${tempPlatform.trim().ifBlank { "(默认:${chatManagerPlatformDefault()})" }}\n"
@@ -1099,7 +1382,7 @@ private fun ConnectionConfigDialog(
                 TextButton(
                         onClick = {
                             if (errors.isEmpty()) {
-                                onSave(true)
+                                onSave(true, nextLocalLlmSettings)
                             } else {
                                 showErrors = true
                             }
