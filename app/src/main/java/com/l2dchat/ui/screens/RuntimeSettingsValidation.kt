@@ -12,11 +12,6 @@ object RuntimeSettingsValidation {
         if (nickname.isBlank()) errors.add("昵称不能为空")
         if (localLlmSettings.enabled) {
             errors += validateLocalProviderConfig(localLlmSettings)
-        } else {
-            val serverUrl = url.trim()
-            if (serverUrl.isBlank()) errors.add("WebSocket 地址不能为空")
-            else if (!(serverUrl.startsWith("ws://") || serverUrl.startsWith("wss://")))
-                    errors.add("WebSocket 地址必须以 ws:// 或 wss:// 开头")
         }
         return errors
     }

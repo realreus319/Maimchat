@@ -76,7 +76,7 @@ class RuntimeSettingsValidationTest {
     }
 
     @Test
-    fun `remote mode still validates websocket endpoint`() {
+    fun `disabled provider stays in local runtime and does not require websocket endpoint`() {
         val errors =
                 RuntimeSettingsValidation.validateConfig(
                         url = "https://api.example.com",
@@ -84,7 +84,7 @@ class RuntimeSettingsValidationTest {
                         localLlmSettings = LocalLlmSettings(enabled = false)
                 )
 
-        assertEquals(listOf("WebSocket 地址必须以 ws:// 或 wss:// 开头"), errors)
+        assertTrue(errors.isEmpty())
     }
 
     @Test

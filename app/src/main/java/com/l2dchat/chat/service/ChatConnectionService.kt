@@ -100,12 +100,7 @@ class ChatConnectionService : Service() {
             manager.setReceiverInfo(lastKnownReceiverId, lastKnownReceiverNickname)
         }
         localLlmSettings = LocalLlmSettingsStore.read(prefs, secureStore)
-        runtimeMode =
-                ChatRuntimeModeStore.read(
-                        prefs = prefs,
-                        legacyLocalLlmEnabled = localLlmSettings.enabled,
-                        legacyRemoteUrl = lastKnownUrl
-                )
+        runtimeMode = ChatRuntimeModeStore.read(prefs)
         manager.setLocalLlmSettings(localLlmSettings)
         if (runtimeMode == ChatRuntimeMode.LOCAL) {
             manager.startLocalRuntime()
@@ -353,11 +348,7 @@ class ChatConnectionService : Service() {
         val requestedMode =
                 data.runtimeModeOverride()
                         ?: if (data.containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_ENABLED)) {
-                            if (data.getBoolean(ChatServiceProtocol.EXTRA_LOCAL_LLM_ENABLED)) {
-                                ChatRuntimeMode.LOCAL
-                            } else {
-                                ChatRuntimeMode.REMOTE
-                            }
+                            ChatRuntimeMode.LOCAL
                         } else {
                             null
                         }

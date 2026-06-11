@@ -124,13 +124,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
             MutableStateFlow(prefs.getString(KEY_LAST_URL, null)?.takeIf { it.isNotBlank() })
     private val _localLlmSettings = MutableStateFlow(LocalLlmSettingsStore.read(prefs, secureStore))
     private val _runtimeMode =
-            MutableStateFlow(
-                    ChatRuntimeModeStore.read(
-                            prefs = prefs,
-                            legacyLocalLlmEnabled = _localLlmSettings.value.enabled,
-                            legacyRemoteUrl = _lastUrl.value
-                    )
-            )
+            MutableStateFlow(ChatRuntimeModeStore.read(prefs))
     private val _activeModel = MutableStateFlow<String?>(null)
     private var motionCallback: ((MotionCommand) -> Unit)? = null
 
@@ -280,7 +274,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
     }
 
     fun updateLocalLlmSettings(settings: LocalLlmSettings) {
-        val nextMode = if (settings.enabled) ChatRuntimeMode.LOCAL else ChatRuntimeMode.REMOTE
+        val nextMode = ChatRuntimeMode.LOCAL
         _localLlmSettings.value = settings
         updateRuntimeModeCache(nextMode)
         LocalLlmSettingsStore.persist(prefs, secureStore, settings)

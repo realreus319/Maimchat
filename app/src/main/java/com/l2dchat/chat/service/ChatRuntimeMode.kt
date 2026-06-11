@@ -19,25 +19,11 @@ enum class ChatRuntimeMode(val wireValue: String) {
 internal object ChatRuntimeModeStore {
     const val KEY_RUNTIME_MODE = "runtime_mode"
 
-    fun read(
-            prefs: SharedPreferences,
-            legacyLocalLlmEnabled: Boolean,
-            legacyRemoteUrl: String?
-    ): ChatRuntimeMode =
+    fun read(prefs: SharedPreferences): ChatRuntimeMode =
             ChatRuntimeMode.fromWireValue(prefs.getString(KEY_RUNTIME_MODE, null))
-                    ?: inferLegacyMode(legacyLocalLlmEnabled, legacyRemoteUrl)
+                    ?: ChatRuntimeMode.LOCAL
 
     fun persist(prefs: SharedPreferences, mode: ChatRuntimeMode) {
         prefs.edit().putString(KEY_RUNTIME_MODE, mode.wireValue).apply()
     }
-
-    private fun inferLegacyMode(
-            legacyLocalLlmEnabled: Boolean,
-            legacyRemoteUrl: String?
-    ): ChatRuntimeMode =
-            if (!legacyLocalLlmEnabled && !legacyRemoteUrl.isNullOrBlank()) {
-                ChatRuntimeMode.REMOTE
-            } else {
-                ChatRuntimeMode.LOCAL
-            }
 }

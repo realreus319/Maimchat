@@ -897,20 +897,21 @@ Tasks:
 Progress:
 
 - Done: Messenger config now carries an explicit local/remote runtime mode.
-  Fresh installs default to local mode, while legacy installs with a stored
-  WebSocket URL and disabled local LLM stay in remote mode.
+  Fresh installs and installs with only a legacy WebSocket URL default to local
+  mode; remote mode is only an explicit advanced transport setting.
 - Done: `ChatConnectionService` uses runtime mode for send/connect decisions,
   starts local runtime automatically in local mode, and only requires a server
   URL for remote mode.
-- Done: `ChatServiceClient` exposes runtime mode state/configuration and maps
-  the existing local LLM switch onto explicit local/remote mode for backward UI
-  compatibility.
+- Done: `ChatServiceClient` exposes runtime mode state/configuration and keeps
+  the app in local runtime mode even when the external LLM Provider settings are
+  disabled.
 - Done: the main chat screen derives its default connection dialog mode from
   runtime mode, so local mode opens provider settings instead of requiring a
   WebSocket URL.
 - Done: the main chat screen labels the configuration surface as runtime
-  settings, keeps remote WebSocket wording scoped to remote mode, and persists
-  remote URLs only when remote mode is selected.
+  settings, keeps remote WebSocket wording scoped to explicit advanced remote
+  mode, and treats the switch as enabling the LLM Provider rather than switching
+  to the old backend.
 - Done: the local transport now emits visible `starting` and `error` states in
   addition to stopped/ready, surfaces provider call failures as local runtime
   errors, and the main chat status line is provider-first for local LLM settings.

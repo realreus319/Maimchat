@@ -136,56 +136,43 @@ class LocalLlmSettingsStoreTest {
         val prefs = InMemorySharedPreferences()
 
         val mode =
-                ChatRuntimeModeStore.read(
-                        prefs = prefs,
-                        legacyLocalLlmEnabled = false,
-                        legacyRemoteUrl = null
-                )
+                ChatRuntimeModeStore.read(prefs)
 
         assertEquals(ChatRuntimeMode.LOCAL, mode)
     }
 
     @Test
-    fun `runtime mode preserves legacy remote websocket installs`() {
-        val prefs = InMemorySharedPreferences()
-
-        val mode =
-                ChatRuntimeModeStore.read(
-                        prefs = prefs,
-                        legacyLocalLlmEnabled = false,
-                        legacyRemoteUrl = "ws://example.test/ws"
+    fun `runtime mode explicit remote value stays remote`() {
+        val prefs =
+                InMemorySharedPreferences(
+                        ChatRuntimeModeStore.KEY_RUNTIME_MODE to ChatRuntimeMode.REMOTE.wireValue
                 )
+
+        val mode = ChatRuntimeModeStore.read(prefs)
 
         assertEquals(ChatRuntimeMode.REMOTE, mode)
     }
 
     @Test
-    fun `runtime mode keeps legacy local llm installs local`() {
-        val prefs = InMemorySharedPreferences()
-
-        val mode =
-                ChatRuntimeModeStore.read(
-                        prefs = prefs,
-                        legacyLocalLlmEnabled = true,
-                        legacyRemoteUrl = "ws://example.test/ws"
-                )
-
-        assertEquals(ChatRuntimeMode.LOCAL, mode)
-    }
-
-    @Test
-    fun `runtime mode explicit value wins over legacy inference`() {
+    fun `runtime mode explicit local value stays local`() {
         val prefs =
                 InMemorySharedPreferences(
                         ChatRuntimeModeStore.KEY_RUNTIME_MODE to ChatRuntimeMode.LOCAL.wireValue
                 )
 
-        val mode =
-                ChatRuntimeModeStore.read(
-                        prefs = prefs,
-                        legacyLocalLlmEnabled = false,
-                        legacyRemoteUrl = "ws://example.test/ws"
+        val mode = ChatRuntimeModeStore.read(prefs)
+
+        assertEquals(ChatRuntimeMode.LOCAL, mode)
+    }
+
+    @Test
+    fun `runtime mode invalid explicit value falls back to local`() {
+        val prefs =
+                InMemorySharedPreferences(
+                        ChatRuntimeModeStore.KEY_RUNTIME_MODE to "websocket"
                 )
+
+        val mode = ChatRuntimeModeStore.read(prefs)
 
         assertEquals(ChatRuntimeMode.LOCAL, mode)
     }

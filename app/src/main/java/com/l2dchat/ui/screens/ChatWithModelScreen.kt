@@ -117,10 +117,7 @@ fun ChatWithModelScreen(
     val currentUserNickname by chatManager.userNickname.collectAsState()
     val localLlmSettings by chatManager.localLlmSettings.collectAsState()
     val runtimeMode by chatManager.runtimeMode.collectAsState()
-    val effectiveLocalLlmSettings =
-            remember(localLlmSettings, runtimeMode) {
-                localLlmSettings.copy(enabled = runtimeMode == ChatRuntimeMode.LOCAL)
-            }
+    val effectiveLocalLlmSettings = localLlmSettings
     val prefs =
             remember(context) {
                 context.getSharedPreferences(
@@ -846,12 +843,7 @@ fun ChatWithModelScreen(
                                     )
                                     .apply()
                             chatManager.updateLocalLlmSettings(nextLocalLlmSettings)
-                            if (!nextLocalLlmSettings.enabled) {
-                                chatManager.updateConnectionUrl(serverUrl)
-                            }
-                            if (nextLocalLlmSettings.enabled) {
-                                chatManager.startLocalRuntime()
-                            }
+                            chatManager.startLocalRuntime()
                             showConnectionDialog = false
                         }
                     },
@@ -1312,6 +1304,7 @@ private fun fallbackRuntimeStatusLabel(
         }
 
 private fun localProviderStatusText(settings: LocalLlmSettings): String {
+    if (!settings.enabled) return "LLM Provider: 未启用"
     val endpoint = settings.baseUrl?.trim()?.takeIf { it.isNotEmpty() } ?: "Endpoint 未配置"
     val planner = settings.plannerModel?.trim()?.takeIf { it.isNotEmpty() } ?: "Planner 未配置"
     val replier =
@@ -1685,9 +1678,7 @@ private fun ConnectionConfigDialog(
     var tempPlatform by remember { mutableStateOf(platform) }
     var tempRecvId by remember { mutableStateOf(receiverUserId) }
     var tempRecvNick by remember { mutableStateOf(receiverUserNickname) }
-    var tempLocalEnabled by remember {
-        mutableStateOf(runtimeMode == ChatRuntimeMode.LOCAL || localLlmSettings.enabled)
-    }
+    var tempLocalEnabled by remember { mutableStateOf(localLlmSettings.enabled) }
     var tempLocalBaseUrl by remember { mutableStateOf(localLlmSettings.baseUrl.orEmpty()) }
     var tempLocalApiKey by remember { mutableStateOf(localLlmSettings.apiKey.orEmpty()) }
     var tempPlannerModel by remember { mutableStateOf(localLlmSettings.plannerModel.orEmpty()) }
@@ -1761,14 +1752,10 @@ private fun ConnectionConfigDialog(
                                 tempUrl = it
                                 onUrlChange(it)
                             },
-                            label = { Text("远端 WebSocket 地址") },
+                            label = { Text("远端 WebSocket 地址(高级)") },
                             placeholder = { Text("ws://host:port/path") },
-                            enabled = !tempLocalEnabled,
+                            enabled = runtimeMode == ChatRuntimeMode.REMOTE,
                             singleLine = true,
-                            isError =
-                                    showErrors &&
-                                            !tempLocalEnabled &&
-                                            errors.any { it.contains("WebSocket 地址") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             modifier = Modifier.fillMaxWidth()
                     )
@@ -1822,7 +1809,7 @@ private fun ConnectionConfigDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("本地 LLM 模式")
+                        Text("启用 LLM Provider")
                         Switch(
                                 checked = tempLocalEnabled,
                                 onCheckedChange = { tempLocalEnabled = it }
@@ -1928,15 +1915,13 @@ private fun ConnectionConfigDialog(
                     } else {
                         val summary = buildString {
                             append("将使用此运行设置：\n")
-                            append(
-                                    "运行模式: ${if (nextLocalLlmSettings.enabled) "本地 LLM" else "远端 WebSocket"}\n"
-                            )
+                            append("运行模式: 本地运行时\n")
                             if (nextLocalLlmSettings.enabled) {
                                 append(
                                         "LLM: ${nextLocalLlmSettings.baseUrl ?: "(未填写)"} / ${nextLocalLlmSettings.plannerModel ?: "(未填写)"}\n"
                                 )
                             } else {
-                                append("WebSocket: ${tempUrl}\n")
+                                append("LLM Provider: 未启用\n")
                             }
                             append("我: ${tempNickname.ifBlank { "(未填写)" }}\n")
                             append(
