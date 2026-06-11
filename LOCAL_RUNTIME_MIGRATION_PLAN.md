@@ -4,7 +4,7 @@
 
 Maimchat is currently shaped as a Live2D client that sends chat messages to a backend over WebSocket and renders the backend response in the app, wallpaper, and widget surfaces. The migration goal is to make Maimchat a self-contained chat runtime app: user input, perception, planning, tool execution, reply generation, memory, Live2D action selection, and reply delivery should all run inside the Android app.
 
-The backend being migrated is `/home/tcmofashi/chatbot/l2d_backend`. Its main reply path is:
+The old backend at `/home/tcmofashi/chatbot/l2d_backend` was used as a reference for the runtime shape, but it is not a runtime dependency, compatibility target, or parity gate. All LLM logic must be owned by the Android app. The reference reply path was:
 
 ```text
 Inbound payload
@@ -34,7 +34,7 @@ UI / wallpaper / widget input
   -> existing messages / standardMessages flows
 ```
 
-The migration should preserve the backend logic first, then adapt details to Android where needed.
+The migration should recreate the needed LLM/runtime semantics in Kotlin and adapt them to Android-native storage, lifecycle, UI, Live2D, wallpaper, and widget surfaces. Do not preserve the old backend as a required mode.
 
 ## Current Maimchat Boundaries
 
@@ -55,7 +55,7 @@ Important current files:
 - `app/src/main/java/com/l2dchat/wallpaper/*`
   - Wallpaper-facing chat and Live2D integration.
 
-The existing UI and wallpaper consumers should remain stable as much as possible. The main internal change is replacing "WebSocket as the chat engine" with "local runtime as the chat engine", while keeping WebSocket as an optional remote compatibility transport.
+The existing UI and wallpaper consumers should remain stable as much as possible. The main internal change is replacing "WebSocket as the chat engine" with "local runtime as the chat engine". WebSocket transport can remain as a generic external/debug transport, but it is not part of the old-backend migration goal.
 
 ## Migration Principles
 
@@ -877,9 +877,9 @@ Tasks:
     - replier model
     - tool-calling support
 
-- Keep remote mode under advanced settings.
-  - Useful for debugging against backend.
-  - Useful during parity testing.
+- Keep remote mode only as an advanced external/debug transport if it remains.
+  - It is not required for completion.
+  - It is not an old-backend compatibility gate.
 
 - Update `ChatConnectionService`.
   - Start local runtime automatically.
@@ -921,20 +921,20 @@ Progress:
   fallback when Endpoint/Planner are both empty; provider fields are required
   only after Endpoint, API key, Planner, or Replier input is present.
 - Done: `scripts/run_runtime_parity.sh` provides one entrypoint for local
-  provider parity, opt-in real-provider parity, and opt-in old-backend LLM e2e
-  comparison.
-- Pending: run old-backend parity with a configured `/home/tcmofashi/chatbot/l2d_backend`
-  LLM environment.
+  provider verification and opt-in real-provider verification without any old
+  backend dependency.
+- Pending: manual real-provider verification with a configured endpoint/model/key.
 
 Acceptance:
 
 - Fresh install can chat after provider config is present.
 - Existing UI, wallpaper, and widget still use the same service client.
-- Remote backend mode remains available but is not required.
+- All normal chat flows use the in-app local runtime; remote transport is not a
+  completion requirement.
 
 ## Phase 11: Tests And Parity Verification
 
-Goal: prove the local runtime covers backend behavior before removing old dependency paths.
+Goal: prove the Android app owns the LLM/runtime behavior without the old backend.
 
 Unit tests:
 
@@ -958,7 +958,7 @@ Integration tests:
 - Wallpaper sends text -> local runtime replies.
 - Message history persists across process restart.
 - Local runtime starts without WebSocket URL.
-- Remote mode still connects to backend.
+- Provider-backed local runtime can complete a real LLM chat turn.
 
 Manual checks:
 
@@ -1005,13 +1005,9 @@ Progress:
   providers that support it, and `MAIMCHAT_REAL_PROVIDER_EXPECT_REPLIER=1` to
   require a completed `replier` task.
 - Done: `./scripts/run_runtime_parity.sh` runs the deterministic Maimchat local
-  provider parity test by default. It can also run the old backend full LLM e2e
-  test with `MAIMCHAT_OLD_BACKEND_PARITY=1`, using
-  `/home/tcmofashi/chatbot/l2d_backend/tests/e2e/chat_v1/test_llm_multiturn_e2e.py`
-  unless `MAIMCHAT_OLD_BACKEND_PYTEST_ARGS` overrides it.
+  provider test by default and can run real-provider verification with
+  `MAIMCHAT_REAL_PROVIDER_PARITY=1`.
 - Pending: manual provider parity checks with a configured real LLM endpoint.
-- Pending: manual old-backend parity checks with a configured old backend LLM
-  environment.
 
 ## Implementation Order
 
@@ -1161,7 +1157,8 @@ Open decisions:
 
 - Whether the first LLM provider is strictly OpenAI-compatible HTTP or also includes a local on-device model.
 - Whether planner and replier should always be separate models or default to one model with separate configs.
-- Whether remote backend compatibility remains long-term or only during migration.
+- Whether remote WebSocket remains as a generic external/debug transport after
+  the local runtime is complete.
 - How much visual context `look_at` can access without unsafe screenshot permissions.
 - How to represent Live2D expression state if a model lacks explicit expression metadata.
 
@@ -1178,16 +1175,19 @@ Mitigations:
 - Persist planner rounds and task state.
 - Keep foreground epoch checks.
 - Add fake LLM tests for state-machine behavior.
-- Keep remote mode until local parity is proven.
+- Keep remote transport isolated from the local LLM runtime so it can be removed
+  or hidden without affecting normal chat behavior.
 - Start with minimal tools, then expand.
 
 ## Done Definition
 
 The migration is considered complete when:
 
-- Maimchat can run a full chat session without `/home/tcmofashi/chatbot/l2d_backend`.
+- Maimchat can run a full chat session without `/home/tcmofashi/chatbot/l2d_backend`
+  or any old backend process.
 - User input, planner decision, replier generation, interruption, background decision, and final send all happen in app.
 - UI, wallpaper, and widget all receive local runtime replies.
-- WebSocket backend mode is optional, not required.
+- Remote WebSocket mode is not required for completion and is not an old backend
+  compatibility promise.
 - `./gradlew assembleDebug` succeeds.
 - Core planner/replier behavior has fake LLM tests and at least one real-provider manual test.

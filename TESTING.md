@@ -19,13 +19,11 @@ This runs:
 ```
 
 By default this runs the deterministic local provider parity tests for the
-embedded Maimchat runtime. External checks are opt-in:
+embedded Maimchat runtime. Real provider checks are opt-in:
 
 - `MAIMCHAT_REAL_PROVIDER_PARITY=1` runs
   `RealProviderRuntimeParityTest` against a configured OpenAI-compatible
   endpoint.
-- `MAIMCHAT_OLD_BACKEND_PARITY=1` runs the old backend LLM e2e pytest from
-  `/home/tcmofashi/chatbot/l2d_backend`.
 
 Real provider example:
 
@@ -36,20 +34,6 @@ MAIMCHAT_REAL_PROVIDER_PLANNER_MODEL=model-name \
 MAIMCHAT_REAL_PROVIDER_API_KEY=... \
 ./scripts/run_runtime_parity.sh
 ```
-
-Old backend example:
-
-```bash
-MAIMCHAT_OLD_BACKEND_PARITY=1 ./scripts/run_runtime_parity.sh
-```
-
-Useful old backend overrides:
-
-- `MAIMCHAT_OLD_BACKEND_DIR`: defaults to
-  `/home/tcmofashi/chatbot/l2d_backend`.
-- `MAIMCHAT_OLD_BACKEND_PYTHON`: defaults to `python`.
-- `MAIMCHAT_OLD_BACKEND_PYTEST_ARGS`: defaults to
-  `tests/e2e/chat_v1/test_llm_multiturn_e2e.py -v -s`.
 
 ## GUI instrumentation test
 
