@@ -92,6 +92,7 @@ class LocalTransport(
     private val logger = L2DLogger.module(LogModule.CHAT)
     private val runtimeLock = Any()
     private var running = false
+    @Volatile private var inErrorState = false
     private var runtimeJob: Job? = null
     private var runtimeScope: CoroutineScope? = null
     private var runtimeGeneration: Long = 0L
@@ -124,6 +125,7 @@ class LocalTransport(
                     callbacks.onError("本地运行时启动失败：${e.message ?: "未知错误"}", e)
                     return
                 }
+        inErrorState = false
         callbacks.onStateChanged(ConnectionState.CONNECTED)
         if (!wasRunning) {
             logger.info("本地聊天运行时已启动")
@@ -154,6 +156,7 @@ class LocalTransport(
         rebuilt.job?.cancel()
         logger.info("本地聊天运行时已重建：$reason")
         if (rebuilt.wasRunning) {
+            inErrorState = false
             callbacks.onStateChanged(ConnectionState.CONNECTED)
         }
     }
@@ -179,7 +182,9 @@ class LocalTransport(
             start()
         }
         val work = currentRuntimeWork()
+        val messageId = message.messageInfo.messageId
         work.scope.launch {
+            callbacks.onProcessingChanged(true)
             try {
                 delay(120L)
                 if (!isCurrentRuntimeWork(work.generation)) {
@@ -191,11 +196,28 @@ class LocalTransport(
                                 fallbackAgentName = agentNameProvider(),
                                 replySink = replySink
                         )
+                // A successful turn proves the runtime is healthy again; clear any sticky
+                // error state left by a previous failed message so the UI recovers without
+                // requiring the user to re-save settings. Only re-emit when actually
+                // recovering from an error so normal sends stay quiet.
+                if (isCurrentRuntimeWork(work.generation) && inErrorState) {
+                    inErrorState = false
+                    callbacks.onStateChanged(ConnectionState.CONNECTED)
+                }
             } catch (_: CancellationException) {
                 // Expected when local runtime is stopped, rebuilt, or the service is destroyed.
             } catch (e: Exception) {
+                inErrorState = true
                 callbacks.onStateChanged(ConnectionState.ERROR)
-                callbacks.onError("本地运行时处理消息失败：${e.message ?: "未知错误"}", e)
+                // Flag the specific message that failed so the UI can mark it (red "!"), and still
+                // surface the human-readable error for the connection banner.
+                callbacks.onMessageFailed(
+                        messageId,
+                        "本地运行时处理消息失败：${e.message ?: "未知错误"}",
+                        e
+                )
+            } finally {
+                callbacks.onProcessingChanged(false)
             }
         }
         return true
@@ -220,6 +242,7 @@ class LocalTransport(
             } catch (_: CancellationException) {
                 // Expected when local runtime is stopped, rebuilt, or the service is destroyed.
             } catch (e: Exception) {
+                inErrorState = true
                 callbacks.onStateChanged(ConnectionState.ERROR)
                 callbacks.onError("本地运行时处理环境触发失败：${e.message ?: "未知错误"}", e)
             }
@@ -292,6 +315,7 @@ class LocalTransport(
                 }
         snapshot.runtime?.cancel()
         snapshot.job?.cancel()
+        inErrorState = true
         callbacks.onStateChanged(ConnectionState.ERROR)
     }
 

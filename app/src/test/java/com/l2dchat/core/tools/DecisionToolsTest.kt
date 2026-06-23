@@ -102,6 +102,8 @@ class DecisionToolsTest {
                 val content = JsonParser.parseString(result.llmContent).asJsonObject
                 assertEquals("task-1", content["taskId"].asString)
                 assertEquals("GENERATING", content["state"].asString)
+                // A timeout must be flagged so the planner doesn't mistake it for completion.
+                assertTrue(content["timed_out"].asBoolean)
             } finally {
                 task.cancel()
             }

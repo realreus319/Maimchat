@@ -175,6 +175,9 @@ interface RuntimeStateDao {
     )
     suspend fun queryPromptTemplate(name: String, agentId: String): PromptTemplateEntity?
 
+    @Query("SELECT * FROM prompt_templates WHERE template_id = :templateId LIMIT 1")
+    suspend fun queryPromptTemplateById(templateId: String): PromptTemplateEntity?
+
     @Query(
             """
             SELECT * FROM memories
@@ -188,20 +191,39 @@ interface RuntimeStateDao {
 
     @Query(
             """
+            SELECT COUNT(*) FROM memories
+            WHERE context_id = :contextId AND agent_id = :agentId
+            """
+    )
+    suspend fun countMemories(contextId: String, agentId: String): Int
+
+    @Query(
+            """
             SELECT * FROM memories
             WHERE context_id = :contextId
               AND agent_id = :agentId
-              AND content LIKE '%' || :query || '%' ESCAPE '\'
-            ORDER BY importance DESC, updated_at_ms DESC
-            LIMIT :limit
+              AND content = :content
+            LIMIT 1
             """
     )
-    suspend fun searchMemories(
+    suspend fun queryMemoryByContent(
             contextId: String,
             agentId: String,
-            query: String,
-            limit: Int
-    ): List<MemoryEntity>
+            content: String
+    ): MemoryEntity?
+
+    @Query(
+            """
+            UPDATE memories
+            SET access_count = :accessCount,
+                last_access_ms = :lastAccessMillis
+            WHERE memory_id = :memoryId
+            """
+    )
+    suspend fun reinforceMemory(memoryId: String, accessCount: Int, lastAccessMillis: Long)
+
+    @Query("DELETE FROM memories WHERE memory_id = :memoryId")
+    suspend fun deleteMemory(memoryId: String)
 
     @Query(
             """

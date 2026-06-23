@@ -102,6 +102,12 @@ class WidgetInputActivity : ComponentActivity() {
                                                 WallpaperComm.EXTRA_MESSAGE_TEXT,
                                                 trimmed
                                         )
+                                        // The wallpaper engine runs in a separate (:wallpaper)
+                                        // process and registers its receiver with
+                                        // RECEIVER_NOT_EXPORTED. An implicit broadcast (no target
+                                        // package) is not delivered to a not-exported receiver, so
+                                        // scope it to this app to guarantee delivery.
+                                        broadcast.setPackage(context.packageName)
                                         context.sendBroadcast(broadcast)
                                         logger.debug(
                                                 "Broadcast sent and activity finishing",

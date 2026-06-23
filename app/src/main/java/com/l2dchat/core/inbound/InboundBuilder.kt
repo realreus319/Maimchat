@@ -82,7 +82,8 @@ class InboundBuilder {
             return InboundValidationResult(isValid = true)
         }
         val markerCount = countInlineImageMarkers(text)
-        return if (markerCount == imageCount) {
+        // Markers are optional; only flag a genuine dangling inline reference.
+        return if (markerCount == 0 || markerCount == imageCount) {
             InboundValidationResult(isValid = true)
         } else {
             InboundValidationResult(

@@ -119,7 +119,7 @@ class ChatContextTest {
                                         )
                                 ),
                         memories =
-                                listOf(
+                                mutableListOf(
                                         memory("mem-1", "room-a", "agent-a", "Alice likes coffee", 0.7),
                                         memory("mem-2", "room-a", "agent-a", "Alice likes tea", 0.9),
                                         memory("mem-3", "other", "agent-a", "ignore", 1.0)
@@ -248,7 +248,7 @@ class ChatContextTest {
     private class FakeRuntimeStateDao(
             private val agentConfig: AgentConfigEntity? = null,
             private val templates: List<PromptTemplateEntity> = emptyList(),
-            private val memories: List<MemoryEntity> = emptyList(),
+            private val memories: MutableList<MemoryEntity> = mutableListOf(),
             private val impressions: List<ImpressionEntity> = emptyList(),
             private val moodState: MoodStateEntity? = null
     ) : RuntimeStateDao {
@@ -276,6 +276,9 @@ class ChatContextTest {
         ): PromptTemplateEntity? =
                 templates.firstOrNull { it.name == name && (it.agentId == agentId || it.agentId == null) }
 
+        override suspend fun queryPromptTemplateById(templateId: String): PromptTemplateEntity? =
+                templates.firstOrNull { it.templateId == templateId }
+
         override suspend fun queryMemories(
                 contextId: String,
                 agentId: String,
@@ -286,20 +289,32 @@ class ChatContextTest {
                         .sortedByMemoryRelevance()
                         .take(limit)
 
-        override suspend fun searchMemories(
+        override suspend fun countMemories(contextId: String, agentId: String): Int =
+                memories.count { it.contextId == contextId && it.agentId == agentId }
+
+        override suspend fun queryMemoryByContent(
                 contextId: String,
                 agentId: String,
-                query: String,
-                limit: Int
-        ): List<MemoryEntity> =
-                memories
-                        .filter {
-                            it.contextId == contextId &&
-                                    it.agentId == agentId &&
-                                    it.content.contains(query)
-                        }
-                        .sortedByMemoryRelevance()
-                        .take(limit)
+                content: String
+        ): MemoryEntity? =
+                memories.firstOrNull {
+                    it.contextId == contextId && it.agentId == agentId && it.content == content
+                }
+
+        override suspend fun reinforceMemory(
+                memoryId: String,
+                accessCount: Int,
+                lastAccessMillis: Long
+        ) {
+            val index = memories.indexOfFirst { it.memoryId == memoryId }
+            if (index >= 0) {
+                memories[index] = memories[index].copy(accessCount = accessCount, lastAccessMillis = lastAccessMillis)
+            }
+        }
+
+        override suspend fun deleteMemory(memoryId: String) {
+            memories.removeAll { it.memoryId == memoryId }
+        }
 
         override suspend fun queryImpression(
                 contextId: String,

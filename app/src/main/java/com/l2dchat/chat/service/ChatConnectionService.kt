@@ -139,6 +139,12 @@ class ChatConnectionService : Service() {
                 }
             }
         }
+        serviceScope.launch {
+            manager.processing.collect { processing -> broadcastProcessing(processing) }
+        }
+        serviceScope.launch {
+            manager.messageFailures.collect { id -> broadcastMessageFailed(id) }
+        }
     }
 
     private fun broadcastConnectionState(state: ConnectionState) {
@@ -203,8 +209,24 @@ class ChatConnectionService : Service() {
                     putString(ChatServiceProtocol.EXTRA_MESSAGE_CONTENT, message.content)
                     putBoolean(ChatServiceProtocol.EXTRA_MESSAGE_FROM_USER, message.isFromUser)
                     putLong(ChatServiceProtocol.EXTRA_MESSAGE_TIMESTAMP, message.timestamp)
+                    putBoolean(
+                            ChatServiceProtocol.EXTRA_MESSAGE_FAILED,
+                            manager.isMessageFailed(message.id)
+                    )
                 }
         sendToClients(ChatServiceProtocol.MSG_EVENT_NEW_MESSAGE, bundle)
+    }
+
+    private fun broadcastProcessing(processing: Boolean) {
+        val bundle =
+                Bundle().apply { putBoolean(ChatServiceProtocol.EXTRA_PROCESSING, processing) }
+        sendToClients(ChatServiceProtocol.MSG_EVENT_PROCESSING, bundle)
+    }
+
+    private fun broadcastMessageFailed(messageId: String) {
+        val bundle =
+                Bundle().apply { putString(ChatServiceProtocol.EXTRA_MESSAGE_ID, messageId) }
+        sendToClients(ChatServiceProtocol.MSG_EVENT_MESSAGE_FAILED, bundle)
     }
 
     private fun sendSnapshot(target: Messenger? = null) {
@@ -222,6 +244,10 @@ class ChatConnectionService : Service() {
                                     putLong(
                                             ChatServiceProtocol.EXTRA_MESSAGE_TIMESTAMP,
                                             m.timestamp
+                                    )
+                                    putBoolean(
+                                            ChatServiceProtocol.EXTRA_MESSAGE_FAILED,
+                                            manager.isMessageFailed(m.id)
                                     )
                                 }
                         )
@@ -690,6 +716,7 @@ class ChatConnectionService : Service() {
                         service.clients.add(it)
                         service.sendSnapshot(it)
                         service.broadcastConnectionState(service.manager.connectionState.value)
+                        service.broadcastProcessing(service.manager.processing.value)
                     }
                 }
                 ChatServiceProtocol.MSG_UNREGISTER_CLIENT -> {

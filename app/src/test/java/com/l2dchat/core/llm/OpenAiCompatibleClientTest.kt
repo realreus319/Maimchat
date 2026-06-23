@@ -206,6 +206,124 @@ class OpenAiCompatibleClientTest {
         assertEquals(true, body["stream"].asBoolean)
     }
 
+    @Test
+    fun `chatCompletionWithTools degrades to forced final answer when tool budget is exhausted`() {
+        val recorded = mutableListOf<RecordedRequest>()
+        val toolCallResponse =
+                """
+                {
+                  "id": "chatcmpl-tool",
+                  "model": "fake-model",
+                  "choices": [
+                    {
+                      "finish_reason": "tool_calls",
+                      "message": {
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [
+                          {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {"name": "replier", "arguments": "{}"}
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """.trimIndent()
+        val client =
+                OpenAiCompatibleClient(
+                        baseUrl = "https://example.test/v1",
+                        httpClient =
+                                fakeHttpClient(recorded) {
+                                    // Keep returning tool calls until the forced-final request
+                                    // (which omits tools) arrives, then answer with text.
+                                    val last = recorded.last().body
+                                    val wantsTools =
+                                            JsonParser.parseString(last)
+                                                    .asJsonObject
+                                                    .has("tools")
+                                    if (wantsTools) {
+                                        jsonResponse(toolCallResponse)
+                                    } else {
+                                        jsonResponse(
+                                                """
+                                                {
+                                                  "id": "chatcmpl-final",
+                                                  "model": "fake-model",
+                                                  "choices": [
+                                                    {"finish_reason": "stop",
+                                                     "message": {"role": "assistant", "content": "forced answer"}}
+                                                  ]
+                                                }
+                                                """.trimIndent()
+                                        )
+                                    }
+                                },
+                        maxRetries = 0
+                )
+
+        val response =
+                runBlocking {
+                    client.chatCompletionWithTools(
+                            messages = listOf(LlmMessage.user("hello")),
+                            tools = listOf(LlmToolDefinition(name = "replier", description = "Reply")),
+                            config = LlmGenerationConfig(model = "fake-model", maxToolRounds = 2),
+                            toolExecutor = LlmToolExecutor { call ->
+                                LlmToolResult(toolCallId = call.id, name = call.name, content = "sent")
+                            }
+                    )
+                }
+
+        // Instead of throwing after the round budget, it issues one tools-disabled request.
+        assertEquals("forced answer", response.text)
+        val finalBody = JsonParser.parseString(recorded.last().body).asJsonObject
+        assertEquals(false, finalBody.has("tools"))
+    }
+
+    @Test
+    fun `chatCompletion parses reasoning_content without losing it`() {
+        val recorded = mutableListOf<RecordedRequest>()
+        val client =
+                OpenAiCompatibleClient(
+                        baseUrl = "https://example.test/v1",
+                        httpClient =
+                                fakeHttpClient(recorded) {
+                                    jsonResponse(
+                                            """
+                                            {
+                                              "id": "chatcmpl-r",
+                                              "model": "fake-model",
+                                              "choices": [
+                                                {
+                                                  "finish_reason": "stop",
+                                                  "message": {
+                                                    "role": "assistant",
+                                                    "reasoning_content": "thinking hard",
+                                                    "content": "final answer"
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                            """.trimIndent()
+                                    )
+                                },
+                        maxRetries = 0
+                )
+
+        val response =
+                runBlocking {
+                    client.chatCompletion(
+                            messages = listOf(LlmMessage.user("hi")),
+                            config = LlmGenerationConfig(model = "fake-model")
+                    )
+                }
+
+        assertEquals("final answer", response.text)
+        assertEquals("thinking hard", response.message.reasoningContent)
+    }
+
     private fun fakeHttpClient(
             recorded: MutableList<RecordedRequest>,
             responseFactory: () -> Response

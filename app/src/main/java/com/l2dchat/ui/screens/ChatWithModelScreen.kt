@@ -14,6 +14,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -113,6 +117,7 @@ fun ChatWithModelScreen(
     val connectionLabel by chatManager.connectionLabel.collectAsState()
     val runtimeDiagnostic by chatManager.runtimeDiagnostic.collectAsState()
     val messages by chatManager.messages.collectAsState()
+    val isThinking by chatManager.processing.collectAsState()
     val standardMessages by chatManager.standardMessages.collectAsState()
     val currentUserNickname by chatManager.userNickname.collectAsState()
     val localLlmSettings by chatManager.localLlmSettings.collectAsState()
@@ -761,6 +766,7 @@ fun ChatWithModelScreen(
                         recentMessages = messages,
                         standardMessages = standardMessages,
                         userNickname = currentUserNickname,
+                        isThinking = isThinking,
                         modifier =
                                 Modifier.align(Alignment.BottomStart)
                                         .padding(start = 12.dp, bottom = floatingBottomPadding)
@@ -1136,6 +1142,7 @@ private fun FloatingMessagesOverlay(
         recentMessages: List<ChatServiceClient.ChatMessageSnapshot>,
         standardMessages: List<MessageBase>,
         userNickname: String?,
+        isThinking: Boolean = false,
         modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -1188,7 +1195,25 @@ private fun FloatingMessagesOverlay(
                                         else MaterialTheme.colorScheme.secondary
                         )
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = msg.content)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(text = msg.content, modifier = Modifier.weight(1f, fill = false))
+                            if (msg.failed) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = "发送失败：网络错误，消息未送达",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        if (msg.failed) {
+                            Text(
+                                    text = "发送失败，请检查网络后重试",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
                 LaunchedEffect(shouldFadeOut) {
@@ -1200,6 +1225,54 @@ private fun FloatingMessagesOverlay(
                         }
                     }
                 }
+            }
+        }
+
+        if (isThinking) {
+            ThinkingBubble()
+        }
+    }
+}
+
+@Composable
+private fun ThinkingBubble() {
+    val transition = rememberInfiniteTransition(label = "thinking")
+    val alpha by
+            transition.animateFloat(
+                    initialValue = 0.35f,
+                    targetValue = 1f,
+                    animationSpec =
+                            infiniteRepeatable(
+                                    animation = tween(durationMillis = 700),
+                                    repeatMode = RepeatMode.Reverse
+                            ),
+                    label = "thinking_alpha"
+            )
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Card(
+                colors =
+                        CardDefaults.cardColors(
+                                containerColor =
+                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+                        ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                modifier = Modifier.alpha(alpha)
+        ) {
+            Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                        text = "正在思考",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.secondary
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                        text = "•••",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.secondary
+                )
             }
         }
     }
@@ -1325,6 +1398,7 @@ private fun buildLocalLlmSettings(
         plannerModel: String,
         replierModel: String,
         nativeToolCalling: Boolean,
+        environmentRepliesEnabled: Boolean,
         temperature: String,
         maxTokens: String,
         timeoutMillis: String
@@ -1336,6 +1410,7 @@ private fun buildLocalLlmSettings(
                 plannerModel = plannerModel.trim().ifBlank { null },
                 replierModel = replierModel.trim().ifBlank { null },
                 nativeToolCalling = nativeToolCalling,
+                environmentRepliesEnabled = environmentRepliesEnabled,
                 temperature = temperature.trim().takeIf { it.isNotEmpty() }?.toDoubleOrNull(),
                 maxTokens = maxTokens.trim().takeIf { it.isNotEmpty() }?.toIntOrNull(),
                 timeoutMillis =
@@ -1684,6 +1759,7 @@ private fun ConnectionConfigDialog(
     var tempPlannerModel by remember { mutableStateOf(localLlmSettings.plannerModel.orEmpty()) }
     var tempReplierModel by remember { mutableStateOf(localLlmSettings.replierModel.orEmpty()) }
     var tempNativeTools by remember { mutableStateOf(localLlmSettings.nativeToolCalling) }
+    var tempEnvReplies by remember { mutableStateOf(localLlmSettings.environmentRepliesEnabled) }
     var tempTemperature by remember {
         mutableStateOf(localLlmSettings.temperature?.toString().orEmpty())
     }
@@ -1705,6 +1781,7 @@ private fun ConnectionConfigDialog(
                     tempPlannerModel,
                     tempReplierModel,
                     tempNativeTools,
+                    tempEnvReplies,
                     tempTemperature,
                     tempMaxTokens,
                     tempTimeoutMillis
@@ -1716,6 +1793,7 @@ private fun ConnectionConfigDialog(
                         plannerModel = tempPlannerModel,
                         replierModel = tempReplierModel,
                         nativeToolCalling = tempNativeTools,
+                        environmentRepliesEnabled = tempEnvReplies,
                         temperature = tempTemperature,
                         maxTokens = tempMaxTokens,
                         timeoutMillis = tempTimeoutMillis
@@ -1865,6 +1943,17 @@ private fun ConnectionConfigDialog(
                             Switch(
                                     checked = tempNativeTools,
                                     onCheckedChange = { tempNativeTools = it }
+                            )
+                        }
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("环境事件回复(计费)")
+                            Switch(
+                                    checked = tempEnvReplies,
+                                    onCheckedChange = { tempEnvReplies = it }
                             )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2176,6 +2265,10 @@ private fun sendWallpaperRefreshBroadcast(context: Context, path: String?) {
     val intent =
             Intent(WallpaperComm.ACTION_REFRESH_BACKGROUND).apply {
                 putExtra(WallpaperComm.EXTRA_BACKGROUND_PATH, path)
+                // The wallpaper engine runs in the :wallpaper process with a
+                // RECEIVER_NOT_EXPORTED receiver; scope the broadcast to this app so it is
+                // actually delivered (implicit broadcasts skip not-exported receivers).
+                setPackage(context.packageName)
             }
     context.sendBroadcast(intent)
 }
@@ -2184,6 +2277,7 @@ private fun sendWallpaperModelBroadcast(context: Context, folder: String?) {
     val intent =
             Intent(WallpaperComm.ACTION_REFRESH_MODEL).apply {
                 putExtra(WallpaperComm.EXTRA_MODEL_FOLDER, folder)
+                setPackage(context.packageName)
             }
     context.sendBroadcast(intent)
 }

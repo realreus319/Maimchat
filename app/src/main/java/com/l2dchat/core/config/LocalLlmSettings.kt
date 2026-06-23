@@ -2,6 +2,7 @@ package com.l2dchat.core.config
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.l2dchat.BuildConfig
 import com.l2dchat.core.LocalRuntimeLlmConfig
 import com.l2dchat.core.llm.LlmGenerationConfig
 import com.l2dchat.core.llm.OpenAiCompatibleClient
@@ -10,6 +11,7 @@ import okhttp3.OkHttpClient
 
 data class AgentLlmSettingsOverride(
         val baseUrl: String? = null,
+        val apiKey: String? = null,
         val plannerModel: String? = null,
         val replierModel: String? = null,
         val nativeToolCalling: Boolean? = null,
@@ -30,6 +32,7 @@ data class LocalLlmSettings(
         val plannerModel: String? = null,
         val replierModel: String? = null,
         val nativeToolCalling: Boolean = true,
+        val environmentRepliesEnabled: Boolean = true,
         val temperature: Double? = null,
         val maxTokens: Int? = null,
         val timeoutMillis: Long? = DEFAULT_TIMEOUT_MILLIS
@@ -48,10 +51,13 @@ data class LocalLlmSettings(
                 agentOverride?.replierModel.trimmedOrNull()
                         ?: replierModel.trimmedOrNull()
                         ?: resolvedPlannerModel
+        // A per-agent override that points at a different provider/base_url must carry its
+        // own key; otherwise the global key would be sent to (and leaked at) that endpoint.
+        val resolvedApiKey = agentOverride?.apiKey.trimmedOrNull() ?: apiKey.trimmedOrNull()
         val client =
                 OpenAiCompatibleClient(
                         baseUrl = resolvedBaseUrl,
-                        apiKeyProvider = { apiKey.trimmedOrNull() },
+                        apiKeyProvider = { resolvedApiKey },
                         httpClient = httpClient
                 )
         return LocalRuntimeLlmConfig(
@@ -59,7 +65,8 @@ data class LocalLlmSettings(
                 plannerConfig = generationConfig(resolvedPlannerModel, agentOverride),
                 replierClient = client,
                 replierConfig = generationConfig(resolvedReplierModel, agentOverride),
-                nativeToolCalling = agentOverride?.nativeToolCalling ?: nativeToolCalling
+                nativeToolCalling = agentOverride?.nativeToolCalling ?: nativeToolCalling,
+                environmentRepliesEnabled = environmentRepliesEnabled
         )
     }
 
@@ -71,7 +78,10 @@ data class LocalLlmSettings(
                     model = model,
                     temperature = agentOverride?.temperature ?: temperature,
                     maxTokens = agentOverride?.maxTokens ?: maxTokens,
-                    timeoutMillis = agentOverride?.timeoutMillis ?: timeoutMillis
+                    timeoutMillis = agentOverride?.timeoutMillis ?: timeoutMillis,
+                    // Chain-of-thought is disabled for every local-runtime call (planner, replier,
+                    // decision): on qwen3.7-plus it cuts a reply round from ~14s to a few seconds.
+                    enableThinking = false
             )
 
     override fun toString(): String =
@@ -89,6 +99,16 @@ data class LocalLlmSettings(
 
     companion object {
         const val DEFAULT_TIMEOUT_MILLIS: Long = 60_000L
+
+        // Default provider for a fresh install. The actual values are injected at build time from
+        // the (gitignored) local.properties via BuildConfig and are only baked into local debug
+        // builds — never committed. A clean checkout / release build leaves these blank, so the app
+        // simply ships unconfigured and the user supplies their own provider in-app.
+        val DEFAULT_BASE_URL: String? = BuildConfig.LLM_DEFAULT_BASE_URL.ifBlank { null }
+        val DEFAULT_API_KEY: String? = BuildConfig.LLM_DEFAULT_API_KEY.ifBlank { null }
+        val DEFAULT_PLANNER_MODEL: String? = BuildConfig.LLM_DEFAULT_PLANNER_MODEL.ifBlank { null }
+        // Enabled by default only when a key was actually baked in (local debug build).
+        val DEFAULT_ENABLED: Boolean = !DEFAULT_API_KEY.isNullOrBlank()
     }
 }
 
@@ -104,6 +124,7 @@ private fun AgentConfigEntity.toLocalLlmSettingsOverride(): AgentLlmSettingsOver
                     baseUrl =
                             settings?.stringOrNull("base_url", "baseUrl")
                                     ?: providerBaseUrl,
+                    apiKey = settings?.stringOrNull("api_key", "apiKey"),
                     plannerModel =
                             settings?.stringOrNull("planner_model", "plannerModel")
                                     ?: profileModel,
@@ -139,6 +160,7 @@ private fun String?.redactedForLog(): String =
 private fun AgentLlmSettingsOverride.hasAnyValue(): Boolean =
         listOf(
                         baseUrl,
+                        apiKey,
                         plannerModel,
                         replierModel,
                         nativeToolCalling,

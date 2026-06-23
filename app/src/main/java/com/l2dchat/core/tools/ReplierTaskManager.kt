@@ -14,13 +14,19 @@ class ReplierTaskManager(
 ) {
     private val lock = Any()
     private val tasks = linkedMapOf<String, ReplierTask>()
+    private val taskCreatedAt = linkedMapOf<String, Long>()
 
     fun startTask(request: ReplierTaskRequest): ReplierTask {
+        val now = clockMillis()
+        // Each new turn reaps stale tasks the decision planner never adopted/killed, so
+        // background tasks (and their generation coroutines) can't leak unbounded.
+        reapStaleTasks(now)
         val task =
                 synchronized(lock) {
                     require(tasks[request.taskId] == null) {
                         "Replier task already exists: ${request.taskId}"
                     }
+                    taskCreatedAt[request.taskId] = now
                     ReplierTask(
                                     request = request,
                                     scope = scope,
@@ -28,8 +34,28 @@ class ReplierTaskManager(
                             )
                         .also { tasks[request.taskId] = it }
                 }
-        observeTask(task, createdAtMillis = clockMillis())
+        observeTask(task, createdAtMillis = now)
         return task.start()
+    }
+
+    /** Remove tasks older than the TTL, cancelling any that are still running. */
+    private fun reapStaleTasks(now: Long) {
+        val stale =
+                synchronized(lock) {
+                    val cutoff = now - TASK_TTL_MILLIS
+                    val expired =
+                            taskCreatedAt.filterValues { it < cutoff }.keys.toList()
+                    expired.mapNotNull { id ->
+                        val task = tasks.remove(id)
+                        taskCreatedAt.remove(id)
+                        task
+                    }
+                }
+        stale.forEach { task ->
+            if (!task.snapshot.isTerminal) {
+                scope.launch { task.cancel() }
+            }
+        }
     }
 
     fun getTask(taskId: String): ReplierTask? = synchronized(lock) { tasks[taskId] }
@@ -63,6 +89,7 @@ class ReplierTaskManager(
 
     fun clearTask(taskId: String): Boolean =
             synchronized(lock) {
+                taskCreatedAt.remove(taskId)
                 tasks.remove(taskId) != null
             }
 
@@ -80,6 +107,11 @@ class ReplierTaskManager(
                     }
                     .collect()
         }
+    }
+
+    private companion object {
+        // Background tasks not adopted/killed within this window are reclaimed.
+        private const val TASK_TTL_MILLIS: Long = 120_000L
     }
 
     private fun ReplierTask.toSummary(snapshot: ReplierTaskSnapshot): ReplierTaskSummary =

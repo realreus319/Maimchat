@@ -68,6 +68,12 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                         }
                         ChatServiceProtocol.MSG_EVENT_NEW_MESSAGE -> handleNewMessage(msg.data)
                         ChatServiceProtocol.MSG_EVENT_SNAPSHOT -> handleSnapshot(msg.data)
+                        ChatServiceProtocol.MSG_EVENT_MESSAGE_FAILED ->
+                                handleMessageFailed(msg.data)
+                        ChatServiceProtocol.MSG_EVENT_PROCESSING -> {
+                            _processing.value =
+                                    msg.data.getBoolean(ChatServiceProtocol.EXTRA_PROCESSING)
+                        }
                         ChatServiceProtocol.MSG_EVENT_STANDARD_MESSAGE ->
                                 handleStandardMessage(msg.data)
                         ChatServiceProtocol.MSG_EVENT_ERROR -> {
@@ -109,6 +115,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                     extraBufferCapacity = 4,
                     onBufferOverflow = BufferOverflow.DROP_OLDEST
             )
+    private val _processing = MutableStateFlow(false)
 
     private val _userNickname =
             MutableStateFlow(prefs.getString(KEY_NICKNAME, null)?.takeIf { it.isNotBlank() })
@@ -136,6 +143,8 @@ class ChatServiceClient(context: Context) : ServiceConnection {
     val newMessages: SharedFlow<ChatMessageSnapshot> = _newMessages.asSharedFlow()
     val snapshot: SharedFlow<List<ChatMessageSnapshot>> = _snapshot.asSharedFlow()
     val errors: SharedFlow<String> = _errors.asSharedFlow()
+    /** True while the runtime is generating a reply; drives the UI "thinking" indicator. */
+    val processing: StateFlow<Boolean> = _processing.asStateFlow()
     val userNickname: StateFlow<String?> = _userNickname.asStateFlow()
     val platform: StateFlow<String?> = _platform.asStateFlow()
     val activeModel: StateFlow<String?> = _activeModel.asStateFlow()
@@ -533,11 +542,19 @@ class ChatServiceClient(context: Context) : ServiceConnection {
         val id = data.getString(ChatServiceProtocol.EXTRA_MESSAGE_ID) ?: return
         val isFromUser = data.getBoolean(ChatServiceProtocol.EXTRA_MESSAGE_FROM_USER)
         val timestamp = data.getLong(ChatServiceProtocol.EXTRA_MESSAGE_TIMESTAMP)
-        val snapshot = ChatMessageSnapshot(id, content, isFromUser, timestamp)
+        val failed = data.getBoolean(ChatServiceProtocol.EXTRA_MESSAGE_FAILED)
+        val snapshot = ChatMessageSnapshot(id, content, isFromUser, timestamp, failed)
         _messages.update { current ->
             if (current.any { it.id == id }) current else current + snapshot
         }
         scope.launch { _newMessages.emit(snapshot) }
+    }
+
+    private fun handleMessageFailed(data: Bundle) {
+        val id = data.getString(ChatServiceProtocol.EXTRA_MESSAGE_ID) ?: return
+        _messages.update { current ->
+            current.map { if (it.id == id && !it.failed) it.copy(failed = true) else it }
+        }
     }
 
     private fun handleStandardMessage(data: Bundle) {
@@ -567,7 +584,8 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                                     ?: return@mapNotNull null
                     val isFromUser = bundle.getBoolean(ChatServiceProtocol.EXTRA_MESSAGE_FROM_USER)
                     val timestamp = bundle.getLong(ChatServiceProtocol.EXTRA_MESSAGE_TIMESTAMP)
-                    ChatMessageSnapshot(id, content, isFromUser, timestamp)
+                    val failed = bundle.getBoolean(ChatServiceProtocol.EXTRA_MESSAGE_FAILED)
+                    ChatMessageSnapshot(id, content, isFromUser, timestamp, failed)
                 }
         val standardJson =
                 data.getStringArrayList(ChatServiceProtocol.EXTRA_STANDARD_MESSAGE_LIST)
@@ -653,7 +671,8 @@ class ChatServiceClient(context: Context) : ServiceConnection {
             val id: String,
             val content: String,
             val isFromUser: Boolean,
-            val timestamp: Long
+            val timestamp: Long,
+            val failed: Boolean = false
     )
 
     enum class ChatConnectionState {

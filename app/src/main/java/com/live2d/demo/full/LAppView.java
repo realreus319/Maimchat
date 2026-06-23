@@ -111,6 +111,21 @@ public class LAppView implements AutoCloseable {
         int maxWidth = LAppDelegate.getInstance().getWindowWidth();
         int maxHeight = LAppDelegate.getInstance().getWindowHeight();
 
+        // The sprite geometry is expressed in window pixels and is re-mapped against the current
+        // window size every frame (setWindowSize below). If it was built against a different size
+        // (e.g. the window was not yet known at apply time and it fell back to texture size), the
+        // background would collapse into a small rectangle at the bottom-left. Rebuild it whenever
+        // the live window size no longer matches the size it was built for.
+        if (backgroundTextureInfo != null
+                && spriteShader != null
+                && maxWidth > 0
+                && maxHeight > 0
+                && (backSprite == null
+                        || backSpriteWindowWidth != maxWidth
+                        || backSpriteWindowHeight != maxHeight)) {
+            updateBackgroundSprite();
+        }
+
         if (backSprite != null && spriteShader != null) {
             GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
             GLES20.glDisable(GLES20.GL_DEPTH_TEST);
@@ -442,6 +457,10 @@ public class LAppView implements AutoCloseable {
     private LAppSprite renderingSprite;
     private LAppSprite backSprite;
     private LAppTextureManager.TextureInfo backgroundTextureInfo;
+    // Window size the current backSprite geometry was built for; used to detect when the sprite
+    // must be rebuilt to match a new/late-arriving render window size.
+    private int backSpriteWindowWidth;
+    private int backSpriteWindowHeight;
 
     /**
      * モデルの切り替えフラグ
@@ -474,9 +493,16 @@ public class LAppView implements AutoCloseable {
         int width = LAppDelegate.getInstance().getWindowWidth();
         int height = LAppDelegate.getInstance().getWindowHeight();
         if (width <= 0 || height <= 0) {
-            width = backgroundTextureInfo.width;
-            height = backgroundTextureInfo.height;
+            // Window size not known yet. Don't fall back to texture dimensions for the geometry —
+            // render() re-maps the sprite against the real window size, so a texture-sized geometry
+            // would collapse the background into a small bottom-left rectangle. Defer instead;
+            // render() rebuilds the sprite once the window size is available.
+            Log.d(TAG, "updateBackgroundSprite: 窗口尺寸未就绪，延迟创建 backSprite");
+            return;
         }
+
+        backSpriteWindowWidth = width;
+        backSpriteWindowHeight = height;
 
         float viewAspect = (float) width / (float) height;
         float textureAspect = (float) backgroundTextureInfo.width / (float) backgroundTextureInfo.height;

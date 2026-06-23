@@ -141,15 +141,11 @@ class ReplierTask(
     suspend fun cancel(): ReplierTaskSnapshot {
         val currentJob = synchronized(lock) { job }
         if (currentJob == null) {
-            mutableSnapshot.value =
-                    mutableSnapshot.value.copy(state = ReplierTaskState.CANCELLED)
+            cancelIfNotTerminal()
             return mutableSnapshot.value
         }
         currentJob.cancelAndJoin()
-        if (!mutableSnapshot.value.isTerminal) {
-            mutableSnapshot.value =
-                    mutableSnapshot.value.copy(state = ReplierTaskState.CANCELLED)
-        }
+        cancelIfNotTerminal()
         return mutableSnapshot.value
     }
 
@@ -177,40 +173,53 @@ class ReplierTask(
                 fail("Replier task completed without reply text")
                 return
             }
-            mutableSnapshot.value =
-                    mutableSnapshot.value.copy(
-                            state = ReplierTaskState.COMPLETED,
-                            previewText = replyText,
-                            replyText = replyText
-                    )
+            complete(replyText)
         } catch (error: CancellationException) {
-            mutableSnapshot.value =
-                    mutableSnapshot.value.copy(state = ReplierTaskState.CANCELLED)
+            cancelIfNotTerminal()
             throw error
         } catch (error: Throwable) {
             fail(error.message ?: error::class.java.simpleName)
         }
     }
 
-    private fun updatePreview(previewText: String) {
-        val current = mutableSnapshot.value
-        if (current.isTerminal) {
-            return
-        }
-        val state =
-                if (current.state == ReplierTaskState.BACKGROUND) {
-                    ReplierTaskState.BACKGROUND
-                } else {
-                    ReplierTaskState.GENERATING
-                }
-        mutableSnapshot.value = current.copy(state = state, previewText = previewText)
-    }
+    // All snapshot transitions go through the single lock so a terminal result (complete/fail)
+    // can never be silently overwritten by a concurrent moveToBackground()/cancel(), and vice
+    // versa. Terminal states are final.
+    private fun complete(replyText: String) =
+            synchronized(lock) {
+                if (mutableSnapshot.value.isTerminal) return@synchronized
+                mutableSnapshot.value =
+                        mutableSnapshot.value.copy(
+                                state = ReplierTaskState.COMPLETED,
+                                previewText = replyText,
+                                replyText = replyText
+                        )
+            }
 
-    private fun fail(message: String) {
-        mutableSnapshot.value =
-                mutableSnapshot.value.copy(
-                        state = ReplierTaskState.FAILED,
-                        errorMessage = message
-                )
-    }
+    private fun cancelIfNotTerminal() =
+            synchronized(lock) {
+                if (!mutableSnapshot.value.isTerminal) {
+                    mutableSnapshot.value =
+                            mutableSnapshot.value.copy(state = ReplierTaskState.CANCELLED)
+                }
+            }
+
+    private fun updatePreview(previewText: String) =
+            synchronized(lock) {
+                val current = mutableSnapshot.value
+                if (current.isTerminal) {
+                    return@synchronized
+                }
+                mutableSnapshot.value = current.copy(previewText = previewText)
+            }
+
+    private fun fail(message: String) =
+            synchronized(lock) {
+                if (mutableSnapshot.value.isTerminal) return@synchronized
+                mutableSnapshot.value =
+                        mutableSnapshot.value.copy(
+                                state = ReplierTaskState.FAILED,
+                                errorMessage = message
+                        )
+            }
 }

@@ -28,6 +28,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * First local runtime slice.
@@ -46,7 +47,12 @@ class LocalChatRuntime(
         },
         private val decisionPlannerProcessorFactory: (RoutingKey) -> PlannerTriggerProcessor? = {
             null
-        }
+        },
+        // When false, environment events (model switch, idle timer, snapshot, ...) drive runtime
+        // state only and never start an LLM planner turn — avoiding background token cost.
+        private val environmentRepliesEnabled: Boolean = true,
+        // Hard upper bound for a single user turn so a stuck/hung provider can't block forever.
+        private val turnTimeoutMillis: Long = DEFAULT_TURN_TIMEOUT_MILLIS
 ) {
     private val inboundBuilder = InboundBuilder()
     private val perceptionProcessor = PerceptionProcessor()
@@ -112,7 +118,11 @@ class LocalChatRuntime(
 
         try {
             perceptionDispatcher.submit(inboundMessage)
-            return pending.completion.await()
+            return withTimeoutOrNull(turnTimeoutMillis) { pending.completion.await() }
+                    ?: run {
+                        removePending(inboundMessage.toPendingKey())
+                        false
+                    }
         } catch (throwable: Throwable) {
             removePending(inboundMessage.toPendingKey())
             throw throwable
@@ -125,6 +135,9 @@ class LocalChatRuntime(
             fallbackAgentName: String?,
             replySink: ReplySink
     ): Boolean {
+        if (!environmentRepliesEnabled) {
+            return false
+        }
         registerEnvironmentReplyTarget(
                 routingKey = submission.routingKey,
                 target =
@@ -170,8 +183,10 @@ class LocalChatRuntime(
                         completion = CompletableDeferred()
                 )
         synchronized(pendingLock) {
-            require(!pendingReplies.containsKey(key)) {
-                "Duplicate pending inbound message ${message.messageId} for ${message.routingKey}"
+            // A duplicate resend of an already in-flight message reuses the existing pending
+            // turn (both callers await the same result) instead of crashing the turn.
+            pendingReplies[key]?.let {
+                return it
             }
             pendingReplies[key] = pending
         }
@@ -410,8 +425,16 @@ class LocalChatRuntime(
     }
 
     companion object {
+        // Generous bound (5 min) covering multi-round tool turns on slow reasoning models.
+        private const val DEFAULT_TURN_TIMEOUT_MILLIS: Long = 300_000L
+
         private fun fixedReplyPlannerProcessor(): PlannerTriggerProcessor =
                 PlannerTriggerProcessor { context ->
+                    // Without an LLM, only answer real user messages. Environment triggers are
+                    // state signals, not chat turns — echoing them spams the UI.
+                    if (context.trigger.triggerType == TriggerType.ENV) {
+                        return@PlannerTriggerProcessor
+                    }
                     val replyText =
                             if (context.triggerText.isBlank()) {
                                 "本地回复运行时已接管聊天链路。"

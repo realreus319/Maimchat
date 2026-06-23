@@ -34,10 +34,15 @@ class WaitForTool(
             arguments: JsonObject
     ): ToolExecutionResult {
         val taskId = arguments.requiredTaskId()
+        val timeoutMillis = arguments.timeoutMillisOrNull()
         val snapshot =
-                awaitSnapshot(taskManager, taskId, arguments.timeoutMillisOrNull())
+                awaitSnapshot(taskManager, taskId, timeoutMillis)
                         ?: return missingTaskResult(taskId)
-        return ToolExecutionResult(llmContent = gson.toJson(snapshot.toJson()))
+        // Distinguish a real completion from a timeout that returned a partial snapshot, so the
+        // planner doesn't treat a still-generating task as finished.
+        val timedOut = timeoutMillis != null && !snapshot.isTerminal
+        val json = snapshot.toJson().apply { addProperty("timed_out", timedOut) }
+        return ToolExecutionResult(llmContent = gson.toJson(json))
     }
 
     companion object {

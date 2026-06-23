@@ -142,6 +142,94 @@ class JsonFallbackPlannerTriggerProcessorTest {
         }
     }
 
+    @Test
+    fun `fallback parses tool call wrapped in prose without leaking raw json`() {
+        val replyDone = CompletableDeferred<PlannerReply>()
+        val client =
+                ScriptedJsonClient(
+                        listOf(
+                                LlmResponse(
+                                        message =
+                                                LlmMessage.assistant(
+                                                        "Let me think about this. " +
+                                                                """{"type":"tool_call","tool":"replier","arguments":{"content":"wrapped reply"}}""" +
+                                                                " I will reply now."
+                                                ),
+                                        model = "fake"
+                                )
+                        )
+                )
+
+        runBlocking {
+            val loop =
+                    PlannerLoop(
+                            routingKey = routingKey,
+                            scope = this,
+                            processor =
+                                    JsonFallbackPlannerTriggerProcessor(
+                                            llmClient = client,
+                                            config = LlmGenerationConfig(model = "fake"),
+                                            toolRegistry = ToolRegistry(listOf(ReplierTool()))
+                                    ),
+                            replySink = PlannerReplySink { replyDone.complete(it) }
+                    )
+            loop.start()
+            loop.submitTrigger(trigger("hello"))
+
+            // The embedded tool call is extracted and executed; the raw prose+JSON is never
+            // sent to the user.
+            assertEquals("wrapped reply", withTimeout(1_000L) { replyDone.await() }.text)
+            loop.shutdown()
+        }
+    }
+
+    @Test
+    fun `fallback degrades to plain final answer when tool budget is exhausted`() {
+        val replyDone = CompletableDeferred<PlannerReply>()
+        val client =
+                ScriptedJsonClient(
+                        listOf(
+                                LlmResponse(
+                                        message =
+                                                LlmMessage.assistant(
+                                                        """{"type":"tool_call","tool":"replier","arguments":{"content":"loop"}}"""
+                                                ),
+                                        model = "fake"
+                                ),
+                                LlmResponse(
+                                        message = LlmMessage.assistant("plain final answer"),
+                                        model = "fake"
+                                )
+                        )
+                )
+
+        runBlocking {
+            val loop =
+                    PlannerLoop(
+                            routingKey = routingKey,
+                            scope = this,
+                            processor =
+                                    JsonFallbackPlannerTriggerProcessor(
+                                            llmClient = client,
+                                            config =
+                                                    LlmGenerationConfig(
+                                                            model = "fake",
+                                                            maxToolRounds = 0
+                                                    ),
+                                            toolRegistry = ToolRegistry(listOf(ReplierTool()))
+                                    ),
+                            replySink = PlannerReplySink { replyDone.complete(it) }
+                    )
+            loop.start()
+            loop.submitTrigger(trigger("hello"))
+
+            // Tool budget is 0, so instead of throwing it forces a plain-text completion.
+            assertEquals("plain final answer", withTimeout(1_000L) { replyDone.await() }.text)
+            assertEquals(2, client.messages.size)
+            loop.shutdown()
+        }
+    }
+
     private fun trigger(text: String): Trigger =
             Trigger(
                     contextId = routingKey.contextId,

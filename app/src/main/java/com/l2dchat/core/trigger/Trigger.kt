@@ -88,7 +88,10 @@ fun validateTriggerMultimodal(payload: Map<String, Any?>) {
     }
     val text = payload["text"]?.toString().orEmpty()
     val markerCount = INLINE_IMAGE_REGEX.findAll(text).count()
-    if (markerCount != imageCount) {
+    // Inline [imageN] markers are optional: the common case is plain text plus appended image
+    // blocks with no markers, which is valid. Only reject when markers ARE present but don't line
+    // up with the available image blocks (a dangling inline reference to a missing image).
+    if (markerCount > 0 && markerCount != imageCount) {
         throw IllegalArgumentException(
                 "Inline image marker count ($markerCount) does not match image block count ($imageCount)."
         )

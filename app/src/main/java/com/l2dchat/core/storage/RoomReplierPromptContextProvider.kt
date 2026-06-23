@@ -44,14 +44,12 @@ class RoomReplierPromptContextProvider(
                         .joinToString("\n") { "- $it" }
                         .takeIf { it.isNotBlank() }
         val impressionText =
-                subjectId?.let {
-                    chatContext
-                            .getImpression(it)
-                            ?.content
-                            ?.trim()
-                            ?.takeIf { content -> content.isNotBlank() }
-                }
-        val moodText = chatContext.getMoodState()?.toPromptText()
+                chatContext
+                        .getImpression(subjectId)
+                        ?.content
+                        ?.trim()
+                        ?.takeIf { content -> content.isNotBlank() }
+        val moodText = chatContext.getMoodState()?.toPromptText(clockMillis())
 
         return ReplierPromptContext(
                 systemPrompt = systemTemplate?.body?.trim()?.takeIf { it.isNotBlank() },
@@ -91,9 +89,16 @@ class RoomReplierPromptContextProvider(
                 ?: displayName.trim().takeIf { it.isNotBlank() }?.let { "你是$it。" }
     }
 
-    private fun MoodStateEntity.toPromptText(): String? =
-            stateJson?.trim()?.takeIf { it.isNotBlank() }
-                    ?: "valence=${valence.formatMoodValue()}, arousal=${arousal.formatMoodValue()}"
+    private fun MoodStateEntity.toPromptText(now: Long): String? {
+        val (decayedValence, decayedArousal) =
+                com.l2dchat.core.tools.decayedMood(valence, arousal, updatedAtMillis, now)
+        // A faded mood (low arousal after decay) carries no useful signal.
+        if (stateJson.isNullOrBlank() && kotlin.math.abs(decayedValence) < 0.05 && decayedArousal < 0.05) {
+            return null
+        }
+        return stateJson?.trim()?.takeIf { it.isNotBlank() }
+                ?: "valence=${decayedValence.formatMoodValue()}, arousal=${decayedArousal.formatMoodValue()}"
+    }
 
     private fun Double.formatMoodValue(): String = String.format(Locale.ROOT, "%.2f", this)
 
@@ -103,8 +108,10 @@ class RoomReplierPromptContextProvider(
         private const val REPLIER_SYSTEM_TEMPLATE = "replier_system"
         private const val REPLIER_USER_TEMPLATE = "replier_user"
 
-        private fun subjectIdFor(request: ReplierTaskRequest): String? =
-                request.trigger.payload["sender_id"]?.toString()?.trim()?.takeIf { it.isNotBlank() }
+        // Impressions are keyed on the single canonical local-user subject (matching the
+        // write path in StateTools), not the transport-level sender_id channel constant.
+        private fun subjectIdFor(request: ReplierTaskRequest): String =
+                com.l2dchat.core.tools.CANONICAL_SUBJECT_ID
 
         private fun defaultTimeText(millis: Long): String =
                 SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(Date(millis))

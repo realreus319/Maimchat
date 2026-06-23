@@ -9,6 +9,9 @@ data class LlmGenerationConfig(
         val timeoutMillis: Long? = null,
         val toolChoice: LlmToolChoice = LlmToolChoice.AUTO,
         val maxToolRounds: Int = 4,
+        // Controls the DashScope/Qwen `enable_thinking` request flag. null = don't send it (use the
+        // provider default); false = disable chain-of-thought for much lower latency.
+        val enableThinking: Boolean? = null,
         val metadata: Map<String, Any?> = emptyMap()
 ) {
     init {

@@ -104,12 +104,20 @@ class ChatContext(
     ): List<MemoryEntity> {
         val normalizedQuery = query.trim()
         require(normalizedQuery.isNotBlank()) { "memory query must not be blank" }
-        return stateDao.searchMemories(
-                contextId = routingKey.contextId,
-                agentId = routingKey.agentId,
-                query = normalizedQuery,
-                limit = positiveLimit(limit)
-        )
+        val now = System.currentTimeMillis()
+        val terms = com.l2dchat.core.tools.queryTerms(normalizedQuery)
+        val candidates =
+                stateDao.queryMemories(
+                        contextId = routingKey.contextId,
+                        agentId = routingKey.agentId,
+                        limit = MEMORY_SEARCH_CANDIDATE_LIMIT
+                )
+        return candidates
+                .map { it to com.l2dchat.core.tools.memorySearchScore(it, terms, now) }
+                .filter { it.second > 0.0 }
+                .sortedByDescending { it.second }
+                .take(positiveLimit(limit))
+                .map { it.first }
     }
 
     suspend fun getImpression(subjectId: String): ImpressionEntity? {
@@ -149,6 +157,7 @@ class ChatContext(
         const val DEFAULT_HISTORY_LIMIT: Int = 20
         const val DEFAULT_MEMORY_LIMIT: Int = 5
         const val DEFAULT_IMPRESSION_LIMIT: Int = 5
+        private const val MEMORY_SEARCH_CANDIDATE_LIMIT: Int = 200
     }
 }
 

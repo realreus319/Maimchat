@@ -10,24 +10,36 @@ internal object LocalLlmSettingsStore {
     const val KEY_LOCAL_LLM_PLANNER_MODEL = "local_llm_planner_model"
     const val KEY_LOCAL_LLM_REPLIER_MODEL = "local_llm_replier_model"
     const val KEY_LOCAL_LLM_NATIVE_TOOL_CALLING = "local_llm_native_tool_calling"
+    const val KEY_LOCAL_LLM_ENV_REPLIES = "local_llm_environment_replies"
     const val KEY_LOCAL_LLM_TEMPERATURE = "local_llm_temperature"
     const val KEY_LOCAL_LLM_MAX_TOKENS = "local_llm_max_tokens"
     const val KEY_LOCAL_LLM_TIMEOUT_MILLIS = "local_llm_timeout_millis"
 
     fun read(prefs: SharedPreferences, secureStore: SecretStringStore): LocalLlmSettings =
             LocalLlmSettings(
-                    enabled = prefs.getBoolean(KEY_LOCAL_LLM_ENABLED, false),
-                    baseUrl = prefs.getString(KEY_LOCAL_LLM_BASE_URL, null),
+                    enabled =
+                            prefs.getBoolean(
+                                    KEY_LOCAL_LLM_ENABLED,
+                                    LocalLlmSettings.DEFAULT_ENABLED
+                            ),
+                    baseUrl =
+                            prefs.getString(KEY_LOCAL_LLM_BASE_URL, null)
+                                    ?: LocalLlmSettings.DEFAULT_BASE_URL,
                     apiKey =
                             ChatSecurePreferences.readMigratingString(
-                                    prefs,
-                                    secureStore,
-                                    KEY_LOCAL_LLM_API_KEY
-                            ),
-                    plannerModel = prefs.getString(KEY_LOCAL_LLM_PLANNER_MODEL, null),
+                                            prefs,
+                                            secureStore,
+                                            KEY_LOCAL_LLM_API_KEY
+                                    )
+                                    ?: LocalLlmSettings.DEFAULT_API_KEY,
+                    plannerModel =
+                            prefs.getString(KEY_LOCAL_LLM_PLANNER_MODEL, null)
+                                    ?: LocalLlmSettings.DEFAULT_PLANNER_MODEL,
                     replierModel = prefs.getString(KEY_LOCAL_LLM_REPLIER_MODEL, null),
                     nativeToolCalling =
                             prefs.getBoolean(KEY_LOCAL_LLM_NATIVE_TOOL_CALLING, true),
+                    environmentRepliesEnabled =
+                            prefs.getBoolean(KEY_LOCAL_LLM_ENV_REPLIES, true),
                     temperature =
                             prefs.getString(KEY_LOCAL_LLM_TEMPERATURE, null)?.toDoubleOrNull(),
                     maxTokens =
@@ -54,6 +66,7 @@ internal object LocalLlmSettingsStore {
         prefs.edit()
                 .putBoolean(KEY_LOCAL_LLM_ENABLED, settings.enabled)
                 .putBoolean(KEY_LOCAL_LLM_NATIVE_TOOL_CALLING, settings.nativeToolCalling)
+                .putBoolean(KEY_LOCAL_LLM_ENV_REPLIES, settings.environmentRepliesEnabled)
                 .putOptionalString(KEY_LOCAL_LLM_BASE_URL, settings.baseUrl)
                 .remove(KEY_LOCAL_LLM_API_KEY)
                 .putOptionalString(KEY_LOCAL_LLM_PLANNER_MODEL, settings.plannerModel)

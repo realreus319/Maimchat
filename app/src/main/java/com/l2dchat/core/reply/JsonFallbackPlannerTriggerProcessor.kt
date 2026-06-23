@@ -59,15 +59,17 @@ class JsonFallbackPlannerTriggerProcessor(
                 is JsonFallbackCommand.Final -> {
                     val result = context.sendReply(command.text)
                     if (result.status == ReplySendStatus.BLANK_REJECTED) {
-                        throw IllegalStateException("JSON fallback final response was blank")
+                        // The model emitted an empty final answer; force one plain-text reply.
+                        finalizeWithPlainText(context)
                     }
                     return
                 }
                 is JsonFallbackCommand.ToolCall -> {
                     if (round >= config.maxToolRounds) {
-                        throw IllegalStateException(
-                                "LLM returned JSON tool calls after ${config.maxToolRounds} tool rounds"
-                        )
+                        // Tool budget exhausted; degrade to a forced plain-text answer instead
+                        // of failing the turn.
+                        finalizeWithPlainText(context)
+                        return
                     }
                     val execution =
                             toolRegistry.execute(
@@ -80,7 +82,9 @@ class JsonFallbackPlannerTriggerProcessor(
                             )
                     if (!execution.result.isError && execution.result.replyText != null) {
                         val sendResult = context.sendReply(execution.result.replyText)
-                        if (sendResult.sent) {
+                        // SENT: done. STALE/DUPLICATE: the turn was superseded or already
+                        // answered, so stop rather than dropping the reply and re-prompting.
+                        if (sendResult.status != ReplySendStatus.BLANK_REJECTED) {
                             return
                         }
                     }
@@ -90,7 +94,32 @@ class JsonFallbackPlannerTriggerProcessor(
             }
         }
 
-        throw IllegalStateException("JSON fallback planner loop ended without a final response")
+        finalizeWithPlainText(context)
+    }
+
+    private suspend fun finalizeWithPlainText(context: PlannerTurnContext) {
+        val messages =
+                promptBuilder
+                        .buildMessages(
+                                context = context,
+                                systemPromptOverride = systemPromptProvider.systemPromptFor(context)
+                        )
+                        .toMutableList()
+        messages.add(
+                LlmMessage.system(
+                        "Reply to the user now with a plain text answer. Do not output JSON " +
+                                "and do not request any tools."
+                )
+        )
+        val response =
+                llmClient.chatCompletion(
+                        messages = messages,
+                        config = config.copy(toolChoice = com.l2dchat.core.llm.LlmToolChoice.NONE)
+                )
+        val result = context.sendReply(response.text)
+        if (result.status == ReplySendStatus.BLANK_REJECTED) {
+            throw IllegalStateException("JSON fallback planner could not produce a final reply")
+        }
     }
 
     private fun List<LlmMessage>.withJsonFallbackInstructions(
@@ -201,13 +230,40 @@ class JsonFallbackPlannerTriggerProcessor(
                 .trim()
     }
 
+    /**
+     * Extract the first complete top-level JSON object by tracking brace depth while
+     * respecting string literals/escapes. This survives reasoning-model output that wraps
+     * the action JSON in prose or trailing explanation (where a naive first-`{`/last-`}`
+     * span would capture invalid JSON and leak the raw text back to the user).
+     */
     private fun String.extractObjectText(): String? {
-        if (startsWith("{") && endsWith("}")) {
-            return this
-        }
         val start = indexOf('{')
-        val end = lastIndexOf('}')
-        return if (start >= 0 && end > start) substring(start, end + 1) else null
+        if (start < 0) return null
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var i = start
+        while (i < length) {
+            val c = this[i]
+            if (inString) {
+                when {
+                    escaped -> escaped = false
+                    c == '\\' -> escaped = true
+                    c == '"' -> inString = false
+                }
+            } else {
+                when (c) {
+                    '"' -> inString = true
+                    '{' -> depth++
+                    '}' -> {
+                        depth--
+                        if (depth == 0) return substring(start, i + 1)
+                    }
+                }
+            }
+            i++
+        }
+        return null
     }
 
     private fun argumentsJson(value: JsonElement?): String {

@@ -59,6 +59,46 @@ class StateToolsTest {
     }
 
     @Test
+    fun `memory_store dedups identical content and merges importance`() = runBlocking {
+        val dao = FakeRuntimeStateDao()
+        val context = context()
+        val store = MemoryStoreTool(stateDao = dao, clockMillis = { 1_000L })
+
+        store.execute(context, jsonObject("""{"content":"likes tea","importance":0.3}"""))
+        val second =
+                store.execute(context, jsonObject("""{"content":"likes tea","importance":0.9}"""))
+
+        // Identical content reinforces the existing row instead of inserting a duplicate.
+        assertEquals(1, dao.memories.size)
+        assertEquals(0.9, dao.memories.single().importance, 0.0)
+        assertEquals(1, dao.memories.single().accessCount)
+        assertEquals(0.9, jsonObject(second.llmContent)["importance"].asDouble, 0.0)
+    }
+
+    @Test
+    fun `memory_search reinforces recalled memories`() = runBlocking {
+        val dao = FakeRuntimeStateDao()
+        val context = context()
+        MemoryStoreTool(stateDao = dao, clockMillis = { 1_000L }, memoryIdFactory = { _, _, _ -> "m1" })
+                .execute(context, jsonObject("""{"content":"Alice likes oolong tea"}"""))
+
+        MemorySearchTool(dao, clockMillis = { 2_000L })
+                .execute(context, jsonObject("""{"query":"oolong tea"}"""))
+
+        val reinforced = dao.memories.single { it.memoryId == "m1" }
+        assertEquals(1, reinforced.accessCount)
+        assertEquals(2_000L, reinforced.lastAccessMillis)
+    }
+
+    @Test
+    fun `memory_store persists category`() = runBlocking {
+        val dao = FakeRuntimeStateDao()
+        MemoryStoreTool(stateDao = dao, clockMillis = { 1_000L })
+                .execute(context(), jsonObject("""{"content":"x","category":"fact"}"""))
+        assertEquals("fact", dao.memories.single().category)
+    }
+
+    @Test
     fun `impression tools update query and list local impressions`() = runBlocking {
         val dao = FakeRuntimeStateDao()
         val context = context()
@@ -86,8 +126,24 @@ class StateToolsTest {
                 )
 
         assertFalse(updateResult.isError)
-        assertEquals("alice", dao.impressions.single().subjectId)
+        // Impressions are keyed on the single canonical local-user subject, not the
+        // LLM-supplied user_id (which is preserved inside the content).
+        assertEquals(CANONICAL_SUBJECT_ID, dao.impressions.single().subjectId)
+        assertTrue(dao.impressions.single().content.contains("user_id: alice"))
         assertTrue(dao.impressions.single().content.contains("relationship_stage: friend"))
+
+        // A partial follow-up update must MERGE, not overwrite: relationship_stage survives.
+        updateTool.execute(
+                context,
+                jsonObject(
+                        """{"user_id":"alice","impression_summary":"更熟悉了"}"""
+                )
+        )
+        assertEquals(1, dao.impressions.size)
+        val merged = dao.impressions.single().content
+        assertTrue(merged.contains("impression_summary: 更熟悉了"))
+        assertTrue(merged.contains("relationship_stage: friend"))
+        assertTrue(merged.contains("relationship_score: 0.7"))
 
         val queryResult =
                 QueryImpressionTool(dao)
@@ -96,10 +152,6 @@ class StateToolsTest {
 
         assertFalse(queryResult.isError)
         assertTrue(queryJson["found"].asBoolean)
-        assertEquals(
-                "alice",
-                queryJson["impression"].asJsonObject["userId"].asString
-        )
 
         val listResult = GetUserImpressionsTool(dao).execute(context, jsonObject("{}"))
         assertEquals(1, jsonObject(listResult.llmContent)["total"].asInt)
@@ -204,6 +256,9 @@ class StateToolsTest {
                 agentId: String
         ): PromptTemplateEntity? = null
 
+        override suspend fun queryPromptTemplateById(templateId: String): PromptTemplateEntity? =
+                null
+
         override suspend fun queryMemories(
                 contextId: String,
                 agentId: String,
@@ -214,17 +269,36 @@ class StateToolsTest {
                         .sortedByMemoryRelevance()
                         .take(limit)
 
-        override suspend fun searchMemories(
+        override suspend fun countMemories(contextId: String, agentId: String): Int =
+                memories.matchingMemoryScope(contextId, agentId).size
+
+        override suspend fun queryMemoryByContent(
                 contextId: String,
                 agentId: String,
-                query: String,
-                limit: Int
-        ): List<MemoryEntity> =
-                memories
-                        .matchingMemoryScope(contextId, agentId)
-                        .filter { it.content.contains(query) }
-                        .sortedByMemoryRelevance()
-                        .take(limit)
+                content: String
+        ): MemoryEntity? =
+                memories.matchingMemoryScope(contextId, agentId).firstOrNull {
+                    it.content == content
+                }
+
+        override suspend fun reinforceMemory(
+                memoryId: String,
+                accessCount: Int,
+                lastAccessMillis: Long
+        ) {
+            val index = memories.indexOfFirst { it.memoryId == memoryId }
+            if (index >= 0) {
+                memories[index] =
+                        memories[index].copy(
+                                accessCount = accessCount,
+                                lastAccessMillis = lastAccessMillis
+                        )
+            }
+        }
+
+        override suspend fun deleteMemory(memoryId: String) {
+            memories.removeAll { it.memoryId == memoryId }
+        }
 
         override suspend fun queryImpression(
                 contextId: String,

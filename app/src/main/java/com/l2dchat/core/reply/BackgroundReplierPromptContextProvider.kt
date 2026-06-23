@@ -13,7 +13,7 @@ class BackgroundReplierPromptContextProvider(
         require(maxTextChars > 0) { "maxTextChars must be positive" }
     }
 
-    override fun blocksFor(context: PlannerTurnContext): List<PlannerPromptContextBlock> {
+    override suspend fun blocksFor(context: PlannerTurnContext): List<PlannerPromptContextBlock> {
         val summaries =
                 taskManager
                         .backgroundTaskSummaries(context.routingKey)

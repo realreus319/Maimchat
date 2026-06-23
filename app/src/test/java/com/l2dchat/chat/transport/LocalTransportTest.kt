@@ -218,7 +218,8 @@ class LocalTransportTest {
     fun `send reports error when runtime processing fails`() {
         val states = mutableListOf<ConnectionState>()
         val incoming = mutableListOf<MessageBase>()
-        val errors = mutableListOf<String>()
+        val failures = mutableListOf<Pair<String?, String>>()
+        val processingLog = mutableListOf<Boolean>()
 
         val callbacks =
                 object : ChatTransportCallbacks {
@@ -231,7 +232,19 @@ class LocalTransportTest {
                     }
 
                     override fun onError(message: String, throwable: Throwable?) {
-                        errors += message
+                        throw AssertionError("send failures must report via onMessageFailed: $message")
+                    }
+
+                    override fun onProcessingChanged(processing: Boolean) {
+                        processingLog += processing
+                    }
+
+                    override fun onMessageFailed(
+                            messageId: String?,
+                            message: String,
+                            throwable: Throwable?
+                    ) {
+                        failures += (messageId to message)
                     }
                 }
 
@@ -256,11 +269,18 @@ class LocalTransportTest {
 
             transport.start()
             assertTrue(transport.send(buildMessage("hello", "message-1")))
-            withTimeout(1_000L) { errors.awaitSize(1) }
+            withTimeout(1_000L) { failures.awaitSize(1) }
 
             assertTrue(incoming.isEmpty())
             assertEquals(ConnectionState.ERROR, states.last())
-            assertEquals(listOf("本地运行时处理消息失败：planner boom"), errors)
+            // The failure is correlated to the exact message id so the UI can flag that bubble.
+            assertEquals(
+                    listOf("message-1" to "本地运行时处理消息失败：planner boom"),
+                    failures
+            )
+            // Processing is signalled on (true) and cleared afterwards (false).
+            assertEquals(true, processingLog.firstOrNull())
+            assertEquals(false, processingLog.lastOrNull())
             transport.stop("done")
         }
     }

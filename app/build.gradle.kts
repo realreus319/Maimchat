@@ -15,6 +15,17 @@ val signingProps = Properties().apply {
     }
 }
 
+// 默认 LLM provider 凭据仅从本地（gitignored）local.properties 注入，绝不入库。
+// 一个干净检出里这些值为空，应用即出厂未配置；本地 debug 构建可在 local.properties 写入：
+//   llm.default.baseUrl=...   llm.default.apiKey=...   llm.default.plannerModel=...
+val localPropsFile = rootProject.file("local.properties")
+val localProps = Properties().apply {
+    if (localPropsFile.exists()) {
+        load(localPropsFile.inputStream())
+    }
+}
+fun llmDefault(key: String): String = localProps.getProperty(key, "")
+
 android {
     namespace = "com.l2dchat"
     compileSdk = 36
@@ -27,6 +38,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Default to NO baked credentials (release/published builds carry nothing). The debug
+        // build type overrides these from local.properties below.
+        buildConfigField("String", "LLM_DEFAULT_BASE_URL", "\"\"")
+        buildConfigField("String", "LLM_DEFAULT_API_KEY", "\"\"")
+        buildConfigField("String", "LLM_DEFAULT_PLANNER_MODEL", "\"\"")
     }
 
     signingConfigs {
@@ -60,6 +77,14 @@ android {
         debug {
             // 保持 debug 可读性
             isMinifyEnabled = false
+            // 仅本地 debug 构建从 local.properties 注入默认 provider 凭据（不入库）。
+            buildConfigField("String", "LLM_DEFAULT_BASE_URL", "\"${llmDefault("llm.default.baseUrl")}\"")
+            buildConfigField("String", "LLM_DEFAULT_API_KEY", "\"${llmDefault("llm.default.apiKey")}\"")
+            buildConfigField(
+                "String",
+                "LLM_DEFAULT_PLANNER_MODEL",
+                "\"${llmDefault("llm.default.plannerModel")}\""
+            )
         }
     }
     compileOptions {
@@ -71,6 +96,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

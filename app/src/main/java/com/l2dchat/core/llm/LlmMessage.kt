@@ -28,6 +28,7 @@ data class LlmMessage(
         val name: String? = null,
         val toolCallId: String? = null,
         val toolCalls: List<LlmToolCall> = emptyList(),
+        val reasoningContent: String? = null,
         val metadata: Map<String, Any?> = emptyMap()
 ) {
     init {

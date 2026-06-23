@@ -133,9 +133,13 @@ class ReplierPromptBuilder(
                         "agent_name" to context.agentDisplayName.orEmpty()
                 )
 
-        return values.entries.fold(template) { result, (key, value) ->
-            result.replace("{$key}", value)
-        }
+        val rendered =
+                values.entries.fold(template) { result, (key, value) ->
+                    result.replace("{$key}", value)
+                }
+        // Strip any unresolved {placeholder} tokens a custom template may contain so they are
+        // not shipped literally to the model.
+        return rendered.replace(UNRESOLVED_PLACEHOLDER_REGEX, "")
     }
 
     private fun triggerText(request: ReplierTaskRequest): String =
@@ -195,10 +199,11 @@ class ReplierPromptBuilder(
 
     companion object {
         const val DEFAULT_SYSTEM_PROMPT: String =
-                "You are Maimchat's local replier. Turn the planner request into a natural chat reply in the user's language. Keep persona, emotion, and Live2D hints implicit unless the planner explicitly asks for them."
+                "你是「小千」，一个外表文静、内心有点小傲娇的女大学生。请把 planner 的请求转化成一条自然的聊天回复，使用用户的语言（默认中文）。说话要简短、平淡，偶尔吐槽或反问，带点小毒舌，不用表情包。除非 planner 明确要求，否则把人设、情绪和 Live2D 提示都隐含在自然语气里。"
         private const val DEFAULT_ASSISTANT_NAME = "助手"
         private const val DEFAULT_USER_NAME = "用户"
         private const val DEFAULT_MOOD_STATE = "暂无心情记录。"
         private const val DEFAULT_IMPRESSION_TEXT = "暂无用户印象记录。"
+        private val UNRESOLVED_PLACEHOLDER_REGEX = Regex("""\{[a-z][a-z0-9_]*\}""")
     }
 }

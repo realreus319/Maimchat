@@ -107,7 +107,8 @@ class LlmReplierTaskGeneratorTest {
     }
 
     @Test
-    fun `generator rejects tool calls from replier model`() {
+    fun `generator ignores stray tool calls and still produces the text reply`() {
+        val response = LlmResponse(message = LlmMessage.assistant("hello"), model = "fake")
         val client =
                 FakeStreamClient(
                         events =
@@ -118,7 +119,9 @@ class LlmReplierTaskGeneratorTest {
                                                         name = "replier",
                                                         argumentsJson = "{}"
                                                 )
-                                        )
+                                        ),
+                                        LlmStreamEvent.TextDelta("hello"),
+                                        LlmStreamEvent.Completed(response)
                                 )
                 )
         val generator =
@@ -127,12 +130,16 @@ class LlmReplierTaskGeneratorTest {
                         config = LlmGenerationConfig(model = "fake")
                 )
 
-        val error =
-                runBlocking {
-                    runCatching { generator.generate(request("answer")).toList() }.exceptionOrNull()
-                }
+        val updates = runBlocking { generator.generate(request("answer")).toList() }
 
-        assertEquals("Replier generation does not support tool calls", error?.message)
+        // The stray tool call is ignored (no exception); the text reply still completes.
+        assertEquals(
+                listOf(
+                        ReplierTaskUpdate.TextDelta("hello"),
+                        ReplierTaskUpdate.Completed("hello")
+                ),
+                updates
+        )
     }
 
     private fun request(content: String): ReplierTaskRequest =

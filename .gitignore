@@ -49,6 +49,28 @@ app/src/main/assets/**
 !app/src/main/assets/README.md
 !app/src/main/assets/agents/
 !app/src/main/assets/agents/**
+# Bundled Live2D models (packaged into the APK)
+!app/src/main/assets/Haru/
+!app/src/main/assets/Haru/**
+!app/src/main/assets/Hiyori/
+!app/src/main/assets/Hiyori/**
+!app/src/main/assets/Mao/
+!app/src/main/assets/Mao/**
+!app/src/main/assets/Mark/
+!app/src/main/assets/Mark/**
+!app/src/main/assets/Natori/
+!app/src/main/assets/Natori/**
+!app/src/main/assets/Rice/
+!app/src/main/assets/Rice/**
+!app/src/main/assets/Wanko/
+!app/src/main/assets/Wanko/**
+# Live2D framework assets required by the demo renderer (sprite shaders, default background,
+# UI icons). Without Shaders/ the background sprite shader fails to compile (GL 0x501).
+!app/src/main/assets/Shaders/
+!app/src/main/assets/Shaders/**
+!app/src/main/assets/back_class_normal.png
+!app/src/main/assets/icon_gear.png
+!app/src/main/assets/close.png
 
 # Possible signing config/property files
 signing.properties
@@ -122,3 +144,15 @@ live2d_cache/
 lint/reports/
 lint-results-*.xml
 lint-results-*.html
+
+# Real provider credentials (secret API key)
+scripts/real_provider.env
+
+# Default LLM provider credentials are injected into local debug builds from local.properties
+# (already ignored above) via BuildConfig — never commit credentials.
+
+# Manual GUI verification screenshots (large binaries, not committed)
+docs/manual_verification/screenshots/
+
+# Local bug-feedback scratch (screenshots dropped here for debugging, not part of the app)
+bug反馈/

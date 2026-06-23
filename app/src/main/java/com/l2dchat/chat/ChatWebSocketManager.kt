@@ -96,6 +96,22 @@ class ChatWebSocketManager {
                 override fun onError(message: String, throwable: Throwable?) {
                     reportConnectionError(message, throwable)
                 }
+
+                override fun onProcessingChanged(processing: Boolean) {
+                    val count =
+                            if (processing) processingCount.incrementAndGet()
+                            else processingCount.decrementAndGet()
+                    _processing.value = count > 0
+                }
+
+                override fun onMessageFailed(
+                        messageId: String?,
+                        message: String,
+                        throwable: Throwable?
+                ) {
+                    markMessageFailed(messageId)
+                    reportConnectionError(message, throwable)
+                }
             }
     private val localTransport =
             LocalTransport(
@@ -134,6 +150,27 @@ class ChatWebSocketManager {
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
     private val _standardMessages = MutableStateFlow<List<MessageBase>>(emptyList())
     val standardMessages: StateFlow<List<MessageBase>> = _standardMessages.asStateFlow()
+    // True while the runtime is actively processing a turn (planner/replier running). Drives the
+    // "thinking" hint in the UI. Tracked with a counter so overlapping turns balance correctly.
+    private val _processing = MutableStateFlow(false)
+    val processing: StateFlow<Boolean> = _processing.asStateFlow()
+    private val processingCount = java.util.concurrent.atomic.AtomicInteger(0)
+    // Ids of messages whose turn failed (network/LLM error). Kept out of persisted history so a
+    // transient failure does not stick across restarts; surfaced to the UI as a red "!".
+    private val failedMessageIds: MutableSet<String> =
+            java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private val _messageFailures =
+            MutableSharedFlow<String>(extraBufferCapacity = 8, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val messageFailures: SharedFlow<String> = _messageFailures.asSharedFlow()
+
+    fun isMessageFailed(id: String): Boolean = failedMessageIds.contains(id)
+
+    private fun markMessageFailed(id: String?) {
+        if (id.isNullOrBlank()) return
+        if (failedMessageIds.add(id)) {
+            scope.launch { _messageFailures.emit(id) }
+        }
+    }
     private var lastServerMessageTime: Long = 0L
     private var onMotionTrigger: ((String, Int, Boolean) -> Unit)? = null
     private var userId: String = generateUserId()
@@ -371,6 +408,12 @@ class ChatWebSocketManager {
     private fun handleIncomingMessage(text: String) {
         try {
             val standard = MessageBase.fromJsonString(text)
+            // Environment-trigger replies (model switched, app foregrounded, snapshot updated,
+            // idle timer, ...) drive runtime state but are not user-facing chat turns. Keep them
+            // out of the visible message list and persisted history so they don't spam the UI.
+            if (standard.messageInfo.additionalConfig?.get("migration_phase") == "env_trigger") {
+                return
+            }
             addStandardMessage(standard)
             when (val result = messageHandler.handleStandardMessage(standard)) {
                 is Live2DChatMessageHandler.ChatMessageResult.Success -> {
@@ -535,6 +578,7 @@ class ChatWebSocketManager {
     fun clearMessages() {
         _messages.value = emptyList()
         _standardMessages.value = emptyList()
+        failedMessageIds.clear()
         environmentStateProvider.clearRecentMessages()
         lastServerMessageTime = 0L
         noteIdleActivity()
@@ -548,6 +592,7 @@ class ChatWebSocketManager {
     fun clearMessagesEphemeral() {
         _messages.value = emptyList()
         _standardMessages.value = emptyList()
+        failedMessageIds.clear()
         environmentStateProvider.clearRecentMessages()
         lastServerMessageTime = 0L
         noteIdleActivity()

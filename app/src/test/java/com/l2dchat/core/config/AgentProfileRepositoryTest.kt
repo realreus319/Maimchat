@@ -234,18 +234,30 @@ class AgentProfileRepositoryTest {
                         )
                         .firstOrNull()
 
+        override suspend fun queryPromptTemplateById(templateId: String): PromptTemplateEntity? =
+                promptTemplates[templateId]
+
         override suspend fun queryMemories(
                 contextId: String,
                 agentId: String,
                 limit: Int
         ): List<MemoryEntity> = emptyList()
 
-        override suspend fun searchMemories(
+        override suspend fun countMemories(contextId: String, agentId: String): Int = 0
+
+        override suspend fun queryMemoryByContent(
                 contextId: String,
                 agentId: String,
-                query: String,
-                limit: Int
-        ): List<MemoryEntity> = emptyList()
+                content: String
+        ): MemoryEntity? = null
+
+        override suspend fun reinforceMemory(
+                memoryId: String,
+                accessCount: Int,
+                lastAccessMillis: Long
+        ) = Unit
+
+        override suspend fun deleteMemory(memoryId: String) = Unit
 
         override suspend fun queryImpression(
                 contextId: String,

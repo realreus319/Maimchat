@@ -46,29 +46,45 @@ object DefaultAgentProfileSeeder {
     ) {
         val normalizedAgentId = agentId.trim().takeIf { it.isNotBlank() } ?: return
         val profile = source.readProfile()
-        if (stateDao.queryAgentConfig(normalizedAgentId) == null) {
-            stateDao.upsertAgentConfig(
-                    AgentConfigEntity(
-                            agentId = normalizedAgentId,
-                            displayName =
-                                    displayName.trimmedOrNull()
-                                            ?: profile.displayName
-                                            ?: normalizedAgentId,
-                            persona = profile.persona,
-                            provider = profile.provider,
-                            model = profile.model,
-                            settingsJson = profile.settingsJson,
-                            updatedAtMillis = DEFAULT_UPDATED_AT
-                    )
-            )
+
+        // Seed when absent, and refresh whenever the stored row is still the untouched default
+        // (updatedAtMillis == DEFAULT_UPDATED_AT). This lets a new default persona/prompt take
+        // effect on upgrade, while never clobbering a row the user has edited (non-zero timestamp).
+        val existingConfig = stateDao.queryAgentConfig(normalizedAgentId)
+        val desiredConfig =
+                AgentConfigEntity(
+                        agentId = normalizedAgentId,
+                        displayName =
+                                displayName.trimmedOrNull()
+                                        ?: profile.displayName
+                                        ?: normalizedAgentId,
+                        persona = profile.persona,
+                        provider = profile.provider,
+                        model = profile.model,
+                        settingsJson = profile.settingsJson,
+                        updatedAtMillis = DEFAULT_UPDATED_AT
+                )
+        if (existingConfig == null ||
+                        (existingConfig.updatedAtMillis == DEFAULT_UPDATED_AT &&
+                                existingConfig != desiredConfig)
+        ) {
+            stateDao.upsertAgentConfig(desiredConfig)
         }
 
         DEFAULT_PROMPTS.forEach { prompt ->
             val body = source.readText(prompt.path)?.trim()?.takeIf { it.isNotBlank() }
                     ?: return@forEach
+            val templateId = "default_${prompt.name}"
+            val existing = stateDao.queryPromptTemplateById(templateId)
+            if (existing != null &&
+                            (existing.updatedAtMillis != DEFAULT_UPDATED_AT || existing.body == body)
+            ) {
+                // User-edited (non-zero) or already up to date — leave it alone.
+                return@forEach
+            }
             stateDao.upsertPromptTemplate(
                     PromptTemplateEntity(
-                            templateId = "default_${prompt.name}",
+                            templateId = templateId,
                             agentId = null,
                             name = prompt.name,
                             body = body,

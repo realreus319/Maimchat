@@ -22,6 +22,8 @@ object ChatServiceProtocol {
     const val MSG_EVENT_SNAPSHOT = 103
     const val MSG_EVENT_ERROR = 104
     const val MSG_EVENT_STANDARD_MESSAGE = 105
+    const val MSG_EVENT_MESSAGE_FAILED = 106
+    const val MSG_EVENT_PROCESSING = 107
 
     // Common extras
     const val EXTRA_URL = "extra_url"
@@ -76,6 +78,8 @@ object ChatServiceProtocol {
     const val EXTRA_MESSAGE_CONTENT = "extra_message_content"
     const val EXTRA_MESSAGE_FROM_USER = "extra_message_from_user"
     const val EXTRA_MESSAGE_TIMESTAMP = "extra_message_timestamp"
+    const val EXTRA_MESSAGE_FAILED = "extra_message_failed"
+    const val EXTRA_PROCESSING = "extra_processing"
     const val EXTRA_MESSAGE_BUNDLE_LIST = "extra_message_bundle_list"
     const val EXTRA_STANDARD_MESSAGE_LIST = "extra_standard_message_list"
     const val EXTRA_STANDARD_MESSAGE_JSON = "extra_standard_message_json"

@@ -10,6 +10,8 @@ import com.l2dchat.core.llm.LlmClient
 import com.l2dchat.core.llm.LlmGenerationConfig
 import com.l2dchat.core.perception.PerceptionStore
 import com.l2dchat.core.reply.BackgroundReplierPromptContextProvider
+import com.l2dchat.core.reply.CompositePlannerPromptContextProvider
+import com.l2dchat.core.reply.EmptyPlannerPromptContextProvider
 import com.l2dchat.core.reply.EmptyPlannerSystemPromptProvider
 import com.l2dchat.core.reply.JsonFallbackPlannerTriggerProcessor
 import com.l2dchat.core.reply.NoopPlannerSessionStore
@@ -18,6 +20,8 @@ import com.l2dchat.core.reply.PlannerSessionStore
 import com.l2dchat.core.reply.PlannerSystemPromptProvider
 import com.l2dchat.core.reply.PlannerTriggerProcessor
 import com.l2dchat.core.reply.ToolCallingPlannerTriggerProcessor
+import com.l2dchat.core.reply.PlannerPromptContextProvider
+import com.l2dchat.core.storage.RoomPlannerPromptContextProvider
 import com.l2dchat.core.storage.RuntimeStateDao
 import com.l2dchat.core.tools.EmptyReplierPromptContextProvider
 import com.l2dchat.core.tools.LlmReplierTaskGenerator
@@ -39,7 +43,8 @@ data class LocalRuntimeLlmConfig(
         val plannerConfig: LlmGenerationConfig,
         val replierClient: LlmClient = plannerClient,
         val replierConfig: LlmGenerationConfig = plannerConfig,
-        val nativeToolCalling: Boolean = true
+        val nativeToolCalling: Boolean = true,
+        val environmentRepliesEnabled: Boolean = true
 )
 
 object LocalRuntimeFactory {
@@ -96,6 +101,7 @@ object LocalRuntimeFactory {
 
         return LocalChatRuntime(
                 scope = scope,
+                environmentRepliesEnabled = llmConfig.environmentRepliesEnabled,
                 perceptionStoreFactory = perceptionStoreFactory,
                 plannerSessionStoreFactory = plannerSessionStoreFactory,
                 plannerProcessorFactory = {
@@ -110,11 +116,15 @@ object LocalRuntimeFactory {
                                             replierTaskIdFactory = taskIdFactory
                                     ),
                             mode = ToolExecutionMode.NORMAL,
-                            promptBuilder = PlannerPromptBuilder(),
+                            promptBuilder =
+                                    PlannerPromptBuilder(
+                                            contextProvider = memoryPlannerContextProvider(runtimeStateDaoProvider())
+                                    ),
                             systemPromptProvider = plannerSystemPromptProvider
                     )
                 },
                 decisionPlannerProcessorFactory = {
+                    val memoryProvider = memoryPlannerContextProvider(runtimeStateDaoProvider())
                     llmConfig.buildProcessor(
                             registry =
                                     LocalToolRegistryFactory.decisionRegistry(
@@ -125,8 +135,13 @@ object LocalRuntimeFactory {
                             promptBuilder =
                                     PlannerPromptBuilder(
                                             contextProvider =
-                                                    BackgroundReplierPromptContextProvider(
-                                                            taskManager
+                                                    CompositePlannerPromptContextProvider(
+                                                            listOf(
+                                                                    BackgroundReplierPromptContextProvider(
+                                                                            taskManager
+                                                                    ),
+                                                                    memoryProvider
+                                                            )
                                                     )
                                     ),
                             systemPromptProvider = decisionPlannerSystemPromptProvider
@@ -161,6 +176,11 @@ object LocalRuntimeFactory {
                 )
             }
 }
+
+private fun memoryPlannerContextProvider(
+        stateDao: RuntimeStateDao?
+): PlannerPromptContextProvider =
+        stateDao?.let { RoomPlannerPromptContextProvider(it) } ?: EmptyPlannerPromptContextProvider
 
 private fun String.taskIdPart(): String =
         trim()

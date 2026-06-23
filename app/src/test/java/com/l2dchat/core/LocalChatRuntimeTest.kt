@@ -199,6 +199,42 @@ class LocalChatRuntimeTest {
     }
 
     @Test
+    fun `submitEnvironmentTrigger is dropped when environment replies disabled`() {
+        val emitted = mutableListOf<MessageBase>()
+        runBlocking {
+            val runtime =
+                    LocalChatRuntime(
+                            scope = this,
+                            environmentRepliesEnabled = false,
+                            plannerProcessorFactory = {
+                                PlannerTriggerProcessor { _ ->
+                                    throw AssertionError("planner must not run for env when disabled")
+                                }
+                            }
+                    )
+            val accepted =
+                    runtime.submitEnvironmentTrigger(
+                            submission =
+                                    EnvironmentTriggerSubmission(
+                                            routingKey =
+                                                    RoutingKey(contextId = "c", agentId = "a"),
+                                            text = "应用切回前台",
+                                            source = "android_app"
+                                    ),
+                            fallbackPlatform = "live2d_chat",
+                            fallbackAgentName = "Mao",
+                            replySink = collectingSink(emitted)
+                    )
+
+            // Gated: no dispatch, no LLM/planner cost, no reply.
+            assertFalse(accepted)
+            delay(100L)
+            assertTrue(emitted.isEmpty())
+            runtime.stopAndDrain()
+        }
+    }
+
+    @Test
     fun `interrupted pending message completes false while decision reply sends current message`() {
         val emitted = mutableListOf<MessageBase>()
         val firstStarted = CompletableDeferred<Unit>()

@@ -92,9 +92,10 @@ class OpenAiCompatibleClient(
                 return response
             }
             if (round >= config.maxToolRounds) {
-                throw OpenAiToolLoopException(
-                        "LLM returned tool calls after ${config.maxToolRounds} tool rounds"
-                )
+                // The model still wants tools after exhausting the round budget. Rather than
+                // failing the whole turn, run one final completion with tools disabled so the
+                // model is forced to produce a usable text answer from the accumulated context.
+                return forceFinalCompletion(history, response, config)
             }
 
             history.add(response.message)
@@ -103,7 +104,34 @@ class OpenAiCompatibleClient(
             }
         }
 
-        throw OpenAiToolLoopException("LLM tool loop ended without a final response: $lastResponse")
+        return lastResponse
+                ?: throw OpenAiToolLoopException("LLM tool loop produced no response")
+    }
+
+    private suspend fun forceFinalCompletion(
+            history: List<LlmMessage>,
+            lastToolResponse: LlmResponse,
+            config: LlmGenerationConfig
+    ): LlmResponse {
+        val finalHistory =
+                history +
+                        LlmMessage.system(
+                                "Tool usage budget is exhausted. Reply to the user now with a " +
+                                        "final text answer and do not request any more tools."
+                        )
+        val finalConfig = config.copy(toolChoice = LlmToolChoice.NONE)
+        val response =
+                executeWithRetry(finalConfig) {
+                    val body =
+                            buildRequestBody(
+                                    messages = finalHistory,
+                                    tools = emptyList(),
+                                    config = finalConfig,
+                                    stream = false
+                            )
+                    parseCompletionResponse(executeRequest(buildRequest(body, finalConfig), finalConfig))
+                }
+        return if (response.text.isBlank()) lastToolResponse else response
     }
 
     private suspend fun <T> executeWithRetry(
@@ -147,6 +175,9 @@ class OpenAiCompatibleClient(
                 addProperty("stream", stream)
                 config.temperature?.let { addProperty("temperature", it) }
                 config.maxTokens?.let { addProperty("max_tokens", it) }
+                // Qwen3/DashScope chain-of-thought toggle. Only sent when explicitly configured so
+                // providers that don't recognise the field are unaffected.
+                config.enableThinking?.let { addProperty("enable_thinking", it) }
                 if (tools.isNotEmpty()) {
                     add("tools", tools.toOpenAiTools())
                     add("tool_choice", config.toolChoice.toOpenAiToolChoice())
@@ -169,7 +200,6 @@ class OpenAiCompatibleClient(
                 builder.addHeader(name, value)
             }
         }
-        config.timeoutMillis?.let { builder.tag(RequestTimeout::class.java, RequestTimeout(it)) }
         return builder.build()
     }
 
@@ -221,46 +251,65 @@ class OpenAiCompatibleClient(
             config: LlmGenerationConfig
     ): Flow<LlmStreamEvent> =
             flow {
-                val call = clientFor(config).newCall(request)
-                val completionHandle =
-                        currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
-                            if (cause is CancellationException) {
-                                call.cancel()
+                var attempt = 0
+                while (true) {
+                    val accumulator = StreamAccumulator(config.model)
+                    var emittedAny = false
+                    val call = clientFor(config).newCall(request)
+                    val completionHandle =
+                            currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+                                if (cause is CancellationException) {
+                                    call.cancel()
+                                }
                             }
-                        }
-                val accumulator = StreamAccumulator(config.model)
-                try {
-                    val response = withContext(Dispatchers.IO) { call.execute() }
-                    response.use {
-                        val body = it.body ?: throw OpenAiEmptyResponseException()
-                        if (!it.isSuccessful) {
-                            throw OpenAiHttpException(
-                                    statusCode = it.code,
-                                    responseBody = body.string()
-                            )
-                        }
-                        body.charStream().buffered().use { reader ->
-                            while (true) {
-                                currentCoroutineContext().ensureActive()
-                                val line = withContext(Dispatchers.IO) { reader.readLine() } ?: break
-                                val payload =
-                                        line.removePrefix("data:")
-                                                .trim()
-                                                .takeIf {
-                                                    line.startsWith("data:") &&
-                                                            it.isNotBlank() &&
-                                                            it != "[DONE]"
-                                                }
-                                                ?: continue
-                                parseStreamChunk(payload, accumulator).forEach { event ->
-                                    emit(event)
+                    try {
+                        val response = withContext(Dispatchers.IO) { call.execute() }
+                        response.use {
+                            val body = it.body ?: throw OpenAiEmptyResponseException()
+                            if (!it.isSuccessful) {
+                                throw OpenAiHttpException(
+                                        statusCode = it.code,
+                                        responseBody = body.string()
+                                )
+                            }
+                            body.charStream().buffered().use { reader ->
+                                while (true) {
+                                    currentCoroutineContext().ensureActive()
+                                    val line =
+                                            withContext(Dispatchers.IO) { reader.readLine() }
+                                                    ?: break
+                                    val payload =
+                                            line.removePrefix("data:")
+                                                    .trim()
+                                                    .takeIf {
+                                                        line.startsWith("data:") &&
+                                                                it.isNotBlank() &&
+                                                                it != "[DONE]"
+                                                    }
+                                                    ?: continue
+                                    parseStreamChunk(payload, accumulator).forEach { event ->
+                                        emittedAny = true
+                                        emit(event)
+                                    }
                                 }
                             }
                         }
+                        emit(LlmStreamEvent.Completed(accumulator.toResponse()))
+                        return@flow
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (throwable: Throwable) {
+                        // Only retry connection-phase failures: once any event has been
+                        // emitted, retrying would duplicate streamed tokens.
+                        if (!emittedAny && attempt < maxRetries && throwable.isRetryable()) {
+                            delay(retryDelayMillis * (attempt + 1))
+                            attempt += 1
+                        } else {
+                            throw throwable
+                        }
+                    } finally {
+                        completionHandle?.dispose()
                     }
-                    emit(LlmStreamEvent.Completed(accumulator.toResponse()))
-                } finally {
-                    completionHandle?.dispose()
                 }
             }
 
@@ -285,6 +334,18 @@ class OpenAiCompatibleClient(
             accumulator: StreamAccumulator
     ): List<LlmStreamEvent> {
         val root = JsonParser.parseString(payload).asJsonObject
+        // Providers can open the stream with HTTP 200 and then emit an error object
+        // (rate limit, quota) mid-stream. Surface it instead of silently ending the
+        // stream with an empty completion.
+        root.getAsJsonObject("error")?.let { error ->
+            val detail =
+                    error.get("message")?.takeIf { !it.isJsonNull }?.asString?.takeIf {
+                        it.isNotBlank()
+                    }
+            throw OpenAiClientException(
+                    "OpenAI-compatible stream error: ${detail ?: "unknown provider error"}"
+            )
+        }
         root.stringOrNull("id")?.let { accumulator.id = it }
         root.stringOrNull("model")?.let { accumulator.model = it }
         root.getAsJsonObject("usage")?.let { accumulator.usage = it.toTokenUsage() }
@@ -299,6 +360,12 @@ class OpenAiCompatibleClient(
             delta.stringOrNull("content")?.takeIf { it.isNotEmpty() }?.let {
                 accumulator.text.append(it)
                 events.add(LlmStreamEvent.TextDelta(it))
+            }
+            // Reasoning models (qwen3-thinking, DeepSeek-R1, ...) stream their chain of
+            // thought in a separate reasoning_content field. Accumulate it so it is not
+            // lost, but do not surface it as visible reply text.
+            delta.stringOrNull("reasoning_content")?.takeIf { it.isNotEmpty() }?.let {
+                accumulator.reasoning.append(it)
             }
             delta.getAsJsonArray("tool_calls")?.forEachIndexed { index, toolCallElement ->
                 val toolCall = toolCallElement.asJsonObject
@@ -436,7 +503,8 @@ class OpenAiCompatibleClient(
                 role = role,
                 content = contentPartsFrom(get("content")),
                 toolCallId = stringOrNull("tool_call_id"),
-                toolCalls = getAsJsonArray("tool_calls")?.toLlmToolCalls().orEmpty()
+                toolCalls = getAsJsonArray("tool_calls")?.toLlmToolCalls().orEmpty(),
+                reasoningContent = stringOrNull("reasoning_content")
         )
     }
 
@@ -498,29 +566,43 @@ class OpenAiCompatibleClient(
 
     private fun clientFor(config: LlmGenerationConfig): OkHttpClient {
         val timeoutMillis = config.timeoutMillis ?: return httpClient
-        return httpClient.newBuilder().callTimeout(timeoutMillis, TimeUnit.MILLISECONDS).build()
+        // The configured timeout is the overall budget for one LLM call. Apply it to read
+        // and write timeouts as well, not just the call timeout: slow reasoning models can
+        // hold a non-streaming connection open well past OkHttp's default 10s read timeout
+        // before emitting the first byte, which would otherwise surface as a "timeout" error
+        // long before the configured budget elapses. The connect timeout stays bounded since
+        // establishing the socket should never need the full generation budget.
+        val connectTimeoutMillis = minOf(timeoutMillis, 30_000L)
+        return httpClient
+                .newBuilder()
+                .callTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
+                .readTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
+                .writeTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
+                .connectTimeout(connectTimeoutMillis, TimeUnit.MILLISECONDS)
+                .build()
     }
-
-    private data class RequestTimeout(val timeoutMillis: Long)
 
     private data class StreamAccumulator(
             var model: String,
             var id: String? = null,
             val text: StringBuilder = StringBuilder(),
+            val reasoning: StringBuilder = StringBuilder(),
             val toolCalls: MutableMap<Int, StreamToolCallBuilder> = linkedMapOf(),
             var usage: LlmTokenUsage? = null,
             var finishReason: LlmFinishReason = LlmFinishReason.STOP
     ) {
         fun toResponse(): LlmResponse {
             val calls = toolCalls.values.mapNotNull { it.toToolCallOrNull() }
+            val reasoningContent = reasoning.toString().takeIf { it.isNotBlank() }
             val message =
                     if (calls.isEmpty()) {
                         LlmMessage.assistant(text.toString())
+                                .copy(reasoningContent = reasoningContent)
                     } else {
                         LlmMessage.assistantToolCalls(
                                 toolCalls = calls,
                                 text = text.toString().takeIf { it.isNotBlank() }
-                        )
+                        ).copy(reasoningContent = reasoningContent)
                     }
             return LlmResponse(
                     id = id,
@@ -570,7 +652,30 @@ open class OpenAiClientException(
 class OpenAiHttpException(
         val statusCode: Int,
         val responseBody: String
-) : OpenAiClientException("OpenAI-compatible endpoint returned HTTP $statusCode")
+) : OpenAiClientException(buildHttpExceptionMessage(statusCode, responseBody)) {
+    companion object {
+        private fun buildHttpExceptionMessage(statusCode: Int, body: String): String {
+            // Surface the provider's own error message (e.g. "model not found",
+            // "insufficient quota") instead of an opaque "HTTP 4xx".
+            val detail =
+                    runCatching {
+                                JsonParser.parseString(body)
+                                        .asJsonObject
+                                        .getAsJsonObject("error")
+                                        ?.get("message")
+                                        ?.takeIf { !it.isJsonNull }
+                                        ?.asString
+                            }
+                            .getOrNull()
+                            ?.takeIf { it.isNotBlank() }
+            return if (detail != null) {
+                "OpenAI-compatible endpoint returned HTTP $statusCode: $detail"
+            } else {
+                "OpenAI-compatible endpoint returned HTTP $statusCode"
+            }
+        }
+    }
+}
 
 class OpenAiEmptyResponseException : OpenAiClientException("OpenAI-compatible endpoint returned an empty response")
 

@@ -34,9 +34,9 @@ class LlmReplierTaskGenerator(
                                 }
                                 is LlmStreamEvent.ToolCallArgumentsDelta,
                                 is LlmStreamEvent.ToolCallStarted -> {
-                                    throw IllegalStateException(
-                                            "Replier generation does not support tool calls"
-                                    )
+                                    // The replier is a text-only stage. If the model emits a
+                                    // stray tool call, ignore it rather than failing the whole
+                                    // reply; any accompanying text deltas still produce a reply.
                                 }
                             }
                         }

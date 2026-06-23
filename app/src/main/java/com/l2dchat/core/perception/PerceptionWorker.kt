@@ -15,7 +15,9 @@ class PerceptionWorker(
         private val store: PerceptionStore? = null,
         private val onError: (RoutingKey, InboundMessage, Throwable) -> Unit = { _, _, _ -> }
 ) {
-    private val queue = Channel<InboundMessage>(Channel.UNLIMITED)
+    // Bounded with default SUSPEND overflow: caps memory under a flood while applying
+    // backpressure to the producer rather than dropping user messages.
+    private val queue = Channel<InboundMessage>(capacity = QUEUE_CAPACITY)
     private val job: Job =
             scope.launch {
                 for (message in queue) {
@@ -38,6 +40,10 @@ class PerceptionWorker(
     fun cancel() {
         queue.close()
         job.cancel()
+    }
+
+    private companion object {
+        private const val QUEUE_CAPACITY = 128
     }
 
     private suspend fun processQueuedMessage(message: InboundMessage) {

@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.l2dchat.core.message.AgentConfigEntity
 import com.l2dchat.core.message.ImpressionEntity
 import com.l2dchat.core.message.MediaBlockEntity
@@ -31,7 +33,7 @@ import com.l2dchat.core.message.VisibleMessageEntity
                         MoodStateEntity::class,
                         MediaBlockEntity::class
                 ],
-        version = 1,
+        version = 2,
         exportSchema = true
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -46,6 +48,30 @@ abstract class ChatDatabase : RoomDatabase() {
 
         @Volatile private var instance: ChatDatabase? = null
 
+        /**
+         * v1 -> v2: long-term memory upgrade. Adds memory category, access-count and
+         * last-access reinforcement columns plus an importance index for scoring/eviction.
+         * Data-preserving (no destructive fallback).
+         */
+        val MIGRATION_1_2: Migration =
+                object : Migration(1, 2) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL(
+                                "ALTER TABLE memories ADD COLUMN category TEXT NOT NULL DEFAULT 'general'"
+                        )
+                        db.execSQL(
+                                "ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0"
+                        )
+                        db.execSQL(
+                                "ALTER TABLE memories ADD COLUMN last_access_ms INTEGER NOT NULL DEFAULT 0"
+                        )
+                        db.execSQL(
+                                "CREATE INDEX IF NOT EXISTS index_memories_context_id_agent_id_importance " +
+                                        "ON memories (context_id, agent_id, importance)"
+                        )
+                    }
+                }
+
         fun getInstance(context: Context): ChatDatabase =
                 instance
                         ?: synchronized(this) {
@@ -55,6 +81,7 @@ abstract class ChatDatabase : RoomDatabase() {
                                                     ChatDatabase::class.java,
                                                     DATABASE_NAME
                                             )
+                                            .addMigrations(MIGRATION_1_2)
                                             .build()
                                             .also { instance = it }
                         }

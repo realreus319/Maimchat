@@ -11,10 +11,10 @@ class PlannerPromptBuilder(
         private val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
         private val contextProvider: PlannerPromptContextProvider = EmptyPlannerPromptContextProvider
 ) {
-    fun buildMessages(context: PlannerTurnContext): List<LlmMessage> =
+    suspend fun buildMessages(context: PlannerTurnContext): List<LlmMessage> =
             buildMessages(context = context, systemPromptOverride = null)
 
-    fun buildMessages(
+    suspend fun buildMessages(
             context: PlannerTurnContext,
             systemPromptOverride: String?
     ): List<LlmMessage> {
@@ -99,7 +99,7 @@ class PlannerPromptBuilder(
 
     companion object {
         const val DEFAULT_SYSTEM_PROMPT: String =
-                "You are Maimchat's local chat planner. Reply directly to the user in the same language when possible. Keep the response concise unless the user asks for detail."
+                "你是「小千」这个角色背后的对话规划器。小千是一个外表文静、内心有点小傲娇的女大学生，说话简短、平淡，偶尔吐槽。请基于小千的人设直接回复用户，尽量使用用户的语言（默认中文），回复保持简短，除非用户明确要求详细说明。"
     }
 }
 
@@ -116,12 +116,20 @@ data class PlannerPromptContextBlock(
 }
 
 fun interface PlannerPromptContextProvider {
-    fun blocksFor(context: PlannerTurnContext): List<PlannerPromptContextBlock>
+    suspend fun blocksFor(context: PlannerTurnContext): List<PlannerPromptContextBlock>
 }
 
 object EmptyPlannerPromptContextProvider : PlannerPromptContextProvider {
-    override fun blocksFor(context: PlannerTurnContext): List<PlannerPromptContextBlock> =
+    override suspend fun blocksFor(context: PlannerTurnContext): List<PlannerPromptContextBlock> =
             emptyList()
+}
+
+/** Combine several providers' blocks in order. */
+class CompositePlannerPromptContextProvider(
+        private val providers: List<PlannerPromptContextProvider>
+) : PlannerPromptContextProvider {
+    override suspend fun blocksFor(context: PlannerTurnContext): List<PlannerPromptContextBlock> =
+            providers.flatMap { it.blocksFor(context) }
 }
 
 fun interface PlannerSystemPromptProvider {

@@ -2,6 +2,7 @@ package com.l2dchat.core.reply
 
 import com.l2dchat.core.llm.LlmClient
 import com.l2dchat.core.llm.LlmGenerationConfig
+import com.l2dchat.core.llm.LlmMessage
 import com.l2dchat.core.llm.LlmToolExecutor
 import com.l2dchat.core.tools.ToolExecutionContext
 import com.l2dchat.core.tools.ToolExecutionMode
@@ -57,10 +58,33 @@ class ToolCallingPlannerTriggerProcessor(
                 )
 
         if (!replySent) {
-            val result = context.sendReply(response.text)
+            var finalText = response.text
+            if (finalText.isBlank()) {
+                // The planner ended its tool loop without calling the replier or emitting any
+                // text. This is far more likely with chain-of-thought disabled, where the model
+                // sometimes stops after a non-replier tool call. Force one tool-free completion so
+                // the user still gets a reply instead of the runtime erroring out and locking input.
+                finalText =
+                        llmClient.chatCompletion(
+                                        messages =
+                                                promptBuilder.buildMessages(
+                                                        context = context,
+                                                        systemPromptOverride =
+                                                                systemPromptProvider.systemPromptFor(
+                                                                        context
+                                                                )
+                                                ) +
+                                                        LlmMessage.system(
+                                                                "现在直接以当前角色的口吻回复用户，不要再调用任何工具，只输出一条回复正文。"
+                                                        ),
+                                        config = config
+                                )
+                                .text
+            }
+            val result = context.sendReply(finalText)
             if (result.status == ReplySendStatus.BLANK_REJECTED) {
                 throw IllegalStateException(
-                        "LLM tool loop did not send a replier result or final assistant text"
+                        "LLM planner produced no reply even after a forced direct completion"
                 )
             }
         }

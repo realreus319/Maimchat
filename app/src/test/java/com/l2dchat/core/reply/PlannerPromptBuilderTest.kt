@@ -27,9 +27,11 @@ class PlannerPromptBuilderTest {
     @Test
     fun `builder turns trigger into system and user llm messages`() {
         val messages =
-                PlannerPromptBuilder(systemPrompt = "system").buildMessages(
-                        context = turnContext(trigger("msg-1", text = "hello"))
-                )
+                runBlocking {
+                    PlannerPromptBuilder(systemPrompt = "system").buildMessages(
+                            context = turnContext(trigger("msg-1", text = "hello"))
+                    )
+                }
 
         assertEquals(LlmMessageRole.SYSTEM, messages[0].role)
         assertEquals("system", messages[0].textContent())
@@ -43,10 +45,12 @@ class PlannerPromptBuilderTest {
     @Test
     fun `builder can override system prompt per turn`() {
         val messages =
-                PlannerPromptBuilder(systemPrompt = "system").buildMessages(
-                        context = turnContext(trigger("msg-1", text = "hello")),
-                        systemPromptOverride = "room system"
-                )
+                runBlocking {
+                    PlannerPromptBuilder(systemPrompt = "system").buildMessages(
+                            context = turnContext(trigger("msg-1", text = "hello")),
+                            systemPromptOverride = "room system"
+                    )
+                }
 
         assertEquals("room system", messages[0].textContent())
     }
@@ -54,26 +58,28 @@ class PlannerPromptBuilderTest {
     @Test
     fun `builder keeps multimodal image blocks`() {
         val messages =
-                PlannerPromptBuilder(systemPrompt = "system").buildMessages(
-                        context =
-                                turnContext(
-                                        trigger(
-                                                "msg-1",
-                                                text = "[image1] describe this",
-                                                contentBlocks =
-                                                        listOf(
-                                                                mapOf(
-                                                                        "type" to "image_url",
-                                                                        "image_url" to
-                                                                                mapOf(
-                                                                                        "url" to
-                                                                                                "https://example.test/a.png"
-                                                                                )
-                                                                )
-                                                        )
-                                        )
-                                )
-                )
+                runBlocking {
+                    PlannerPromptBuilder(systemPrompt = "system").buildMessages(
+                            context =
+                                    turnContext(
+                                            trigger(
+                                                    "msg-1",
+                                                    text = "[image1] describe this",
+                                                    contentBlocks =
+                                                            listOf(
+                                                                    mapOf(
+                                                                            "type" to "image_url",
+                                                                            "image_url" to
+                                                                                    mapOf(
+                                                                                            "url" to
+                                                                                                    "https://example.test/a.png"
+                                                                                    )
+                                                                    )
+                                                            )
+                                            )
+                                    )
+                    )
+                }
         val parts = messages[1].content
 
         assertEquals(2, parts.size)
@@ -84,19 +90,21 @@ class PlannerPromptBuilderTest {
     @Test
     fun `builder prepends prompt context blocks to user message`() {
         val messages =
-                PlannerPromptBuilder(
-                                systemPrompt = "system",
-                                contextProvider =
-                                        PlannerPromptContextProvider {
-                                            listOf(
-                                                    PlannerPromptContextBlock(
-                                                            name = "memory",
-                                                            content = "likes concise replies"
-                                                    )
-                                            )
-                                        }
-                        )
-                        .buildMessages(context = turnContext(trigger("msg-1", text = "hello")))
+                runBlocking {
+                    PlannerPromptBuilder(
+                                    systemPrompt = "system",
+                                    contextProvider =
+                                            PlannerPromptContextProvider {
+                                                listOf(
+                                                        PlannerPromptContextBlock(
+                                                                name = "memory",
+                                                                content = "likes concise replies"
+                                                        )
+                                                )
+                                            }
+                            )
+                            .buildMessages(context = turnContext(trigger("msg-1", text = "hello")))
+                }
 
         val userText = messages[1].textContent()
         assertTrue(userText.contains("[planner_context]"))
