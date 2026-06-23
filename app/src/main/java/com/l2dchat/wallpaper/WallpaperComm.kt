@@ -7,6 +7,14 @@ object WallpaperComm {
     const val EXTRA_BACKGROUND_PATH = "extra_background_path"
     const val ACTION_REFRESH_MODEL = "com.l2dchat.wallpaper.ACTION_REFRESH_MODEL"
     const val EXTRA_MODEL_FOLDER = "extra_model_folder"
+    const val ACTION_REFRESH_BUBBLE_COUNT = "com.l2dchat.wallpaper.ACTION_REFRESH_BUBBLE_COUNT"
+    const val EXTRA_BUBBLE_COUNT = "extra_bubble_count"
+
+    // How many recent chat bubbles the live wallpaper keeps pinned at the bottom (configurable).
+    const val PREF_WALLPAPER_BUBBLE_COUNT = "wallpaper_bubble_count"
+    const val DEFAULT_BUBBLE_COUNT = 5
+    const val MIN_BUBBLE_COUNT = 1
+    const val MAX_BUBBLE_COUNT = 12
 
     const val PREF_WIDGET_INPUT = "widget_input"
     const val PREF_WIDGET_LAST_INPUT_KEY = "last_input"

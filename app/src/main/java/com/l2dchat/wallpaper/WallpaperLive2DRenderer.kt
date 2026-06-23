@@ -782,6 +782,14 @@ class WallpaperLive2DRenderer(private val context: Context) : GLSurfaceView.Rend
         chatBubbleRenderer.enqueueBubble(message, fromUser)
     }
 
+    fun setBubbleCount(count: Int) {
+        chatBubbleRenderer.setMaxBubbles(count)
+    }
+
+    fun seedChatBubbles(items: List<Pair<String, Boolean>>) {
+        chatBubbleRenderer.seedBubbles(items)
+    }
+
     private fun requestModelReload() {
         logger.debug("requestModelReload invoked")
         appliedModelFolder = null

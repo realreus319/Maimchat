@@ -12,13 +12,17 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.l2dchat.wallpaper.WallpaperComm
 
 @Composable
 fun WallpaperSettingsDialog(
         currentPath: String,
         tempPath: String,
+        bubbleCount: Int,
+        onBubbleCountChange: (Int) -> Unit,
         onPickImage: () -> Unit,
         onClearImage: () -> Unit,
         onApply: () -> Unit,
@@ -53,6 +57,48 @@ fun WallpaperSettingsDialog(
                                 Text(
                                         text = "支持常见图片格式，建议 16:9 或 9:16，过大的图片会自动压缩到 2048px 以内。",
                                         style = MaterialTheme.typography.bodySmall
+                                )
+                                Divider()
+                                Text(
+                                        text = "底部聊天气泡保留条数",
+                                        style = MaterialTheme.typography.bodyMedium
+                                )
+                                Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                        Button(
+                                                onClick = {
+                                                        onBubbleCountChange(
+                                                                (bubbleCount - 1).coerceAtLeast(
+                                                                        WallpaperComm.MIN_BUBBLE_COUNT
+                                                                )
+                                                        )
+                                                },
+                                                enabled = bubbleCount > WallpaperComm.MIN_BUBBLE_COUNT
+                                        ) { Text("－") }
+                                        Text(
+                                                text = "$bubbleCount 条",
+                                                style = MaterialTheme.typography.titleMedium
+                                        )
+                                        Button(
+                                                onClick = {
+                                                        onBubbleCountChange(
+                                                                (bubbleCount + 1).coerceAtMost(
+                                                                        WallpaperComm.MAX_BUBBLE_COUNT
+                                                                )
+                                                        )
+                                                },
+                                                enabled = bubbleCount < WallpaperComm.MAX_BUBBLE_COUNT
+                                        ) { Text("＋") }
+                                }
+                                Text(
+                                        text =
+                                                "壁纸底部固定显示最近 $bubbleCount 条聊天记录；超出的会被顶上去并淡出消失。" +
+                                                        "（范围 ${WallpaperComm.MIN_BUBBLE_COUNT}-${WallpaperComm.MAX_BUBBLE_COUNT}）",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.secondary
                                 )
                         }
                 },

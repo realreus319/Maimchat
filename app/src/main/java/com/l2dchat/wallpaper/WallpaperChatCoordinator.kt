@@ -41,6 +41,9 @@ object WallpaperChatCoordinator {
 
     interface Listener {
         fun onMessageAppended(message: ChatMessageSnapshot)
+
+        /** The full shared chat history (same source as the main UI), for seeding/aligning state. */
+        fun onHistoryLoaded(messages: List<ChatMessageSnapshot>) {}
     }
 
     suspend fun sendMessage(context: Context, message: String): Boolean {
@@ -174,6 +177,16 @@ object WallpaperChatCoordinator {
 
     fun addListener(listener: Listener) {
         listeners.add(listener)
+        // Seed a freshly-attached listener (e.g. a recreated wallpaper engine) with the history
+        // that is already loaded, so it shows the same recent conversation as the main UI rather
+        // than waiting for the next message.
+        clientRef.get()?.messages?.value?.takeIf { it.isNotEmpty() }?.let {
+            try {
+                listener.onHistoryLoaded(it)
+            } catch (t: Throwable) {
+                logger.warn("Listener history seed failed", t)
+            }
+        }
     }
 
     fun removeListener(listener: Listener) {
@@ -211,32 +224,37 @@ object WallpaperChatCoordinator {
     }
 
     private fun startMessageCollection(context: Context, client: ChatServiceClient) {
+        // Full-history snapshots (register / requestSnapshot / clear / model switch) — the same
+        // source the main UI renders. Listeners use this to align their state with the real history
+        // instead of accumulating only newly-arriving messages.
         scope.launch {
-            val initialSize = client.messages.value.size
-            var baselineProcessed = false
-            var lastNotifiedId: String? = null
-            client.messages.collect { messages ->
-                val last = messages.lastOrNull()
-                if (last == null) {
-                    lastNotifiedId = null
-                    return@collect
+            client.snapshot.collect { messages ->
+                messages.lastOrNull()?.let {
+                    updateWidgetPreview(context, it.content, fromUser = it.isFromUser)
                 }
-                updateWidgetPreview(context, last.content, fromUser = last.isFromUser)
-                if (!baselineProcessed) {
-                    baselineProcessed = true
-                    if (initialSize > 0 && messages.size == initialSize) {
-                        lastNotifiedId = last.id
-                        return@collect
-                    }
-                }
-                if (lastNotifiedId == last.id) return@collect
-                lastNotifiedId = last.id
-                notifyListeners(last)
-                if (!last.isFromUser) {
+                notifyHistoryLoaded(messages)
+            }
+        }
+        // Incremental appends.
+        scope.launch {
+            client.newMessages.collect { message ->
+                updateWidgetPreview(context, message.content, fromUser = message.isFromUser)
+                notifyListeners(message)
+                if (!message.isFromUser) {
                     logger.info(
-                            "收到回复 -> ${last.content.take(120)}${if (last.content.length > 120) "…" else ""}"
+                            "收到回复 -> ${message.content.take(120)}${if (message.content.length > 120) "…" else ""}"
                     )
                 }
+            }
+        }
+    }
+
+    private fun notifyHistoryLoaded(messages: List<ChatMessageSnapshot>) {
+        listeners.forEach { listener ->
+            try {
+                listener.onHistoryLoaded(messages)
+            } catch (t: Throwable) {
+                logger.warn("Listener history dispatch failed", t)
             }
         }
     }

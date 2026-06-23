@@ -150,6 +150,15 @@ fun ChatWithModelScreen(
     var receiverUserNickname by remember { mutableStateOf("") }
     var wallpaperBgPath by rememberSaveable { mutableStateOf(persistedWallpaperPath.orEmpty()) }
     var wallpaperTempPath by rememberSaveable { mutableStateOf(persistedWallpaperPath.orEmpty()) }
+    var wallpaperBubbleCount by
+            rememberSaveable {
+                mutableStateOf(
+                        wallpaperPrefs.getInt(
+                                WallpaperComm.PREF_WALLPAPER_BUBBLE_COUNT,
+                                WallpaperComm.DEFAULT_BUBBLE_COUNT
+                        )
+                )
+            }
     var showWallpaperDialog by remember { mutableStateOf(false) }
     var showLogViewer by remember { mutableStateOf(false) }
     var backgroundBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -950,12 +959,20 @@ fun ChatWithModelScreen(
             WallpaperSettingsDialog(
                     currentPath = wallpaperBgPath,
                     tempPath = wallpaperTempPath,
+                    bubbleCount = wallpaperBubbleCount,
+                    onBubbleCountChange = { wallpaperBubbleCount = it },
                     onPickImage = { imagePickerLauncher.launch("image/*") },
                     onClearImage = { wallpaperTempPath = "" },
                     onApply = {
                         val finalPath = wallpaperTempPath.ifBlank { null }
                         wallpaperBgPath = finalPath.orEmpty()
                         wallpaperTempPath = wallpaperBgPath
+                        val clampedCount =
+                                wallpaperBubbleCount.coerceIn(
+                                        WallpaperComm.MIN_BUBBLE_COUNT,
+                                        WallpaperComm.MAX_BUBBLE_COUNT
+                                )
+                        wallpaperBubbleCount = clampedCount
                         val saveSucceeded =
                                 wallpaperPrefs
                                         .edit()
@@ -968,13 +985,18 @@ fun ChatWithModelScreen(
                                             } else {
                                                 remove(WallpaperComm.PREF_WALLPAPER_BG_PATH)
                                             }
+                                            putInt(
+                                                    WallpaperComm.PREF_WALLPAPER_BUBBLE_COUNT,
+                                                    clampedCount
+                                            )
                                         }
                                         .commit()
                         uiLogger.debug(
-                                "保存壁纸路径${if (saveSucceeded) "成功" else "失败"}: ${finalPath ?: "(清除)"}"
+                                "保存壁纸路径${if (saveSucceeded) "成功" else "失败"}: ${finalPath ?: "(清除)"}，气泡条数=$clampedCount"
                         )
                         lifecycleManager?.updateBackgroundTexture(finalPath)
                         sendWallpaperRefreshBroadcast(context, finalPath)
+                        sendWallpaperBubbleCountBroadcast(context, clampedCount)
                         showWallpaperDialog = false
                     },
                     onDismiss = {
@@ -2277,6 +2299,15 @@ private fun sendWallpaperModelBroadcast(context: Context, folder: String?) {
     val intent =
             Intent(WallpaperComm.ACTION_REFRESH_MODEL).apply {
                 putExtra(WallpaperComm.EXTRA_MODEL_FOLDER, folder)
+                setPackage(context.packageName)
+            }
+    context.sendBroadcast(intent)
+}
+
+private fun sendWallpaperBubbleCountBroadcast(context: Context, count: Int) {
+    val intent =
+            Intent(WallpaperComm.ACTION_REFRESH_BUBBLE_COUNT).apply {
+                putExtra(WallpaperComm.EXTRA_BUBBLE_COUNT, count)
                 setPackage(context.packageName)
             }
     context.sendBroadcast(intent)

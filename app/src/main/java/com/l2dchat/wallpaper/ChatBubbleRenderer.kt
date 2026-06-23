@@ -18,6 +18,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -35,19 +36,20 @@ class ChatBubbleRenderer(private val context: Context) {
             val widthPx: Int,
             val heightPx: Int,
             val fromUser: Boolean,
-            val createdAt: Long,
-            val expiresAt: Long
+            val createdAt: Long
     ) {
         var xCenterPx: Float = 0f
         var yCenterPx: Float = 0f
+        // 0 == still pinned at the bottom; otherwise the time this bubble began its push-up exit.
+        var exitingAt: Long = 0L
     }
 
     companion object {
         private const val TAG = "ChatBubbleRenderer"
-        private const val MAX_BUBBLES = 3
-        private const val LIFETIME_MS = 6_000L
         private const val FADE_IN_MS = 220L
-        private const val FADE_OUT_MS = 560L
+        // Duration of the "pushed up then fade away" animation for bubbles beyond the kept count.
+        private const val EXIT_MS = 600L
+        private const val EXIT_RISE_DP = 24f
         private const val SIDE_MARGIN_DP = 16f
         private const val BOTTOM_MARGIN_DP = 28f
         private const val DOCK_SAFE_MARGIN_DP = 56f
@@ -117,6 +119,26 @@ class ChatBubbleRenderer(private val context: Context) {
 
     private val pending = ConcurrentLinkedQueue<BubbleRequest>()
     private val active = ArrayList<BubbleInstance>()
+    // A full replacement of the bubble stack (e.g. seeding the shared chat history on load).
+    // Applied on the GL thread in render() so texture deletes happen on the right thread.
+    private val pendingReset = AtomicReference<List<BubbleRequest>?>(null)
+
+    // How many recent bubbles stay pinned at the bottom. Older ones are pushed up and fade out.
+    @Volatile private var maxBubbles: Int = WallpaperComm.DEFAULT_BUBBLE_COUNT
+
+    /**
+     * Replace the whole bubble stack with [items] (oldest→newest). Used to align the wallpaper with
+     * the main UI's chat history instead of only showing messages that arrive while it is alive.
+     */
+    fun seedBubbles(items: List<Pair<String, Boolean>>) {
+        val now = SystemClock.elapsedRealtime()
+        pendingReset.set(items.map { BubbleRequest(it.first, it.second, now) })
+    }
+
+    fun setMaxBubbles(count: Int) {
+        maxBubbles =
+                count.coerceIn(WallpaperComm.MIN_BUBBLE_COUNT, WallpaperComm.MAX_BUBBLE_COUNT)
+    }
 
     private var viewportWidth: Int = 0
     private var viewportHeight: Int = 0
@@ -170,13 +192,18 @@ class ChatBubbleRenderer(private val context: Context) {
         if (viewportWidth <= 0 || viewportHeight <= 0) return
 
         val now = SystemClock.elapsedRealtime()
+        // Apply a pending history seed (full replace) on the GL thread before draining new bubbles.
+        pendingReset.getAndSet(null)?.let { seeds ->
+            clearAllBubbles()
+            seeds.forEach { pending.offer(it) }
+        }
         drainPending(now)
+        // Keep only the most recent maxBubbles pinned; mark the overflow as exiting (push-up fade).
+        enforceLimit(now)
+        cleanupFinishedExits(now)
         if (active.isEmpty()) return
 
-        cleanupExpired(now)
-        if (active.isEmpty()) return
-
-        layoutBubbles()
+        layoutBubbles(now)
 
         GLES20.glUseProgram(program)
         GLES20.glEnable(GLES20.GL_BLEND)
@@ -235,29 +262,43 @@ class ChatBubbleRenderer(private val context: Context) {
                         widthPx = bubbleWidth,
                         heightPx = bubbleHeight,
                         fromUser = request.fromUser,
-                        createdAt = now,
-                        expiresAt = now + LIFETIME_MS
+                        createdAt = now
                 )
+        synchronized(active) { active.add(bubble) }
+    }
+
+    /**
+     * Keep at most [maxBubbles] pinned (non-exiting) bubbles. When there are more, the oldest still
+     * pinned bubble starts its push-up exit animation instead of being removed immediately.
+     */
+    private fun enforceLimit(now: Long) {
         synchronized(active) {
-            active.add(bubble)
-            if (active.size > MAX_BUBBLES) {
-                val removed = active.removeAt(0)
-                deleteTexture(removed.textureId)
+            var pinned = active.count { it.exitingAt == 0L }
+            if (pinned <= maxBubbles) return
+            for (bubble in active) {
+                if (pinned <= maxBubbles) break
+                if (bubble.exitingAt == 0L) {
+                    bubble.exitingAt = now
+                    pinned--
+                }
             }
         }
     }
 
-    private fun layoutBubbles() {
+    private fun layoutBubbles(now: Long) {
         val marginSide = dpToPx(SIDE_MARGIN_DP)
         val bottomMargin = dpToPx(BOTTOM_MARGIN_DP + DOCK_SAFE_MARGIN_DP)
         val spacing = dpToPx(BUBBLE_SPACING_DP)
+        val exitRise = dpToPx(EXIT_RISE_DP)
 
         var cursorY = viewportHeight - bottomMargin
         synchronized(active) {
             for (i in active.indices.reversed()) {
                 val bubble = active[i]
                 val centerY = cursorY - bubble.heightPx / 2f
-                bubble.yCenterPx = centerY
+                // Exiting bubbles drift further up as they fade, reinforcing the "pushed up" feel.
+                val rise = if (bubble.exitingAt == 0L) 0f else exitProgress(bubble, now) * exitRise
+                bubble.yCenterPx = centerY - rise
                 bubble.xCenterPx =
                         if (bubble.fromUser) {
                             viewportWidth - marginSide - bubble.widthPx / 2f
@@ -269,14 +310,17 @@ class ChatBubbleRenderer(private val context: Context) {
         }
     }
 
+    private fun exitProgress(bubble: BubbleInstance, now: Long): Float {
+        if (bubble.exitingAt == 0L) return 0f
+        return ((now - bubble.exitingAt) / EXIT_MS.toFloat()).coerceIn(0f, 1f)
+    }
+
     private fun computeAlpha(bubble: BubbleInstance, now: Long): Float {
         val age = now - bubble.createdAt
         if (age < 0L) return 0f
-        val timeLeft = bubble.expiresAt - now
-        if (timeLeft <= 0L) return 0f
-
         val fadeIn = if (age < FADE_IN_MS) age / FADE_IN_MS.toFloat() else 1f
-        val fadeOut = if (timeLeft < FADE_OUT_MS) timeLeft / FADE_OUT_MS.toFloat() else 1f
+        // Pinned bubbles stay fully opaque (no time-based expiry); exiting ones fade out.
+        val fadeOut = 1f - exitProgress(bubble, now)
         return max(0f, min(1f, fadeIn * fadeOut))
     }
 
@@ -312,12 +356,12 @@ class ChatBubbleRenderer(private val context: Context) {
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
     }
 
-    private fun cleanupExpired(now: Long) {
+    private fun cleanupFinishedExits(now: Long) {
         synchronized(active) {
             val iterator = active.iterator()
             while (iterator.hasNext()) {
                 val bubble = iterator.next()
-                if (now >= bubble.expiresAt) {
+                if (bubble.exitingAt != 0L && now - bubble.exitingAt >= EXIT_MS) {
                     deleteTexture(bubble.textureId)
                     iterator.remove()
                 }

@@ -53,6 +53,16 @@ class Live2DWallpaperService : WallpaperService() {
                     override fun onMessageAppended(message: ChatMessageSnapshot) {
                         renderer.enqueueChatBubble(message.content, message.isFromUser)
                     }
+
+                    override fun onHistoryLoaded(messages: List<ChatMessageSnapshot>) {
+                        // Align the wallpaper with the shared chat history: show the same most
+                        // recent records as the main UI instead of only new arrivals.
+                        renderer.seedChatBubbles(
+                                messages.takeLast(lastBubbleCount).map {
+                                    it.content to it.isFromUser
+                                }
+                        )
+                    }
                 }
         private val glThreadGuard = Any()
         @Volatile private var glThread: WallpaperGLThread? = null
@@ -271,12 +281,24 @@ class Live2DWallpaperService : WallpaperService() {
             restartPending.set(false)
             startGlThread("service reset after ${stage.name}")
             lastRequestedModelFolder?.let { renderer.setModelFolder(it) }
+            applyBubbleCount(lastBubbleCount)
             loadBackgroundAsync(lastRequestedBackgroundPath, force = true)
         }
 
         @Volatile private var lastRequestedBackgroundPath: String? = null
         @Volatile private var lastAppliedBackgroundPath: String? = null
         @Volatile private var lastRequestedModelFolder: String? = null
+        @Volatile
+        private var lastBubbleCount: Int =
+                prefs.getInt(
+                        WallpaperComm.PREF_WALLPAPER_BUBBLE_COUNT,
+                        WallpaperComm.DEFAULT_BUBBLE_COUNT
+                )
+
+        private fun applyBubbleCount(count: Int) {
+            lastBubbleCount = count
+            renderer.setBubbleCount(count)
+        }
 
         private val receiver =
                 object : BroadcastReceiver() {
@@ -334,6 +356,17 @@ class Live2DWallpaperService : WallpaperService() {
                                 lastRequestedModelFolder = folder
                                 renderer.setModelFolder(folder)
                             }
+                            WallpaperComm.ACTION_REFRESH_BUBBLE_COUNT -> {
+                                val count =
+                                        intent.getIntExtra(
+                                                WallpaperComm.EXTRA_BUBBLE_COUNT,
+                                                prefs.getInt(
+                                                        WallpaperComm.PREF_WALLPAPER_BUBBLE_COUNT,
+                                                        WallpaperComm.DEFAULT_BUBBLE_COUNT
+                                                )
+                                        )
+                                applyBubbleCount(count)
+                            }
                         }
                     }
                 }
@@ -347,6 +380,7 @@ class Live2DWallpaperService : WallpaperService() {
                         addAction(WallpaperComm.ACTION_SEND_MESSAGE)
                         addAction(WallpaperComm.ACTION_REFRESH_BACKGROUND)
                         addAction(WallpaperComm.ACTION_REFRESH_MODEL)
+                        addAction(WallpaperComm.ACTION_REFRESH_BUBBLE_COUNT)
                     }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -366,6 +400,7 @@ class Live2DWallpaperService : WallpaperService() {
             val initialModel = prefs.getString(WallpaperComm.PREF_WALLPAPER_MODEL_FOLDER, null)
             lastRequestedModelFolder = initialModel
             renderer.setModelFolder(initialModel)
+            applyBubbleCount(lastBubbleCount)
             val persistedBg = prefs.getString(WallpaperComm.PREF_WALLPAPER_BG_PATH, null)
             loadBackgroundAsync(persistedBg, force = true)
         }
