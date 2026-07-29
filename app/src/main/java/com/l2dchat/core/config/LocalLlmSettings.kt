@@ -31,6 +31,9 @@ data class LocalLlmSettings(
         val apiKey: String? = null,
         val plannerModel: String? = null,
         val replierModel: String? = null,
+        // Experiment knob: enable chain-of-thought for the PLANNER calls only (replier stays off).
+        // Settable via the `local_llm_planner_thinking` pref so we can A/B planner thinking on/off.
+        val plannerThinking: Boolean = false,
         val nativeToolCalling: Boolean = true,
         val environmentRepliesEnabled: Boolean = true,
         val temperature: Double? = null,
@@ -62,7 +65,12 @@ data class LocalLlmSettings(
                 )
         return LocalRuntimeLlmConfig(
                 plannerClient = client,
-                plannerConfig = generationConfig(resolvedPlannerModel, agentOverride),
+                plannerConfig =
+                        generationConfig(
+                                resolvedPlannerModel,
+                                agentOverride,
+                                enableThinking = plannerThinking
+                        ),
                 replierClient = client,
                 replierConfig = generationConfig(resolvedReplierModel, agentOverride),
                 nativeToolCalling = agentOverride?.nativeToolCalling ?: nativeToolCalling,
@@ -72,16 +80,17 @@ data class LocalLlmSettings(
 
     private fun generationConfig(
             model: String,
-            agentOverride: AgentLlmSettingsOverride?
+            agentOverride: AgentLlmSettingsOverride?,
+            enableThinking: Boolean = false
     ): LlmGenerationConfig =
             LlmGenerationConfig(
                     model = model,
                     temperature = agentOverride?.temperature ?: temperature,
                     maxTokens = agentOverride?.maxTokens ?: maxTokens,
                     timeoutMillis = agentOverride?.timeoutMillis ?: timeoutMillis,
-                    // Chain-of-thought is disabled for every local-runtime call (planner, replier,
-                    // decision): on qwen3.7-plus it cuts a reply round from ~14s to a few seconds.
-                    enableThinking = false
+                    // CoT is off by default (on qwen3.7-plus it cuts a reply round from ~14s to a few
+                    // seconds); the planner opts in via plannerThinking for the thinking-on cells.
+                    enableThinking = enableThinking
             )
 
     override fun toString(): String =
@@ -100,13 +109,16 @@ data class LocalLlmSettings(
     companion object {
         const val DEFAULT_TIMEOUT_MILLIS: Long = 60_000L
 
-        // Default provider for a fresh install. The actual values are injected at build time from
-        // the (gitignored) local.properties via BuildConfig and are only baked into local debug
-        // builds — never committed. A clean checkout / release build leaves these blank, so the app
-        // simply ships unconfigured and the user supplies their own provider in-app.
+        // Provider (base_url + api_key) is injected at build time from the (gitignored)
+        // local.properties via BuildConfig and is only baked into local debug builds — never
+        // committed. A clean checkout / release build leaves the provider blank, so the app ships
+        // unconfigured and the user supplies their own provider in-app. The MODEL ids + planner
+        // thinking ARE committed (baked in defaultConfig), so the role split is the default everywhere.
         val DEFAULT_BASE_URL: String? = BuildConfig.LLM_DEFAULT_BASE_URL.ifBlank { null }
         val DEFAULT_API_KEY: String? = BuildConfig.LLM_DEFAULT_API_KEY.ifBlank { null }
         val DEFAULT_PLANNER_MODEL: String? = BuildConfig.LLM_DEFAULT_PLANNER_MODEL.ifBlank { null }
+        val DEFAULT_REPLIER_MODEL: String? = BuildConfig.LLM_DEFAULT_REPLIER_MODEL.ifBlank { null }
+        val DEFAULT_PLANNER_THINKING: Boolean = BuildConfig.LLM_DEFAULT_PLANNER_THINKING
         // Enabled by default only when a key was actually baked in (local debug build).
         val DEFAULT_ENABLED: Boolean = !DEFAULT_API_KEY.isNullOrBlank()
     }

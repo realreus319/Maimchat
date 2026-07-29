@@ -31,12 +31,14 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.History
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -47,23 +49,33 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import com.l2dchat.browser.BrowserComm
+import com.l2dchat.worker.WorkerActivity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.chat.MotionCommand
-import com.l2dchat.chat.service.ChatRuntimeMode
 import com.l2dchat.chat.service.ChatServiceClient
 import com.l2dchat.core.config.AgentProfileRepository
 import com.l2dchat.core.config.AgentPromptTemplateNames
 import com.l2dchat.core.config.DefaultAgentProfileSeeder
 import com.l2dchat.core.config.EditableAgentProfile
 import com.l2dchat.core.config.LocalLlmSettings
+import com.l2dchat.core.config.PersonaRegistry
+import com.l2dchat.core.config.WorkerLlmSettings
 import com.l2dchat.core.storage.ChatDatabase
 import com.l2dchat.live2d.ImprovedLive2DRenderer
 import com.l2dchat.live2d.Live2DModelLifecycleManager
@@ -113,16 +125,18 @@ fun ChatWithModelScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val connectionState by chatManager.connectionState.collectAsState()
-    val connectionLabel by chatManager.connectionLabel.collectAsState()
+    val runtimeState by chatManager.runtimeState.collectAsState()
+    val runtimeLabel by chatManager.runtimeLabel.collectAsState()
     val runtimeDiagnostic by chatManager.runtimeDiagnostic.collectAsState()
     val messages by chatManager.messages.collectAsState()
     val isThinking by chatManager.processing.collectAsState()
     val standardMessages by chatManager.standardMessages.collectAsState()
     val currentUserNickname by chatManager.userNickname.collectAsState()
+    val personaDisplayName by chatManager.personaDisplayName.collectAsState()
+    val selectedPersona by chatManager.selectedPersona.collectAsState()
     val localLlmSettings by chatManager.localLlmSettings.collectAsState()
-    val runtimeMode by chatManager.runtimeMode.collectAsState()
     val effectiveLocalLlmSettings = localLlmSettings
+    val workerLlmSettings by chatManager.workerLlmSettings.collectAsState()
     val prefs =
             remember(context) {
                 context.getSharedPreferences(
@@ -143,11 +157,10 @@ fun ChatWithModelScreen(
             }
     var inputText by remember { mutableStateOf("") }
     var showConnectionDialog by remember { mutableStateOf(false) }
+    var showWorkerConfigDialog by remember { mutableStateOf(false) }
     var showAgentProfileDialog by remember { mutableStateOf(false) }
-    var serverUrl by remember { mutableStateOf("ws://localhost:8080/ws") }
+    var showPersonaDialog by remember { mutableStateOf(false) }
     var nickname by remember { mutableStateOf(chatManager.getUserNickname() ?: "") }
-    var receiverUserId by remember { mutableStateOf("") }
-    var receiverUserNickname by remember { mutableStateOf("") }
     var wallpaperBgPath by rememberSaveable { mutableStateOf(persistedWallpaperPath.orEmpty()) }
     var wallpaperTempPath by rememberSaveable { mutableStateOf(persistedWallpaperPath.orEmpty()) }
     var wallpaperBubbleCount by
@@ -161,34 +174,26 @@ fun ChatWithModelScreen(
             }
     var showWallpaperDialog by remember { mutableStateOf(false) }
     var showLogViewer by remember { mutableStateOf(false) }
+    var showHistoryViewer by remember { mutableStateOf(false) }
     var backgroundBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    // 可选平台字段（不填写则使用默认）
-    var platform by remember { mutableStateOf(chatManager.getPlatform().orEmpty()) }
-    // 远端连接确认弹窗
-    var showConnectConfirm by remember { mutableStateOf(false) }
     var chatInputHeightPx by remember { mutableStateOf(0) }
     var visualSurfaceWidthPx by remember { mutableStateOf(0) }
     var visualSurfaceHeightPx by remember { mutableStateOf(0) }
     val connectionErrorBanners = remember { mutableStateListOf<ConnectionErrorBanner>() }
-    var suppressMissingUrlWarning by rememberSaveable { mutableStateOf(true) }
     var pendingAgentProfileExportJson by remember { mutableStateOf<String?>(null) }
     var agentProfileImportEvent by remember { mutableStateOf<AgentProfileImportEvent?>(null) }
     val runtimeStatusLine =
             remember(
-                    runtimeMode,
-                    connectionState,
-                    connectionLabel,
+                    runtimeState,
+                    runtimeLabel,
                     runtimeDiagnostic,
-                    effectiveLocalLlmSettings,
-                    serverUrl
+                    effectiveLocalLlmSettings
             ) {
                 buildRuntimeStatusLine(
-                        runtimeMode = runtimeMode,
-                        connectionState = connectionState,
-                        connectionLabel = connectionLabel,
+                        runtimeState = runtimeState,
+                        runtimeLabel = runtimeLabel,
                         runtimeDiagnostic = runtimeDiagnostic,
-                        localLlmSettings = effectiveLocalLlmSettings,
-                        serverUrl = serverUrl
+                        localLlmSettings = effectiveLocalLlmSettings
                 )
             }
 
@@ -295,22 +300,8 @@ fun ChatWithModelScreen(
             }
 
     LaunchedEffect(chatManager) {
-        val missingUrlKeywords =
-                listOf(
-                        "未设置服务器地址",
-                        "未提供有效的服务器地址",
-                        "未设置远端 WebSocket 地址",
-                        "未提供有效的远端 WebSocket 地址",
-                        "未配置连接地址",
-                        "尚未配置 WebSocket 地址"
-                )
         chatManager.errors.collect { raw ->
             val message = raw.trim().ifEmpty { "运行时出现未知错误" }
-            val suppressThis =
-                    suppressMissingUrlWarning &&
-                            missingUrlKeywords.any { keyword -> keyword in message }
-            if (suppressThis) return@collect
-
             val entry = ConnectionErrorBanner(System.nanoTime(), message)
             connectionErrorBanners.add(entry)
             if (connectionErrorBanners.size > 5) {
@@ -320,29 +311,19 @@ fun ChatWithModelScreen(
     }
 
     LaunchedEffect(Unit) {
-        prefs.getString("last_url", null)?.let { serverUrl = it }
         prefs.getString("nickname", null)?.let {
             nickname = it
             if (it.isNotBlank()) chatManager.setUserProfile(it)
-        }
-        prefs.getString("receiver_user_id", null)?.let { receiverUserId = it }
-        prefs.getString("receiver_user_nickname", null)?.let { receiverUserNickname = it }
-        prefs.getString("platform", null)?.let {
-            val storedPlatform = it.trim()
-            platform = storedPlatform
-            chatManager.updatePlatformPreference(storedPlatform)
-        }
-        if (receiverUserId.isNotBlank() || receiverUserNickname.isNotBlank()) {
-            chatManager.setReceiverInfo(
-                    receiverUserId.ifBlank { null },
-                    receiverUserNickname.ifBlank { null }
-            )
         }
         wallpaperPrefs.getString(WallpaperComm.PREF_WALLPAPER_BG_PATH, null)?.let {
             if (wallpaperBgPath != it) wallpaperBgPath = it
             if (wallpaperTempPath != it) wallpaperTempPath = it
         }
     }
+
+    // 运行时随聊天界面自动启动：进入即触发一次（ensureBound + 启动），不再依赖手动操作。
+    // 配置无效时运行时会进入 ERROR 态，由错误横幅/状态行呈现，用户可通过齿轮设置修正后即生效。
+    LaunchedEffect(Unit) { chatManager.startLocalRuntime() }
 
     LaunchedEffect(wallpaperBgPath) {
         val newBitmap = wallpaperBgPath.takeIf { it.isNotBlank() }?.let { loadBackgroundBitmap(it) }
@@ -396,15 +377,9 @@ fun ChatWithModelScreen(
     DisposableEffect(Unit) { onDispose { backgroundBitmap?.takeIf { !it.isRecycled }?.recycle() } }
 
     LaunchedEffect(currentModel) {
-        val folder = currentModel?.folderPath
-        val editor = wallpaperPrefs.edit()
-        if (folder != null) {
-            editor.putString(WallpaperComm.PREF_WALLPAPER_MODEL_FOLDER, folder)
-        } else {
-            editor.remove(WallpaperComm.PREF_WALLPAPER_MODEL_FOLDER)
-        }
-        editor.apply()
-        sendWallpaperModelBroadcast(context, folder)
+        // "更换模型" is the single source of truth (chat_prefs/selected_model_folder, persisted by
+        // MainActivity.persistModelSelection). Here we only notify the running wallpaper to switch live.
+        sendWallpaperModelBroadcast(context, currentModel?.folderPath)
     }
 
     LaunchedEffect(modelKey) {
@@ -605,7 +580,7 @@ fun ChatWithModelScreen(
                 TopAppBar(
                         title = {
                             Column {
-                                Text(currentModel!!.name)
+                                Text(personaDisplayName)
                                 Text(
                                         text = runtimeStatusLine,
                                         style = MaterialTheme.typography.bodySmall,
@@ -615,6 +590,10 @@ fun ChatWithModelScreen(
                             }
                         },
                         actions = {
+                            // 聊天记录浏览：进入全屏历史记录模式（默认界面只浮现最近几条）。
+                            IconButton(onClick = { showHistoryViewer = true }) {
+                                Icon(Icons.Default.History, contentDescription = "聊天记录")
+                            }
                             IconButton(onClick = { applyLiveWallpaper(context) }) {
                                 Icon(Icons.Default.Wallpaper, contentDescription = "应用为系统壁纸")
                             }
@@ -624,80 +603,9 @@ fun ChatWithModelScreen(
                                         showWallpaperDialog = true
                                     }
                             ) { Icon(Icons.Default.Image, contentDescription = "壁纸背景设置") }
-                            // 配置按钮
+                            // 配置按钮（运行时随界面自动启动；改完配置即重启生效）
                             IconButton(onClick = { showConnectionDialog = true }) {
                                 Icon(Icons.Default.Settings, contentDescription = "运行设置")
-                            }
-                            // 启动按钮（仅在未运行时显示）
-                            if (connectionState ==
-                                            ChatServiceClient.ChatConnectionState.DISCONNECTED ||
-                                            connectionState ==
-                                                    ChatServiceClient.ChatConnectionState.ERROR
-                            ) {
-                                IconButton(
-                                        onClick = {
-                                            val errors =
-                                                    validateConfig(
-                                                            serverUrl,
-                                                            nickname,
-                                                            effectiveLocalLlmSettings
-                                                    )
-                                            uiLogger.debug(
-                                                    "Connect action tapped state=${connectionState.name} url=$serverUrl nickname=$nickname errors=${errors.joinToString()}"
-                                            )
-                                            if (errors.isEmpty()) {
-                                                if (runtimeMode == ChatRuntimeMode.LOCAL) {
-                                                    val sanitizedPlatform = platform.trim()
-                                                    platform = sanitizedPlatform
-                                                    chatManager.updatePlatformPreference(
-                                                            sanitizedPlatform
-                                                    )
-                                                    chatManager.setUserProfile(nickname)
-                                                    chatManager.setReceiverInfo(
-                                                            receiverUserId.ifBlank { null },
-                                                            receiverUserNickname.ifBlank { null }
-                                                    )
-                                                    chatManager.updateLocalLlmSettings(
-                                                            effectiveLocalLlmSettings
-                                                    )
-                                                    chatManager.startLocalRuntime()
-                                                } else {
-                                                    showConnectConfirm = true
-                                                }
-                                            } else {
-                                                // 打开配置对话框并提示
-                                                showConnectionDialog = true
-                                            }
-                                        }
-                                ) {
-                                    Icon(
-                                            Icons.Filled.PlayArrow,
-                                            contentDescription =
-                                                    if (runtimeMode == ChatRuntimeMode.LOCAL) {
-                                                        "启动本地运行时"
-                                                    } else {
-                                                        "连接远端 WebSocket"
-                                                    }
-                                    )
-                                }
-                            }
-                            // 停止按钮（仅在运行中显示）
-                            if (connectionState ==
-                                            ChatServiceClient.ChatConnectionState.CONNECTED ||
-                                            connectionState ==
-                                                    ChatServiceClient.ChatConnectionState.CONNECTING
-                            ) {
-                                IconButton(onClick = { chatManager.disconnect() }) {
-                                    Icon(
-                                            Icons.Filled.Stop,
-                                            contentDescription =
-                                                    if (runtimeMode == ChatRuntimeMode.LOCAL) {
-                                                        "停止本地运行时"
-                                                    } else {
-                                                        "断开远端 WebSocket"
-                                                    }
-                                    )
-                                }
                             }
                             Box {
                                 IconButton(onClick = { overflowExpanded = true }) {
@@ -729,6 +637,20 @@ fun ChatWithModelScreen(
                                             onClick = {
                                                 overflowExpanded = false
                                                 onModelSelectionRequest()
+                                            }
+                                    )
+                                    DropdownMenuItem(
+                                            text = { Text("切换人设") },
+                                            onClick = {
+                                                overflowExpanded = false
+                                                showPersonaDialog = true
+                                            }
+                                    )
+                                    DropdownMenuItem(
+                                            text = { Text("Worker 配置") },
+                                            onClick = {
+                                                overflowExpanded = false
+                                                showWorkerConfigDialog = true
                                             }
                                     )
                                     DropdownMenuItem(
@@ -773,7 +695,7 @@ fun ChatWithModelScreen(
 
                 FloatingMessagesOverlay(
                         recentMessages = messages,
-                        standardMessages = standardMessages,
+                        assistantName = personaDisplayName,
                         userNickname = currentUserNickname,
                         isThinking = isThinking,
                         modifier =
@@ -784,17 +706,10 @@ fun ChatWithModelScreen(
                 ChatInputBar(
                         inputText = inputText,
                         onInputChange = { inputText = it },
-                        enabled =
-                                connectionState == ChatServiceClient.ChatConnectionState.CONNECTED,
                         onSend = {
                             if (inputText.isNotBlank()) {
-                                if (!chatManager.hasUserNickname()) {
-                                    // 没有昵称则打开配置弹窗让用户填写
-                                    showConnectionDialog = true
-                                } else {
-                                    chatManager.sendUserMessage(inputText.trim())
-                                    inputText = ""
-                                }
+                                chatManager.sendUserMessage(inputText.trim())
+                                inputText = ""
                             }
                         },
                         modifier =
@@ -825,44 +740,64 @@ fun ChatWithModelScreen(
         }
         if (showConnectionDialog) {
             ConnectionConfigDialog(
-                    currentUrl = serverUrl,
                     nickname = nickname,
-                    platform = platform,
-                    receiverUserId = receiverUserId,
-                    receiverUserNickname = receiverUserNickname,
-                    runtimeMode = runtimeMode,
                     localLlmSettings = effectiveLocalLlmSettings,
-                    onUrlChange = { serverUrl = it },
                     onNicknameChange = { nickname = it },
-                    onPlatformChange = { platform = it },
-                    onReceiverUserIdChange = { receiverUserId = it },
-                    onReceiverUserNicknameChange = { receiverUserNickname = it },
                     onSave = { valid, nextLocalLlmSettings ->
                         if (valid) {
-                            val sanitizedPlatform = platform.trim()
-                            platform = sanitizedPlatform
-                            chatManager.updatePlatformPreference(sanitizedPlatform)
                             chatManager.setUserProfile(nickname)
-                            chatManager.setReceiverInfo(
-                                    receiverUserId.ifBlank { null },
-                                    receiverUserNickname.ifBlank { null }
-                            )
-                            prefs.edit()
-                                    .putString("last_url", serverUrl)
-                                    .putString("nickname", nickname)
-                                    .putString("platform", sanitizedPlatform.ifBlank { null })
-                                    .putString("receiver_user_id", receiverUserId.ifBlank { null })
-                                    .putString(
-                                            "receiver_user_nickname",
-                                            receiverUserNickname.ifBlank { null }
-                                    )
-                                    .apply()
+                            prefs.edit().putString("nickname", nickname).apply()
                             chatManager.updateLocalLlmSettings(nextLocalLlmSettings)
                             chatManager.startLocalRuntime()
                             showConnectionDialog = false
                         }
                     },
                     onDismiss = { showConnectionDialog = false }
+            )
+        }
+        if (showWorkerConfigDialog) {
+            WorkerConfigDialog(
+                    settings = workerLlmSettings,
+                    onSave = { next ->
+                        chatManager.updateWorkerLlmSettings(next)
+                        showWorkerConfigDialog = false
+                    },
+                    onDismiss = { showWorkerConfigDialog = false }
+            )
+        }
+        if (showPersonaDialog) {
+            AlertDialog(
+                    onDismissRequest = { showPersonaDialog = false },
+                    title = { Text("切换人设") },
+                    text = {
+                        Column {
+                            PersonaRegistry.availablePersonas().forEach { persona ->
+                                val pick = {
+                                    if (persona.id != selectedPersona) {
+                                        chatManager.setActivePersona(persona.id)
+                                    }
+                                    showPersonaDialog = false
+                                }
+                                Row(
+                                        modifier =
+                                                Modifier.fillMaxWidth()
+                                                        .clickable(onClick = pick)
+                                                        .padding(vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                            selected = persona.id == selectedPersona,
+                                            onClick = pick
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(persona.displayName)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showPersonaDialog = false }) { Text("取消") }
+                    }
             )
         }
         if (showAgentProfileDialog) {
@@ -903,56 +838,12 @@ fun ChatWithModelScreen(
         if (showLogViewer) {
             LogViewerDialog(onDismiss = { showLogViewer = false })
         }
-        if (showConnectConfirm) {
-            AlertDialog(
-                    onDismissRequest = { showConnectConfirm = false },
-                    title = { Text("确认远端连接") },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("WebSocket: $serverUrl")
-                            Text("我的昵称: ${nickname.ifBlank { "(未填写)" }}")
-                            val previewPlatform = platform.trim()
-                            Text("Platform: ${previewPlatform.ifBlank { "(默认)" }}")
-                            Text(
-                                    "对方身份: " +
-                                            listOf(
-                                                            receiverUserNickname.takeIf {
-                                                                it.isNotBlank()
-                                                            },
-                                                            receiverUserId.takeIf {
-                                                                it.isNotBlank()
-                                                            }
-                                                    )
-                                                    .filterNotNull()
-                                                    .joinToString(" / ")
-                                                    .ifBlank { "(未设置)" }
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(
-                                onClick = {
-                                    showConnectConfirm = false
-                                    // 最终连接远端
-                                    val sanitizedPlatform = platform.trim()
-                                    platform = sanitizedPlatform
-                                    chatManager.setUserProfile(nickname)
-                                    chatManager.setReceiverInfo(
-                                            receiverUserId.ifBlank { null },
-                                            receiverUserNickname.ifBlank { null }
-                                    )
-                                    chatManager.updatePlatformPreference(sanitizedPlatform)
-                                    suppressMissingUrlWarning = false
-                                    uiLogger.info(
-                                            "Confirm connect triggered url=$serverUrl platform=$sanitizedPlatform nickname=$nickname receiverId=${receiverUserId.ifBlank { "(null)" }}"
-                                    )
-                                    chatManager.connect(serverUrl, sanitizedPlatform)
-                                }
-                        ) { Text("连接远端") }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showConnectConfirm = false }) { Text("取消") }
-                    }
+        if (showHistoryViewer) {
+            ChatHistoryViewer(
+                    messages = messages,
+                    userNickname = currentUserNickname,
+                    assistantName = personaDisplayName,
+                    onClose = { showHistoryViewer = false },
             )
         }
         if (showWallpaperDialog) {
@@ -1023,7 +914,6 @@ private fun Live2DModelLifecycleManager.playMotionCommand(command: MotionCommand
 private fun ChatInputBar(
         inputText: String,
         onInputChange: (String) -> Unit,
-        enabled: Boolean,
         onSend: () -> Unit,
         modifier: Modifier = Modifier
 ) {
@@ -1042,8 +932,7 @@ private fun ChatInputBar(
                     onValueChange = onInputChange,
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("输入消息...") },
-                    maxLines = 4,
-                    enabled = enabled
+                    maxLines = 4
             )
             Spacer(modifier = Modifier.width(8.dp))
             FloatingActionButton(
@@ -1162,33 +1051,37 @@ private fun ConnectionErrorToast(message: String, onDismiss: () -> Unit) {
 @Composable
 private fun FloatingMessagesOverlay(
         recentMessages: List<ChatServiceClient.ChatMessageSnapshot>,
-        standardMessages: List<MessageBase>,
+        assistantName: String,
         userNickname: String?,
         isThinking: Boolean = false,
         modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
     val tail = remember(recentMessages) { recentMessages.takeLast(5) }
-    val senderNameById =
-            remember(standardMessages) {
-                val m = mutableMapOf<String, String>()
-                standardMessages.forEach { mb ->
-                    val id = mb.messageInfo.messageId
-                    if (!id.isNullOrBlank()) {
-                        val sInfo = mb.messageInfo.senderInfo?.userInfo
-                        val name =
-                                sInfo?.userNickname?.takeIf { !it.isNullOrBlank() }
-                                        ?: sInfo?.userId?.takeIf { !it.isNullOrBlank() } ?: "对方"
-                        m[id] = name
-                    }
-                }
-                m
-            }
     val hiddenMap = remember { mutableStateMapOf<String, Boolean>() }
+    // A reply that grows past 3/4 of the screen would cover the input/controls and trap the UI, so
+    // hide such an oversized bubble from the floating overlay (it stays fully readable in 查看日志).
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp
+    val maxBubbleHeightPx = with(LocalDensity.current) { (screenHeightDp.dp * 0.75f).toPx() }
     val fadingSet = remember { mutableStateMapOf<String, Boolean>() }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         tail.forEachIndexed { index, msg ->
             if ((hiddenMap[msg.id] ?: false)) return@forEachIndexed
+            // An AI-agent activity message renders INLINE as its status/summary bubble (left-aligned),
+            // sitting in the conversation flow at the point the agent was called.
+            val agentJson = msg.agentActivityJson
+            if (agentJson != null) {
+                Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Start
+                ) { WorkerStatusBubble(agentJson) }
+                return@forEachIndexed
+            }
+            val fileJson = msg.fileInfoJson
+            if (fileJson != null) {
+                FileBubble(fileJson)
+                return@forEachIndexed
+            }
             val animAlpha = remember(msg.id) { Animatable(1f) }
             val shouldFadeOut = tail.size >= 5 && index == 0
             Row(
@@ -1203,12 +1096,15 @@ private fun FloatingMessagesOverlay(
                                                 MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
                                 ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                        modifier = Modifier.alpha(animAlpha.value)
+                        modifier =
+                                Modifier.alpha(animAlpha.value).onSizeChanged { size ->
+                                    if (size.height > maxBubbleHeightPx) hiddenMap[msg.id] = true
+                                }
                 ) {
                     Column(modifier = Modifier.padding(10.dp).widthIn(max = 320.dp)) {
                         val title =
                                 if (msg.isFromUser) (userNickname ?: "我")
-                                else (senderNameById[msg.id] ?: "对方")
+                                else assistantName
                         Text(
                                 text = title,
                                 style = MaterialTheme.typography.labelMedium,
@@ -1218,7 +1114,9 @@ private fun FloatingMessagesOverlay(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(text = msg.content, modifier = Modifier.weight(1f, fill = false))
+                            SelectionContainer(modifier = Modifier.weight(1f, fill = false)) {
+                                Text(text = msg.content)
+                            }
                             if (msg.failed) {
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Icon(
@@ -1250,9 +1148,272 @@ private fun FloatingMessagesOverlay(
             }
         }
 
+        // The live "thinking" indicator (agent activity is now an inline conversation bubble above).
         if (isThinking) {
             ThinkingBubble()
         }
+    }
+}
+
+@Composable
+private fun WorkerStatusBubble(status: String) {
+    val context = LocalContext.current
+    val activity = remember(status) { WorkerActivity.parse(status) } ?: return
+    val done = activity.isDone
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Card(
+                colors =
+                        CardDefaults.cardColors(
+                                containerColor =
+                                        MaterialTheme.colorScheme.primaryContainer.copy(
+                                                alpha = if (done) 0.85f else 0.92f
+                                        )
+                        ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Row(
+                    modifier =
+                            Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                    .widthIn(max = 320.dp),
+                    verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(text = if (done) "✅" else "🔧", style = MaterialTheme.typography.bodyMedium)
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f, fill = false)) {
+                    Text(
+                            text = if (done) "AI 智能体调用完成" else "AI 智能体工作中",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                            text =
+                                    if (done) "${activity.steps} 步 · ${activity.tools} 次工具调用"
+                                    else activity.text.take(100),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                    )
+                }
+                // Browser icon: only when the agent used the browser. Tapping it asks the (hidden)
+                // overlay to expand so the user can view the current tab / live page.
+                if (activity.browser) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                            text = "🌐",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier =
+                                    Modifier.clip(CircleShape)
+                                            .clickable { BrowserComm.requestExpand(context) }
+                                            .padding(6.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Full-screen chat-history browsing mode. The default chat surface only floats the last few messages
+ * over the character; this lets the user scroll the full loaded conversation (newest at the bottom).
+ */
+@Composable
+private fun ChatHistoryViewer(
+        messages: List<ChatServiceClient.ChatMessageSnapshot>,
+        userNickname: String?,
+        assistantName: String,
+        onClose: () -> Unit,
+) {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+            Row(
+                    modifier =
+                            Modifier.fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "关闭")
+                }
+                Text(
+                        text = "聊天记录（${messages.size}）",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
+                )
+            }
+            if (messages.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("暂无聊天记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                val listState = rememberLazyListState()
+                LaunchedEffect(messages.size) {
+                    listState.scrollToItem((messages.size - 1).coerceAtLeast(0))
+                }
+                LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    item { Spacer(modifier = Modifier.height(8.dp)) }
+                    items(messages, key = { it.id }) { msg ->
+                        val agentJson = msg.agentActivityJson
+                        val fileJson = msg.fileInfoJson
+                        if (agentJson != null) {
+                            Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.Start
+                            ) { WorkerStatusBubble(agentJson) }
+                        } else if (fileJson != null) {
+                            FileBubble(fileJson)
+                        } else {
+                            HistoryBubble(msg, userNickname, assistantName)
+                        }
+                    }
+                    item { Spacer(modifier = Modifier.height(12.dp)) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryBubble(
+        msg: ChatServiceClient.ChatMessageSnapshot,
+        userNickname: String?,
+        assistantName: String,
+) {
+    val fromUser = msg.isFromUser
+    Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = if (fromUser) Arrangement.End else Arrangement.Start,
+    ) {
+        Card(
+                colors =
+                        CardDefaults.cardColors(
+                                containerColor =
+                                        if (fromUser) MaterialTheme.colorScheme.primaryContainer
+                                        else MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                modifier = Modifier.widthIn(max = 300.dp),
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Text(
+                        text =
+                                if (fromUser) userNickname?.takeIf { it.isNotBlank() } ?: "我"
+                                else assistantName,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                )
+                SelectionContainer {
+                    Text(
+                            text = msg.content,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                if (msg.timestamp > 0L) {
+                    Text(
+                            text = formatHistoryTime(msg.timestamp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatHistoryTime(ts: Long): String =
+        java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+                .format(java.util.Date(ts))
+
+/** A tappable attachment bubble for a file the worker submitted (`submit_file`). */
+@Composable
+private fun FileBubble(infoJson: String) {
+    val context = LocalContext.current
+    val info =
+            remember(infoJson) {
+                runCatching { com.google.gson.JsonParser.parseString(infoJson).asJsonObject }
+                        .getOrNull()
+            }
+                    ?: return
+    fun str(k: String): String? =
+            info.get(k)?.takeIf { !it.isJsonNull && it.isJsonPrimitive }?.asString
+    val name = str("name") ?: "file"
+    val path = str("path")
+    val mime = str("mime")
+    val size = info.get("size")?.takeIf { it.isJsonPrimitive }?.asLong ?: 0L
+    val description = str("description")
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Card(
+                colors =
+                        CardDefaults.cardColors(
+                                containerColor =
+                                        MaterialTheme.colorScheme.secondaryContainer.copy(
+                                                alpha = 0.92f
+                                        )
+                        ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                modifier = Modifier.clickable { openSubmittedFile(context, path, mime) }
+        ) {
+            Row(
+                    modifier = Modifier.padding(12.dp).widthIn(max = 320.dp),
+                    verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("📎", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(name, style = MaterialTheme.typography.bodyMedium)
+                    val sub = buildString {
+                        append(formatFileSize(size))
+                        if (!description.isNullOrBlank()) {
+                            append(" · ")
+                            append(description)
+                        } else {
+                            append(" · 点按打开")
+                        }
+                    }
+                    Text(
+                            sub,
+                            style = MaterialTheme.typography.labelSmall,
+                            color =
+                                    MaterialTheme.colorScheme.onSecondaryContainer.copy(
+                                            alpha = 0.7f
+                                    )
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatFileSize(bytes: Long): String =
+        when {
+            bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024))
+            bytes >= 1024 -> "%.1f KB".format(bytes / 1024.0)
+            else -> "$bytes B"
+        }
+
+private fun openSubmittedFile(context: android.content.Context, path: String?, mime: String?) {
+    if (path.isNullOrBlank()) return
+    runCatching {
+        val uri =
+                androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        java.io.File(path)
+                )
+        context.startActivity(
+                android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, mime ?: "*/*")
+                    addFlags(
+                            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    )
+                }
+        )
     }
 }
 
@@ -1345,57 +1506,32 @@ private fun applyLiveWallpaper(context: Context) {
 }
 
 private fun validateConfig(
-        url: String,
-        nickname: String,
         localLlmSettings: LocalLlmSettings = LocalLlmSettings()
-): List<String> = RuntimeSettingsValidation.validateConfig(url, nickname, localLlmSettings)
+): List<String> = RuntimeSettingsValidation.validateConfig(localLlmSettings)
 
 private fun buildRuntimeStatusLine(
-        runtimeMode: ChatRuntimeMode,
-        connectionState: ChatServiceClient.ChatConnectionState,
-        connectionLabel: String,
+        runtimeState: ChatServiceClient.RuntimeState,
+        runtimeLabel: String,
         runtimeDiagnostic: String,
-        localLlmSettings: LocalLlmSettings,
-        serverUrl: String
+        localLlmSettings: LocalLlmSettings
 ): String {
-    val stateLabel =
-            connectionLabel.ifBlank { fallbackRuntimeStatusLabel(runtimeMode, connectionState) }
-    val baseLine =
-            when (runtimeMode) {
-                ChatRuntimeMode.LOCAL ->
-                        "${localProviderStatusText(localLlmSettings)} · $stateLabel"
-                ChatRuntimeMode.REMOTE -> "${remoteProviderStatusText(serverUrl)} · $stateLabel"
-            }
+    val stateLabel = runtimeLabel.ifBlank { fallbackRuntimeStatusLabel(runtimeState) }
+    val baseLine = "${localProviderStatusText(localLlmSettings)} · $stateLabel"
     val diagnostic =
             runtimeDiagnostic.trim().takeIf {
-                connectionState == ChatServiceClient.ChatConnectionState.ERROR &&
+                runtimeState == ChatServiceClient.RuntimeState.ERROR &&
                         it.isNotEmpty() &&
                         !baseLine.contains(it)
             }
     return diagnostic?.let { "$baseLine · $it" } ?: baseLine
 }
 
-private fun fallbackRuntimeStatusLabel(
-        runtimeMode: ChatRuntimeMode,
-        connectionState: ChatServiceClient.ChatConnectionState
-): String =
-        when (runtimeMode) {
-            ChatRuntimeMode.LOCAL ->
-                    when (connectionState) {
-                        ChatServiceClient.ChatConnectionState.DISCONNECTED ->
-                                "本地运行时: stopped"
-                        ChatServiceClient.ChatConnectionState.CONNECTING -> "本地运行时: starting"
-                        ChatServiceClient.ChatConnectionState.CONNECTED -> "本地运行时: ready"
-                        ChatServiceClient.ChatConnectionState.ERROR -> "本地运行时: error"
-                    }
-            ChatRuntimeMode.REMOTE ->
-                    when (connectionState) {
-                        ChatServiceClient.ChatConnectionState.DISCONNECTED ->
-                                "远端 WebSocket: 未连接"
-                        ChatServiceClient.ChatConnectionState.CONNECTING -> "远端 WebSocket: 连接中"
-                        ChatServiceClient.ChatConnectionState.CONNECTED -> "远端 WebSocket: 已连接"
-                        ChatServiceClient.ChatConnectionState.ERROR -> "远端 WebSocket: 错误"
-                    }
+private fun fallbackRuntimeStatusLabel(runtimeState: ChatServiceClient.RuntimeState): String =
+        when (runtimeState) {
+            ChatServiceClient.RuntimeState.STOPPED -> "本地运行时: stopped"
+            ChatServiceClient.RuntimeState.STARTING -> "本地运行时: starting"
+            ChatServiceClient.RuntimeState.RUNNING -> "本地运行时: ready"
+            ChatServiceClient.RuntimeState.ERROR -> "本地运行时: error"
         }
 
 private fun localProviderStatusText(settings: LocalLlmSettings): String {
@@ -1406,11 +1542,6 @@ private fun localProviderStatusText(settings: LocalLlmSettings): String {
             settings.replierModel?.trim()?.takeIf { it.isNotEmpty() } ?: "Replier 跟随 Planner"
     val tools = if (settings.nativeToolCalling) "Tools native" else "Tools compat"
     return "LLM: $endpoint · Planner: $planner · Replier: $replier · $tools"
-}
-
-private fun remoteProviderStatusText(serverUrl: String): String {
-    val url = serverUrl.trim().takeIf { it.isNotEmpty() } ?: "未配置"
-    return "WebSocket: $url"
 }
 
 private fun buildLocalLlmSettings(
@@ -1754,27 +1885,172 @@ private tailrec fun Context.findActivity(): Activity? =
         }
 
 @Composable
+private fun WorkerConfigDialog(
+        settings: WorkerLlmSettings,
+        onSave: (WorkerLlmSettings) -> Unit,
+        onDismiss: () -> Unit
+) {
+    var baseUrl by remember { mutableStateOf(settings.baseUrl.orEmpty()) }
+    var apiKey by remember { mutableStateOf(settings.apiKey.orEmpty()) }
+    var model by remember { mutableStateOf(settings.model.orEmpty()) }
+    // The editable CC-format settings.json — starts from the stored JSON, else the model-only baseline.
+    var json by remember {
+        mutableStateOf(
+                settings.settingsJson?.takeIf { it.isNotBlank() }
+                        ?: WorkerLlmSettings.buildModelOnlyJson(
+                                settings.baseUrl,
+                                settings.apiKey,
+                                settings.model
+                        )
+        )
+    }
+    // While true, the JSON is the auto baseline and is regenerated whenever a basic field changes.
+    var jsonIsAuto by remember { mutableStateOf(settings.settingsJson.isNullOrBlank()) }
+    var revertedNote by remember { mutableStateOf(false) }
+
+    fun baseline(): String =
+            WorkerLlmSettings.buildModelOnlyJson(baseUrl.trim(), apiKey.trim(), model.trim())
+    fun onBasicChanged() {
+        revertedNote = false
+        if (jsonIsAuto) json = baseline()
+    }
+
+    val jsonValid = remember(json) { WorkerLlmSettings.isValidJsonObject(json) }
+
+    AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Worker / cc_research 配置") },
+            text = {
+                Column(
+                        modifier =
+                                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                            "本机 worker（cc_research）使用的模型连接。填好下面三项即可，下方是发送给 worker 的 CC 格式 settings.json，可进一步编辑。",
+                            style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                            value = baseUrl,
+                            onValueChange = {
+                                baseUrl = it
+                                onBasicChanged()
+                            },
+                            label = { Text("Base URL") },
+                            placeholder = { Text("https://api.openai.com/v1") },
+                            singleLine = true,
+                            keyboardOptions =
+                                    KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                            value = apiKey,
+                            onValueChange = {
+                                apiKey = it
+                                onBasicChanged()
+                            },
+                            label = { Text("API Key") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions =
+                                    KeyboardOptions(keyboardType = KeyboardType.Password),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                            value = model,
+                            onValueChange = {
+                                model = it
+                                onBasicChanged()
+                            },
+                            label = { Text("模型 ID") },
+                            placeholder = { Text("qwen-plus") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                                "settings.json (CC 格式，可编辑)",
+                                style = MaterialTheme.typography.labelLarge
+                        )
+                        TextButton(
+                                onClick = {
+                                    json = baseline()
+                                    jsonIsAuto = true
+                                    revertedNote = false
+                                }
+                        ) { Text("重置为模型配置") }
+                    }
+                    OutlinedTextField(
+                            value = json,
+                            onValueChange = {
+                                json = it
+                                jsonIsAuto = false
+                                revertedNote = false
+                            },
+                            isError = !jsonValid,
+                            textStyle =
+                                    LocalTextStyle.current.copy(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 12.sp
+                                    ),
+                            modifier =
+                                    Modifier.fillMaxWidth().heightIn(min = 150.dp, max = 320.dp)
+                    )
+                    when {
+                        !jsonValid ->
+                                Text(
+                                        "JSON 无效，保存时将恢复为仅模型配置。",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall
+                                )
+                        revertedNote ->
+                                Text(
+                                        "JSON 有误，已恢复为仅模型配置，请确认后再次保存。",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.bodySmall
+                                )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                        onClick = {
+                            if (jsonValid && json.isNotBlank()) {
+                                val isBaseline = json.trim() == baseline().trim()
+                                onSave(
+                                        WorkerLlmSettings(
+                                                baseUrl = baseUrl.trim().ifBlank { null },
+                                                apiKey = apiKey.trim().ifBlank { null },
+                                                model = model.trim().ifBlank { null },
+                                                settingsJson = if (isBaseline) null else json,
+                                        )
+                                )
+                            } else {
+                                // 报错 → 恢复为仅模型配置的 JSON（保持打开，待用户确认后再保存）
+                                json = baseline()
+                                jsonIsAuto = true
+                                revertedNote = true
+                            }
+                        }
+                ) { Text("保存") }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+@Composable
 private fun ConnectionConfigDialog(
-        currentUrl: String,
         nickname: String,
-        platform: String,
-        receiverUserId: String,
-        receiverUserNickname: String,
-        runtimeMode: ChatRuntimeMode,
         localLlmSettings: LocalLlmSettings,
-        onUrlChange: (String) -> Unit,
         onNicknameChange: (String) -> Unit,
-        onPlatformChange: (String) -> Unit,
-        onReceiverUserIdChange: (String) -> Unit,
-        onReceiverUserNicknameChange: (String) -> Unit,
         onSave: (Boolean, LocalLlmSettings) -> Unit,
         onDismiss: () -> Unit
 ) {
-    var tempUrl by remember { mutableStateOf(currentUrl) }
     var tempNickname by remember { mutableStateOf(nickname) }
-    var tempPlatform by remember { mutableStateOf(platform) }
-    var tempRecvId by remember { mutableStateOf(receiverUserId) }
-    var tempRecvNick by remember { mutableStateOf(receiverUserNickname) }
     var tempLocalEnabled by remember { mutableStateOf(localLlmSettings.enabled) }
     var tempLocalBaseUrl by remember { mutableStateOf(localLlmSettings.baseUrl.orEmpty()) }
     var tempLocalApiKey by remember { mutableStateOf(localLlmSettings.apiKey.orEmpty()) }
@@ -1823,14 +2099,12 @@ private fun ConnectionConfigDialog(
             }
     val errors =
             remember(
-                    tempUrl,
-                    tempNickname,
                     nextLocalLlmSettings,
                     tempTemperature,
                     tempMaxTokens,
                     tempTimeoutMillis
             ) {
-                validateConfig(tempUrl, tempNickname, nextLocalLlmSettings) +
+                validateConfig(nextLocalLlmSettings) +
                         validateLocalLlmNumericInput(
                                 enabled = tempLocalEnabled,
                                 temperature = tempTemperature,
@@ -1847,59 +2121,13 @@ private fun ConnectionConfigDialog(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     OutlinedTextField(
-                            value = tempUrl,
-                            onValueChange = {
-                                tempUrl = it
-                                onUrlChange(it)
-                            },
-                            label = { Text("远端 WebSocket 地址(高级)") },
-                            placeholder = { Text("ws://host:port/path") },
-                            enabled = runtimeMode == ChatRuntimeMode.REMOTE,
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                            modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
                             value = tempNickname,
                             onValueChange = {
                                 tempNickname = it
                                 onNicknameChange(it)
                             },
-                            label = { Text("我的昵称 (必填)") },
-                            placeholder = { Text("请输入昵称") },
-                            singleLine = true,
-                            isError = showErrors && errors.any { it.contains("昵称") },
-                            modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                            value = tempPlatform,
-                            onValueChange = {
-                                tempPlatform = it
-                                onPlatformChange(it)
-                            },
-                            label = { Text("Platform(可选，默认: ${chatManagerPlatformDefault()})") },
-                            placeholder = { Text("留空使用默认") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                    )
-                    HorizontalDivider()
-                    OutlinedTextField(
-                            value = tempRecvNick,
-                            onValueChange = {
-                                tempRecvNick = it
-                                onReceiverUserNicknameChange(it)
-                            },
-                            label = { Text("对方昵称(可选)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                            value = tempRecvId,
-                            onValueChange = {
-                                tempRecvId = it
-                                onReceiverUserIdChange(it)
-                            },
-                            label = { Text("对方ID(可选)") },
+                            label = { Text("我的昵称 (可选)") },
+                            placeholder = { Text("留空使用默认: 我") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                     )
@@ -2034,20 +2262,7 @@ private fun ConnectionConfigDialog(
                             } else {
                                 append("LLM Provider: 未启用\n")
                             }
-                            append("我: ${tempNickname.ifBlank { "(未填写)" }}\n")
-                            append(
-                                    "Platform: ${tempPlatform.trim().ifBlank { "(默认:${chatManagerPlatformDefault()})" }}\n"
-                            )
-                            append(
-                                    "对方: " +
-                                            listOf(
-                                                            tempRecvNick.takeIf { it.isNotBlank() },
-                                                            tempRecvId.takeIf { it.isNotBlank() }
-                                                    )
-                                                    .filterNotNull()
-                                                    .joinToString(" / ")
-                                                    .ifBlank { "(未设置)" }
-                            )
+                            append("我: ${tempNickname.ifBlank { "我" }}")
                         }
                         Text(
                                 summary,
@@ -2055,11 +2270,6 @@ private fun ConnectionConfigDialog(
                                 color = MaterialTheme.colorScheme.secondary
                         )
                     }
-                    Text(
-                            text = "示例: ws://[host]:[port]/ws",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.secondary
-                    )
                 }
             },
             confirmButton = {
@@ -2076,9 +2286,6 @@ private fun ConnectionConfigDialog(
             dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
 }
-
-// 提供默认 platform（保持与服务端默认值一致）
-private fun chatManagerPlatformDefault(): String = "live2d_chat"
 
 private fun agentIdFromModelName(modelName: String?): String? =
         modelName?.trim()?.takeIf { it.isNotEmpty() }

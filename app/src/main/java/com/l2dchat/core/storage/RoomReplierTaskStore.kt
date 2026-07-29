@@ -41,7 +41,7 @@ class RoomReplierTaskStore(
                             ),
                     "trigger_message_id" to trigger.messageId,
                     "trigger_type" to trigger.triggerType.wireValue,
-                    "content" to content,
+                    "thinking" to thinking,
                     "reply_guidance" to replyGuidance,
                     "style_override" to styleOverride,
                     "emotion_hint" to emotionHint,

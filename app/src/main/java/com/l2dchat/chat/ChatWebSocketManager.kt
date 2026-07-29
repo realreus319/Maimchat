@@ -4,16 +4,15 @@ import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
-import com.l2dchat.chat.transport.ChatTransport
 import com.l2dchat.chat.transport.ChatTransportCallbacks
 import com.l2dchat.chat.transport.LocalTransport
-import com.l2dchat.chat.transport.RemoteWebSocketConfig
-import com.l2dchat.chat.transport.RemoteWebSocketTransport
 import com.l2dchat.core.config.AgentLlmSettingsOverride
 import com.l2dchat.core.config.DefaultAgentProfileSeeder
 import com.l2dchat.core.config.LocalLlmSettings
+import com.l2dchat.core.config.PersonaRegistry
 import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.environment.EnvironmentTriggerSubmission
+import com.l2dchat.worker.WorkerResultRecovery
 import com.l2dchat.core.message.AgentConfigEntity
 import com.l2dchat.core.message.RuntimeMessageMapper
 import com.l2dchat.core.message.VisibleMessageRecord
@@ -40,6 +39,7 @@ import com.l2dchat.core.tools.ReplierTaskRequest
 import com.l2dchat.core.tools.ReplierTaskStore
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
+import com.l2dchat.preferences.ChatPreferenceKeys
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,26 +53,28 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class ChatWebSocketManager {
     companion object {
-        private const val DEFAULT_PLATFORM = "live2d_chat"
+        const val DEFAULT_USER_NICKNAME = "我"
         private const val HISTORY_PREFS = "chat_history"
         private const val HISTORY_LIMIT = 200
         private const val ROOM_IMPORT_PREFIX = "room_imported_"
-        private const val IDLE_TRIGGER_DELAY_MILLIS = 5 * 60 * 1000L
+        // Reply reconcile/poll backstop cadence + look-back window.
+        private const val REPLY_RECONCILE_INTERVAL_MS = 5_000L
+        private const val REPLY_RECONCILE_WINDOW_MS = 15 * 60_000L
     }
     private val logger = L2DLogger.module(LogModule.CHAT)
     private val gson = Gson()
-    private var platform: String = DEFAULT_PLATFORM
-    private var authToken: String? = null
     private var localLlmSettings = LocalLlmSettings()
+    private var workerLlmSettings = com.l2dchat.core.config.WorkerLlmSettings()
     private val messageHandler = Live2DChatMessageHandler()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
-    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+    private val _runtimeState = MutableStateFlow(RuntimeState.STOPPED)
+    val runtimeState: StateFlow<RuntimeState> = _runtimeState.asStateFlow()
     private val _errors =
             MutableSharedFlow<String>(
                     extraBufferCapacity = 8,
@@ -85,8 +87,8 @@ class ChatWebSocketManager {
             ChatMotionController { command -> emitMotionMessage(command) }
     private val transportCallbacks =
             object : ChatTransportCallbacks {
-                override fun onStateChanged(state: ConnectionState) {
-                    _connectionState.value = state
+                override fun onStateChanged(state: RuntimeState) {
+                    _runtimeState.value = state
                 }
 
                 override fun onIncomingText(text: String) {
@@ -102,6 +104,8 @@ class ChatWebSocketManager {
                             if (processing) processingCount.incrementAndGet()
                             else processingCount.decrementAndGet()
                     _processing.value = count > 0
+                    // Agent activity is now an inline conversation message (see startAgentActivity), so
+                    // there's no separate floating indicator to clear here.
                 }
 
                 override fun onMessageFailed(
@@ -117,7 +121,6 @@ class ChatWebSocketManager {
             LocalTransport(
                     scope = scope,
                     callbacks = transportCallbacks,
-                    platformProvider = { platform },
                     agentNameProvider = { receiverModelName },
                     perceptionStoreFactory = { localPerceptionStoreFor() },
                     plannerSessionStoreFactory = { localPlannerSessionStoreFor() },
@@ -141,13 +144,247 @@ class ChatWebSocketManager {
                     },
                     environmentStateProvider = environmentStateProvider,
                     motionController = localMotionController,
-                    runtimeStateDaoProvider = { localRuntimeStateDaoForTools() }
+                    runtimeStateDaoProvider = { localRuntimeStateDaoForTools() },
+                    // Give the planner an on-device worker sub-agent (proot/Alpine/python Claude-Code
+                    // port in the headless engine pkg). Context + creds resolve lazily at call time.
+                    extraNormalTools =
+                            listOf(
+                                    com.l2dchat.core.tools.AskAiAgentTool(
+                                            contextProvider = { appContext },
+                                            // Detached dispatch: hand the task to the background worker
+                                            // manager and return at once; the turn ends, the worker runs
+                                            // off-turn, its result returns later as a SYS trigger.
+                                            dispatch = { task, goal, origin ->
+                                                backgroundWorkerManager.dispatch(task, goal, origin)
+                                            },
+                                    )
+                            ),
+                    // Every planner turn sees the live goals+status of this conversation's detached
+                    // background workers, so it always knows what's running off-turn.
+                    backgroundStatusProvider =
+                            com.l2dchat.core.reply.BackgroundWorkerContextProvider { cid, aid ->
+                                backgroundWorkerManager.statusBlock(cid, aid)
+                            },
             )
-    private val remoteTransport =
-            RemoteWebSocketTransport(scope = scope, callbacks = transportCallbacks)
-    private var activeTransport: ChatTransport = localTransport
+    /** Worker LLM creds: its own config if set, else fall back to the chat LLM planner config. */
+    private fun workerCredsOrNull(): com.l2dchat.worker.WorkerCreds? {
+        val w = workerLlmSettings
+        val effective =
+                if (w.hasConnection()) w
+                else {
+                    val l = localLlmSettings
+                    if (l.enabled && !l.baseUrl.isNullOrBlank() && !l.plannerModel.isNullOrBlank())
+                            com.l2dchat.core.config.WorkerLlmSettings(
+                                    baseUrl = l.baseUrl,
+                                    apiKey = l.apiKey,
+                                    model = l.plannerModel,
+                                    settingsJson = null,
+                            )
+                    else null
+                }
+        return effective?.let {
+            com.l2dchat.worker.WorkerCreds(
+                    apiKey = it.apiKey.orEmpty(),
+                    baseUrl = it.baseUrl.orEmpty(),
+                    model = it.model.orEmpty(),
+                    settingsJson = it.effectiveSettingsJson(),
+            )
+        }
+    }
+
+    /**
+     * Compress the recent conversation for [origin] into a short background block via a cheap compact
+     * LLM call, so a freshly-dispatched worker knows what was said/produced before (e.g. a file path
+     * from an earlier task). Best-effort — returns null on any miss.
+     */
+    private suspend fun compactPlannerContext(origin: com.l2dchat.worker.WorkerOrigin): String? {
+        val settings = localLlmSettings
+        val baseUrl = settings.baseUrl?.takeIf { it.isNotBlank() }
+                ?: run { logger.info("compact: no baseUrl (localLlmSettings empty?)"); return null }
+        // Compact model: a fast, non-thinking model — reuse the replier model, else the planner model.
+        val model =
+                (settings.replierModel ?: settings.plannerModel)?.takeIf { it.isNotBlank() }
+                        ?: run { logger.info("compact: no model"); return null }
+        val ctx = appContext ?: return null
+        val dao =
+                com.l2dchat.core.storage.ChatDatabase.getInstance(ctx.applicationContext)
+                        .runtimeMessageDao()
+        // History is stored under the persona/history context (= activeModelKey), NOT the trigger's
+        // user-scoped contextId. Fall back to the origin agent if the active key is missing.
+        val historyContextId = activeModelKey ?: origin.agentId
+        val rows =
+                runCatching { dao.queryRecentStandardMessages(historyContextId, null, 16) }
+                        .getOrNull()
+                        ?.reversed()
+                        ?: return null
+        val transcript =
+                rows.mapNotNull { m ->
+                            val text = m.rawText?.trim()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                            val who = if (m.senderUserId == activeModelKey) "助手" else "用户"
+                            "$who：${text.take(400)}"
+                        }
+                        .joinToString("\n")
+        if (transcript.isBlank()) { logger.info("compact: empty transcript"); return null }
+        logger.info("compact: model=$model transcript=${transcript.length} chars")
+        val client =
+                com.l2dchat.core.llm.OpenAiCompatibleClient(
+                        baseUrl = baseUrl,
+                        apiKeyProvider = { settings.apiKey }
+                )
+        val resp =
+                runCatching {
+                            client.chatCompletion(
+                                    messages =
+                                            listOf(
+                                                    com.l2dchat.core.llm.LlmMessage.system(
+                                                            "把下面这段用户与助手的对话压缩成一段简短的“背景摘要”，供接下来一个后台任务参考。" +
+                                                                    "尽量保留一切具体信息：用户提到的事实/偏好/数据（如喜欢的数字、名字、参数、要求）、" +
+                                                                    "已经产出过的东西（尤其是文件路径/文件名、之前算出的结果、之前做过的事），以及正在进行或提到的任务。" +
+                                                                    "宁可多留也不要漏掉具体信息。只有当整段对话都只是寒暄、没有任何具体内容时，才回复“无”。" +
+                                                                    "直接给摘要，不要评论客套，不超过 200 字。"
+                                                    ),
+                                                    com.l2dchat.core.llm.LlmMessage.user(
+                                                            "对话（旧→新）：\n$transcript"
+                                                    )
+                                            ),
+                                    config =
+                                            com.l2dchat.core.llm.LlmGenerationConfig(
+                                                    model = model,
+                                                    temperature = 0.3,
+                                                    maxTokens = 400,
+                                                    enableThinking = false
+                                            )
+                            )
+                        }
+                        .onFailure { logger.warn("compact: LLM call failed", it) }
+                        .getOrNull()
+                        ?: return null
+        val out = resp.text.trim()
+        logger.info("compact: got ${out.length} chars: ${out.take(60)}")
+        return if (out.isBlank() || out == "无") null else out
+    }
+
+    /**
+     * Detached background-worker manager: `ask_ai_agent` dispatches off-turn (≤3 concurrent), and each
+     * worker's result returns as a SYS trigger the planner delivers. Lazy so appContext is set first.
+     */
+    private val backgroundWorkerManager: com.l2dchat.worker.BackgroundWorkerManager by lazy {
+        com.l2dchat.worker.BackgroundWorkerManager(
+                context = appContext?.applicationContext
+                                ?: throw IllegalStateException("BackgroundWorkerManager: no app context"),
+                scope = scope,
+                credsProvider = { workerCredsOrNull() },
+                fileSink = { sub -> emitFileMessage(sub) },
+                onProgress = { _, _, kind, text ->
+                    when (kind) {
+                        "agent_start" -> {
+                            runBrowserUsed = false
+                            startAgentActivity(com.l2dchat.worker.WorkerActivity.running(text).toJson())
+                        }
+                        "tool", "status" -> {
+                            if (text.contains("browser", ignoreCase = true)) runBrowserUsed = true
+                            updateAgentActivity(
+                                    com.l2dchat.worker.WorkerActivity.running(text, runBrowserUsed).toJson()
+                            )
+                        }
+                        "agent_done" -> finishAgentActivity(text)
+                    }
+                },
+                onComplete = { origin, goal, result, isError ->
+                    val text =
+                            if (isError)
+                                    "【后台任务失败】目标：$goal。失败信息：$result。请如实、简洁地告诉用户这个任务没能完成。"
+                            else
+                                    "【后台任务已完成】目标：$goal。结果如下：\n$result\n\n请把这个结果整理后正常回复给用户一次。"
+                    com.l2dchat.logging.L2DLogger.module(com.l2dchat.logging.LogModule.CHAT)
+                            .info("[worker] onComplete goal='${goal.take(30)}' isError=$isError -> submit SYS")
+                    localTransport.submitBackgroundTrigger(
+                            com.l2dchat.core.trigger.Trigger(
+                                    contextId = origin.contextId,
+                                    agentId = origin.agentId,
+                                    messageId = "worker_done_" + java.util.UUID.randomUUID(),
+                                    triggerType = com.l2dchat.core.trigger.TriggerType.SYS,
+                                    priority = com.l2dchat.core.trigger.TriggerPriority.HIGH,
+                                    timestampSeconds = System.currentTimeMillis() / 1000.0,
+                                    payload = mapOf("text" to text),
+                            )
+                    )
+                },
+                compactContext = { origin -> compactPlannerContext(origin) },
+        )
+    }
+
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
+
+    // The on-device AI agent's activity is an INLINE message in the conversation flow (one per
+    // ask_ai_agent call), inserted on agent_start and updated in place through agent_done. It is
+    // session-only (not persisted to history, never fed to the model). `runBrowserUsed` lights the
+    // bubble's browser icon; `currentAgentMsgId` is the id of the in-flight agent bubble being updated.
+    @Volatile private var runBrowserUsed = false
+    @Volatile private var currentAgentMsgId: String? = null
+
+    /** Insert a new inline agent-activity bubble (ephemeral) at the end of the conversation. */
+    @Synchronized
+    private fun startAgentActivity(json: String) {
+        val id = "agent_" + java.util.UUID.randomUUID().toString()
+        currentAgentMsgId = id
+        val list = _messages.value.toMutableList()
+        list.add(ChatMessage(id = id, content = "", isFromUser = false, agentActivityJson = json))
+        _messages.value = list
+    }
+
+    /** Surface a worker-submitted file as a tappable attachment bubble in the conversation (ephemeral). */
+    @Synchronized
+    private fun emitFileMessage(sub: com.l2dchat.worker.FileSubmission) {
+        val json =
+                com.google.gson.JsonObject()
+                        .apply {
+                            addProperty("name", sub.filename)
+                            addProperty("path", sub.savedPath)
+                            sub.mime?.let { addProperty("mime", it) }
+                            addProperty("size", sub.size)
+                            sub.description?.let { addProperty("description", it) }
+                        }
+                        .toString()
+        val msg =
+                ChatMessage(
+                        id = "file_" + java.util.UUID.randomUUID().toString(),
+                        content = "",
+                        isFromUser = false,
+                        fileInfoJson = json,
+                )
+        _messages.value = _messages.value + msg
+        appendVisibleHistory(msg) // persist so the attachment survives a history reload
+    }
+
+    /** Update the in-flight agent bubble in place (running→done); re-creates if it was cleared. */
+    @Synchronized
+    private fun updateAgentActivity(json: String) {
+        val id = currentAgentMsgId
+        if (id == null) {
+            startAgentActivity(json)
+            return
+        }
+        val list = _messages.value.toMutableList()
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx < 0) {
+            startAgentActivity(json)
+            return
+        }
+        list[idx] = list[idx].copy(agentActivityJson = json)
+        _messages.value = list
+    }
+
+    /** Finalize the agent bubble to its done-summary AND persist it (survives a history reload). */
+    @Synchronized
+    private fun finishAgentActivity(json: String) {
+        updateAgentActivity(json)
+        val id = currentAgentMsgId
+        val msg = _messages.value.firstOrNull { it.id == id }
+        currentAgentMsgId = null
+        if (msg != null) appendVisibleHistory(msg)
+    }
     private val _standardMessages = MutableStateFlow<List<MessageBase>>(emptyList())
     val standardMessages: StateFlow<List<MessageBase>> = _standardMessages.asStateFlow()
     // True while the runtime is actively processing a turn (planner/replier running). Drives the
@@ -162,6 +399,10 @@ class ChatWebSocketManager {
     private val _messageFailures =
             MutableSharedFlow<String>(extraBufferCapacity = 8, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val messageFailures: SharedFlow<String> = _messageFailures.asSharedFlow()
+    // Emitted after a bulk history reload so the service re-pushes a full snapshot to clients.
+    private val _historyReloaded =
+            MutableSharedFlow<Unit>(extraBufferCapacity = 4, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val historyReloaded: SharedFlow<Unit> = _historyReloaded.asSharedFlow()
 
     fun isMessageFailed(id: String): Boolean = failedMessageIds.contains(id)
 
@@ -174,7 +415,7 @@ class ChatWebSocketManager {
     private var lastServerMessageTime: Long = 0L
     private var onMotionTrigger: ((String, Int, Boolean) -> Unit)? = null
     private var userId: String = generateUserId()
-    private var userNickname: String? = null
+    private var userNickname: String = DEFAULT_USER_NICKNAME
     private var userCardName: String? = null
     private var receiverModelName: String? = null
     private var activeModelKey: String? = null
@@ -183,23 +424,12 @@ class ChatWebSocketManager {
     private var historyLoadGeneration: Long = 0L
     @Volatile private var activeAgentConfig: AgentConfigEntity? = null
     private var activeAgentConfigLoadGeneration: Long = 0L
-    private var receiverUserIdOverride: String? = null
-    private var receiverUserNicknameOverride: String? = null
-    private var idleTimerJob: Job? = null
-    private var lastActivityMillis: Long = System.currentTimeMillis()
-    private var idleAppVisible: Boolean = false
-    private var idleWallpaperVisible: Boolean = false
 
-    enum class ConnectionState {
-        DISCONNECTED,
-        CONNECTING,
-        CONNECTED,
+    enum class RuntimeState {
+        STOPPED,
+        STARTING,
+        RUNNING,
         ERROR
-    }
-
-    enum class RuntimeMode {
-        LOCAL,
-        REMOTE
     }
 
     data class ChatMessage(
@@ -207,66 +437,74 @@ class ChatWebSocketManager {
             val content: String,
             val isFromUser: Boolean,
             val timestamp: Long = System.currentTimeMillis(),
-            val motionData: MotionData? = null
+            val motionData: MotionData? = null,
+            // When set, this message is an INLINE AI-agent activity bubble (running/done summary, JSON of
+            // WorkerActivity) rendered in the conversation flow instead of a text bubble. One is inserted
+            // per ask_ai_agent call and updated in place. Session-only (not persisted to history).
+            val agentActivityJson: String? = null,
+            // When set, this message is a FILE the worker submitted (JSON: name/path/mime/size/description),
+            // rendered as a tappable attachment bubble. Session-only.
+            val fileInfoJson: String? = null
     )
 
     data class MotionData(val group: String, val index: Int, val loop: Boolean = false)
 
-    fun setConnectionConfig(platform: String, authToken: String? = null) {
-        applyPlatformPreference(platform)
-        this.authToken = authToken
-    }
-
-    fun updatePlatformPreference(platform: String?) {
-        applyPlatformPreference(platform)
-    }
-
-    private fun applyPlatformPreference(platformInput: String?) {
-        val resolvedPlatform = resolvePlatform(platformInput)
-        if (this.platform != resolvedPlatform) {
-            this.platform = resolvedPlatform
-            synchronizeCachedMessagePlatforms(resolvedPlatform)
-        }
-    }
-
-    private fun resolvePlatform(input: String?): String {
-        val trimmed = input?.trim().orEmpty()
-        return if (trimmed.isEmpty()) DEFAULT_PLATFORM else trimmed
-    }
-    fun connect(url: String, platform: String? = null, authToken: String? = null) {
-        cancelIdleEnvironmentTimer()
-        if (activeTransport.mode != RuntimeMode.REMOTE) {
-            activeTransport.stop("切换到远程 WebSocket", userInitiated = false)
-            activeTransport = remoteTransport
-        }
-        if (platform != null) updatePlatformPreference(platform)
-        if (authToken != null) this.authToken = authToken.takeIf { it.isNotBlank() }
-        remoteTransport.connect(RemoteWebSocketConfig(url, this.platform, this.authToken))
-    }
-
     fun startLocalRuntime() {
-        if (activeTransport.mode != RuntimeMode.LOCAL) {
-            activeTransport.stop("切换到本地运行时", userInitiated = true)
-            activeTransport = localTransport
-        }
+        reapOrphanedPlannerRounds() // one-shot: fail rounds orphaned by a prior process kill
+        startReplyReconciler() // poll-deliver any produced-but-undelivered reply (timeout/process death)
         refreshActiveAgentConfig(appContext, activeModelKey, rebuildRuntime = true)
         localTransport.start()
-        scheduleIdleEnvironmentTimer()
+        recoverBufferedWorkerResults() // replay worker results that finished while :chat was dead
     }
 
-    fun isLocalMode(): Boolean = activeTransport.mode == RuntimeMode.LOCAL
+    /**
+     * A worker task delegated via ask_ai_agent may finish while this (:chat) process is dead — the OS
+     * reaped the app while it was backgrounded mid-task, but the engine (separate process, foreground
+     * service) kept running the task and durably buffered its result. On startup, pull those buffered
+     * results and deliver each straight into the chat as an agent reply, so the user gets the answer
+     * they were waiting for. We deliver directly (not via the planner) because the originating turn is
+     * gone, and an ambient env-trigger would be dropped when environment replies are off. See
+     * [WorkerResultRecovery] + [buildReconciledReply].
+     */
+    private fun recoverBufferedWorkerResults() {
+        val ctx = appContext ?: return
+        WorkerResultRecovery(ctx) { contextId, agentId, _, text, isError ->
+            // A worker that finished while :chat was dead — deliver its result the SAME way as a live
+            // completion: a SYS trigger the planner turns into a persona-voice reply. (Same path as
+            // BackgroundWorkerManager.onComplete; the goal is unknown post-restart, so it's omitted.)
+            val body = text.trim().ifBlank {
+                if (isError) "没有产生结果。" else "没有输出内容。"
+            }
+            val sysText =
+                    if (isError)
+                            "【后台任务失败】你之前派到后台的一个任务没能完成：$body。请如实、简洁地告诉用户。"
+                    else
+                            "【后台任务已完成】你之前派到后台的一个任务跑完了，结果如下：\n$body\n\n请把结果整理后正常回复给用户一次。"
+            localTransport.submitBackgroundTrigger(
+                    com.l2dchat.core.trigger.Trigger(
+                            contextId = contextId,
+                            agentId = agentId,
+                            messageId = "worker_recovered_" + java.util.UUID.randomUUID(),
+                            triggerType = com.l2dchat.core.trigger.TriggerType.SYS,
+                            priority = com.l2dchat.core.trigger.TriggerPriority.HIGH,
+                            timestampSeconds = System.currentTimeMillis() / 1000.0,
+                            payload = mapOf("text" to sysText),
+                    )
+            )
+        }.recover()
+    }
 
     private fun reportConnectionError(message: String, throwable: Throwable? = null) {
         logger.error(message, throwable)
-        if (_connectionState.value != ConnectionState.CONNECTED) {
-            _connectionState.value = ConnectionState.ERROR
+        if (_runtimeState.value != RuntimeState.RUNNING) {
+            _runtimeState.value = RuntimeState.ERROR
         }
         scope.launch { _errors.emit(message) }
     }
 
     fun setUserProfile(nickname: String, cardName: String? = null, userId: String? = null) {
         val sanitizedNickname = nickname.trim()
-        userNickname = sanitizedNickname.ifBlank { null }
+        userNickname = sanitizedNickname.ifBlank { DEFAULT_USER_NICKNAME }
         userCardName = cardName?.ifBlank { null }
 
         val resolvedId =
@@ -278,8 +516,29 @@ class ChatWebSocketManager {
         resolvedId?.let { this.userId = it }
     }
     fun setActiveModel(context: Context, modelName: String?) {
-        receiverModelName = modelName?.ifBlank { null }
-        activeModelKey = modelName?.lowercase()?.replace(Regex("[^a-z0-9_-]+"), "_")
+        // modelName is the Live2D AVATAR (loaded by the UI). The persona/agent scope is INDEPENDENT —
+        // driven by the saved active persona — so switching avatars never changes the persona, and
+        // personas keep their own history. Apply the active persona to the agent scope here.
+        applyActivePersona(context, readSelectedPersona(context))
+    }
+
+    /**
+     * Switch the active PERSONA (小千 / 温柔助手). Persists the choice and loads that persona's own
+     * history / memory / mood / prompts (each persona is its own routing agentId). The Live2D avatar
+     * is unchanged.
+     */
+    fun setActivePersona(context: Context, personaId: String) {
+        val resolved = PersonaRegistry.normalize(personaId)
+        writeSelectedPersona(context, resolved)
+        clearMessagesEphemeral() // drop the old persona's in-memory view before the new one loads
+        applyActivePersona(context, resolved)
+    }
+
+    private fun applyActivePersona(context: Context, personaId: String) {
+        val resolved = PersonaRegistry.normalize(personaId)
+        val displayName = PersonaRegistry.displayNameFor(resolved) ?: resolved
+        activeModelKey = resolved
+        receiverModelName = displayName
         if (activeAgentConfig?.agentId != activeModelKey) {
             activeAgentConfig = null
         }
@@ -291,21 +550,32 @@ class ChatWebSocketManager {
                 ChatEnvironmentUpdate(modelKey = activeModelKey, modelName = receiverModelName)
         )
         seedDefaultAgentProfile(app, activeModelKey)
-        refreshActiveAgentConfig(app, activeModelKey, rebuildRuntime = isLocalMode())
+        refreshActiveAgentConfig(app, activeModelKey, rebuildRuntime = true)
         activeModelKey?.let { loadHistory(app, it) }
         emitModelChangedEnvironmentTrigger()
-        noteIdleActivity()
+    }
+
+    private fun readSelectedPersona(context: Context): String =
+            PersonaRegistry.normalize(
+                    context.applicationContext
+                            .getSharedPreferences(
+                                    ChatPreferenceKeys.PREFS_NAME,
+                                    Context.MODE_PRIVATE
+                            )
+                            .getString(ChatPreferenceKeys.SELECTED_PERSONA, null)
+            )
+
+    private fun writeSelectedPersona(context: Context, personaId: String) {
+        context.applicationContext
+                .getSharedPreferences(ChatPreferenceKeys.PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(ChatPreferenceKeys.SELECTED_PERSONA, personaId)
+                .apply()
     }
 
     fun updateEnvironmentState(update: ChatEnvironmentUpdate) {
-        updateIdleVisibility(update)
         environmentStateProvider.update(update)
         emitEnvironmentUpdateTriggers(update)
-        if (update.isIdleActivity()) {
-            noteIdleActivity()
-        } else {
-            scheduleIdleEnvironmentTimer()
-        }
     }
     fun reportMotionFinished(
             group: String? = null,
@@ -314,7 +584,7 @@ class ChatWebSocketManager {
             loop: Boolean = false,
             timestampMillis: Long = System.currentTimeMillis()
     ) {
-        val transport = localEnvironmentTransport() ?: return
+        val transport = localEnvironmentTransport()
         submitEnvironmentTriggers(
                 transport = transport,
                 submissions =
@@ -329,27 +599,24 @@ class ChatWebSocketManager {
                                         ),
                                 context = environmentTriggerContext()
                         )
-        )
-        noteIdleActivity()
-    }
-    fun setReceiverInfo(userId: String?, userNickname: String?) {
-        receiverUserIdOverride = userId?.ifBlank { null }
-        receiverUserNicknameOverride = userNickname?.ifBlank { null }
-    }
+        )    }
     fun setLocalLlmSettings(settings: LocalLlmSettings) {
         if (localLlmSettings == settings) return
         localLlmSettings = settings
         localTransport.rebuildRuntime("本地 LLM 配置更新")
     }
-    fun hasUserNickname(): Boolean = !userNickname.isNullOrBlank()
-    fun getUserNickname(): String? = userNickname
+    /** Worker (cc_research) config — read lazily by the AskAiAgentTool credsProvider at task time. */
+    fun setWorkerLlmSettings(settings: com.l2dchat.core.config.WorkerLlmSettings) {
+        workerLlmSettings = settings
+    }
+    fun hasUserNickname(): Boolean = true
+    fun getUserNickname(): String = userNickname
     private fun isSenderMe(sender: SenderInfo?): Boolean {
         if (sender == null) return false
         val sid = sender.userInfo?.userId
         if (!sid.isNullOrBlank() && sid == this.userId) return true
         val snick = sender.userInfo?.userNickname
-        if (!snick.isNullOrBlank() && !userNickname.isNullOrBlank() && snick == userNickname)
-                return true
+        if (!snick.isNullOrBlank() && snick == userNickname) return true
         return false
     }
 
@@ -367,7 +634,6 @@ class ChatWebSocketManager {
                 SenderInfo(
                         userInfo =
                                 UserInfo(
-                                        platform = platform,
                                         userId = userId,
                                         userNickname = userNickname,
                                         userCardname = userCardName
@@ -377,15 +643,16 @@ class ChatWebSocketManager {
                 ReceiverInfo(
                         userInfo =
                                 UserInfo(
-                                        platform = platform,
-                                        userId = receiverUserIdOverride ?: receiverModelName,
-                                        userNickname = receiverUserNicknameOverride
-                                                        ?: receiverModelName
+                                        // userId must be the normalized agent key (== routing agentId)
+                                        // so the assistant's own replies are recognized as assistant
+                                        // turns by `senderUserId == agentId`; the human-readable model
+                                        // name lives in the nickname for display only.
+                                        userId = activeModelKey,
+                                        userNickname = receiverModelName
                                 )
                 )
         val msgInfo =
                 BaseMessageInfo(
-                        platform = platform,
                         messageId = generateMessageId(),
                         time = System.currentTimeMillis() / 1000.0,
                         senderInfo = senderInfo,
@@ -431,6 +698,8 @@ class ChatWebSocketManager {
                                                 if (srvTs > 0) srvTs else result.message.timestamp
                                 )
                         addMessage(adjusted)
+                        // The character just replied → play a mood-driven Live2D motion.
+                        if (!fromUser) playMoodMotionForReply()
                         if (srvTs > 0 && srvTs > lastServerMessageTime)
                                 lastServerMessageTime = srvTs
                     }
@@ -457,12 +726,9 @@ class ChatWebSocketManager {
         sendStandardMessage(message)
     }
     fun sendStandardMessage(message: MessageBase) {
-        val transport = activeTransport
-        if (transport.mode == RuntimeMode.LOCAL) {
-            addStandardMessage(message)
-        }
-        if (!transport.send(message)) {
-            logger.warn("发送消息失败：当前传输=${transport.mode}")
+        addStandardMessage(message)
+        if (!localTransport.send(message)) {
+            logger.warn("发送消息失败：本地运行时")
         }
     }
 
@@ -487,6 +753,59 @@ class ChatWebSocketManager {
         return true
     }
 
+    /**
+     * Play a mood-driven Live2D motion for the character's reply: one-to-many — the current mood maps to
+     * a group of candidate motions and one is picked at random (see [MoodMotionMap]). Real moods use
+     * deliberate non-idle motions; a weak/absent mood plays a calm motion. The mood is read through the
+     * same Room connection the LLM writes it to. Called on each assistant reply.
+     */
+    private fun playMoodMotionForReply() {
+        val modelKey = activeModelKey
+        if (!MoodMotionMap.supports(modelKey)) return
+        val dao = localRuntimeStateDaoForTools() ?: return
+        val contextId = historyContextId(modelKey)
+        val agentId = historyAgentId(modelKey) ?: return
+        scope.launch {
+            // Dev hook (inert in normal use): files/debug_mood.txt = "valence,arousal" forces the mood
+            // used for selection, so the mapping can be tuned without waiting for the LLM.
+            val debugMood = runCatching {
+                val f = java.io.File(appContext?.filesDir, "debug_mood.txt")
+                if (f.exists()) f.readText().trim().split(",")
+                        .let { it[0].trim().toDouble() to it[1].trim().toDouble() }
+                else null
+            }.getOrNull()
+            val category: MoodMotionMap.MoodCategory
+            val where: String
+            if (debugMood != null) {
+                category = MoodMotionMap.categoryOf(debugMood.first, debugMood.second)
+                where = "debug v=${debugMood.first} a=${debugMood.second}"
+            } else {
+                val mood = runCatching { dao.queryMoodState(contextId, agentId) }.getOrNull()
+                if (mood == null) {
+                    category = MoodMotionMap.NO_MOOD
+                    where = "no-mood"
+                } else {
+                    val (v, a) =
+                            com.l2dchat.core.tools.decayedMood(
+                                    mood.valence,
+                                    mood.arousal,
+                                    mood.updatedAtMillis,
+                                    System.currentTimeMillis(),
+                            )
+                    category = MoodMotionMap.categoryOf(v, a)
+                    where = "v=${"%.2f".format(v)},a=${"%.2f".format(a)}"
+                }
+            }
+            MoodMotionMap.pick(modelKey, category)?.let { m ->
+                android.util.Log.i(
+                        "MoodMotion",
+                        "reply -> $category ($where) play ${m.group}/${m.index} model=$modelKey",
+                )
+                emitMotionMessage(MotionCommand(group = m.group, index = m.index))
+            }
+        }
+    }
+
     private fun buildMotionMessage(command: MotionCommand): MessageBase =
             buildStandardMessage(
                     listOf(Seg("text", MotionMessage.displayText(command))),
@@ -495,6 +814,7 @@ class ChatWebSocketManager {
                     additional = MotionMessage.additionalConfig(command)
             )
 
+    @Synchronized
     private fun addMessage(message: ChatMessage) {
         val list = _messages.value.toMutableList()
         if (list.any { it.id == message.id }) return
@@ -504,9 +824,8 @@ class ChatWebSocketManager {
         appendVisibleHistory(message)
         val key = activeModelKey
         val ctx = appContext
-        if (key != null && ctx != null) saveHistory(ctx, key)
-        noteIdleActivity()
-    }
+        if (key != null && ctx != null) saveHistory(ctx, key)    }
+
     private fun addStandardMessage(message: MessageBase) {
         val list = _standardMessages.value.toMutableList()
         val mid = message.messageInfo.messageId
@@ -519,84 +838,61 @@ class ChatWebSocketManager {
         if (key != null && ctx != null) saveHistory(ctx, key)
     }
 
-    private fun synchronizeCachedMessagePlatforms(newPlatform: String) {
-        val current = _standardMessages.value
-        if (current.isEmpty()) return
-        val updated = current.map { it.withPlatform(newPlatform) }
-        _standardMessages.value = updated
-    }
-
-    private fun MessageBase.withPlatform(newPlatform: String): MessageBase {
-        val updatedInfo = messageInfo.withPlatform(newPlatform)
-        return if (updatedInfo === messageInfo) this else copy(messageInfo = updatedInfo)
-    }
-
-    private fun BaseMessageInfo.withPlatform(newPlatform: String): BaseMessageInfo {
-        val updatedSender = senderInfo?.withPlatform(newPlatform)
-        val updatedReceiver = receiverInfo?.withPlatform(newPlatform)
-        val updatedGroup = groupInfo?.withPlatform(newPlatform)
-        val updatedUser = userInfo?.withPlatform(newPlatform)
-        if (platform == newPlatform &&
-                        updatedSender === senderInfo &&
-                        updatedReceiver === receiverInfo &&
-                        updatedGroup === groupInfo &&
-                        updatedUser === userInfo
-        )
-                return this
-        return copy(
-                platform = newPlatform,
-                senderInfo = updatedSender,
-                receiverInfo = updatedReceiver,
-                groupInfo = updatedGroup,
-                userInfo = updatedUser
-        )
-    }
-
-    private fun SenderInfo.withPlatform(newPlatform: String): SenderInfo {
-        val updatedGroup = groupInfo?.withPlatform(newPlatform)
-        val updatedUser = userInfo?.withPlatform(newPlatform)
-        if (updatedGroup === groupInfo && updatedUser === userInfo) return this
-        return copy(groupInfo = updatedGroup, userInfo = updatedUser)
-    }
-
-    private fun ReceiverInfo.withPlatform(newPlatform: String): ReceiverInfo {
-        val updatedGroup = groupInfo?.withPlatform(newPlatform)
-        val updatedUser = userInfo?.withPlatform(newPlatform)
-        if (updatedGroup === groupInfo && updatedUser === userInfo) return this
-        return copy(groupInfo = updatedGroup, userInfo = updatedUser)
-    }
-
-    private fun GroupInfo.withPlatform(newPlatform: String): GroupInfo {
-        if (platform == newPlatform) return this
-        return copy(platform = newPlatform)
-    }
-
-    private fun UserInfo.withPlatform(newPlatform: String): UserInfo {
-        if (platform == newPlatform) return this
-        return copy(platform = newPlatform)
-    }
     fun clearMessages() {
         _messages.value = emptyList()
         _standardMessages.value = emptyList()
         failedMessageIds.clear()
         environmentStateProvider.clearRecentMessages()
         lastServerMessageTime = 0L
-        noteIdleActivity()
         val key = activeModelKey
         val ctx = appContext
         if (key != null && ctx != null) {
-            saveHistory(ctx, key)
-            clearRoomHistory(key)
+            saveHistory(ctx, key) // overwrite the legacy SharedPreferences history with the empty list
+        }
+        clearAllPersistentChatData()
+    }
+
+    /**
+     * Wipe ALL persisted chat data so "清空聊天记录" yields a genuinely EMPTY context: the conversation
+     * (messages / standard_messages / media_blocks), the persona STATE that is re-injected into every
+     * planner+replier prompt (memories / impressions / mood_state — without this the persona keeps
+     * remembering the user and carries its mood across a clear), and the planner session logs
+     * (planner_rounds / planner_messages / tool_tasks). Unscoped on purpose: the same conversation's
+     * rows are spread across inconsistent context/agent ids (user id vs agent self-id), so a
+     * per-context delete misses some. Agent CONFIG (agent_configs / prompt_templates) is preserved —
+     * that's the persona definition, not chat data.
+     */
+    private fun clearAllPersistentChatData() {
+        val context = appContext ?: return
+        scope.launch {
+            runCatching {
+                val db = ChatDatabase.getInstance(context.applicationContext)
+                db.runtimeMessageDao().apply {
+                    deleteAllMessages()
+                    deleteAllStandardMessages()
+                }
+                db.runtimeStateDao().apply {
+                    deleteAllMemories()
+                    deleteAllImpressions()
+                    deleteAllMoodState()
+                    deleteAllMediaBlocks()
+                }
+                db.plannerStateDao().apply {
+                    deleteAllPlannerRounds()
+                    deleteAllPlannerMessages()
+                    deleteAllToolTasks()
+                }
+            }
+                    .onFailure { logger.error("彻底清空聊天数据失败", it) }
         }
     }
+
     fun clearMessagesEphemeral() {
         _messages.value = emptyList()
         _standardMessages.value = emptyList()
         failedMessageIds.clear()
         environmentStateProvider.clearRecentMessages()
-        lastServerMessageTime = 0L
-        noteIdleActivity()
-    }
+        lastServerMessageTime = 0L    }
     fun loadHistory(context: Context, modelKey: String) {
         val app = context.applicationContext
         appContext = app
@@ -683,12 +979,15 @@ class ChatWebSocketManager {
         _messages.value = visibleMessages
         _standardMessages.value = standardMessages
         syncEnvironmentRecentMessages()
-        synchronizeCachedMessagePlatforms(this.platform)
         lastServerMessageTime =
                 _standardMessages.value
                         .maxOfOrNull { (((it.messageInfo.time) ?: 0.0) * 1000).toLong() }
                         ?.takeIf { it > 0L }
                         ?: 0L
+        // A bulk reload (legacy then Room) REPLACES the whole list; the per-message broadcast only
+        // re-sends the last message, so signal clients to pull a fresh full snapshot — otherwise
+        // reloaded agent/file bubbles (which carry JSON only in the Room copy) show as empty.
+        scope.launch { _historyReloaded.emit(Unit) }
     }
 
     private fun loadRoomHistory(
@@ -802,20 +1101,6 @@ class ChatWebSocketManager {
         }
     }
 
-    private fun clearRoomHistory(modelKey: String) {
-        val context = appContext ?: return
-        val store = historyStoreFor(context)
-        val contextId = historyContextId(modelKey)
-        val agentId = historyAgentId(modelKey)
-        scope.launch {
-            try {
-                store.clearHistory(contextId, agentId)
-            } catch (e: Exception) {
-                logger.error("清空 Room 历史失败", e)
-            }
-        }
-    }
-
     private fun historyStoreFor(context: Context): ChatHistoryStore =
             historyStore
                     ?: RoomChatHistoryStore(
@@ -837,6 +1122,130 @@ class ChatWebSocketManager {
         val context = appContext ?: return NoopPlannerSessionStore
         val database = ChatDatabase.getInstance(context.applicationContext)
         return RoomPlannerSessionStore(database.plannerStateDao())
+    }
+
+    @Volatile private var orphanedRoundsReaped = false
+
+    /**
+     * Startup reconciliation (A): a planner round only leaves 'generating' via its coroutine
+     * finalizer, which a hard process kill (ColorOS LMK / freeze→kill / reinstall) skips. On a fresh
+     * `:chat` process every such row is an orphan that can never resume — so fail it and surface its
+     * originating message as failed, instead of letting the UI wait forever on a reply that will never
+     * come. The cutoff = this process's start, so a round created by THIS process is never reaped.
+     */
+    private fun reapOrphanedPlannerRounds() {
+        if (orphanedRoundsReaped) return
+        val context = appContext ?: return // not ready yet — a later call will retry
+        orphanedRoundsReaped = true
+        val cutoffMillis = System.currentTimeMillis()
+        scope.launch {
+            runCatching {
+                val dao = ChatDatabase.getInstance(context.applicationContext).plannerStateDao()
+                val triggerIds = dao.queryGeneratingRoundTriggerIds(cutoffMillis).filterNotNull()
+                val reaped = dao.failGeneratingRounds(cutoffMillis, cutoffMillis)
+                if (reaped > 0) {
+                    logger.info("startup: reaped $reaped orphaned planner round(s)")
+                    triggerIds.forEach { id ->
+                        failedMessageIds.add(id)
+                        _messageFailures.emit(id)
+                    }
+                }
+            }
+                    .onFailure { logger.warn("orphaned-round reconciliation failed", it) }
+        }
+    }
+
+    // Reconcile/poll reply delivery: a planner reply is ALWAYS durably saved (planner_messages), but
+    // the one-shot chat push can be lost to delivery timing (await timeout / process death). This
+    // backstop re-delivers any completed user-message round whose reply never reached the chat. Dedup
+    // is by the STABLE id "reply_<triggerMessageId>" (addMessage + addStandardMessage both dedup by id),
+    // so the fast push and this reconciler can never double-show a reply.
+    private val deliveredReplyRoundIds =
+            java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    @Volatile private var replyReconcilerStarted = false
+
+    private fun startReplyReconciler() {
+        reconcileUndeliveredReplies() // immediate catch-up on startup
+        if (replyReconcilerStarted) return
+        replyReconcilerStarted = true
+        scope.launch {
+            while (isActive) {
+                delay(REPLY_RECONCILE_INTERVAL_MS)
+                reconcileUndeliveredReplies()
+            }
+        }
+    }
+
+    private fun reconcileUndeliveredReplies() {
+        val context = appContext ?: return
+        scope.launch {
+            runCatching {
+                        val dao =
+                                ChatDatabase.getInstance(context.applicationContext).plannerStateDao()
+                        val sinceMs = System.currentTimeMillis() - REPLY_RECONCILE_WINDOW_MS
+                        val rows = dao.queryRecentCompletedReplies(sinceMs)
+                        for (row in rows) {
+                            if (row.roundId in deliveredReplyRoundIds) continue
+                            val tid = row.triggerMessageId ?: continue
+                            val replyId = "reply_$tid"
+                            if (_standardMessages.value.any {
+                                        it.messageInfo.messageId == replyId
+                                    }
+                            ) {
+                                // already shown (fast push delivered it) — remember and skip
+                                deliveredReplyRoundIds.add(row.roundId)
+                                continue
+                            }
+                            logger.info(
+                                    "reconciler: delivering undelivered reply for round ${row.roundId}"
+                            )
+                            val reply = buildReconciledReply(replyId, row.replyText)
+                            handleIncomingMessage(reply.toJsonString())
+                            deliveredReplyRoundIds.add(row.roundId)
+                        }
+                    }
+                    .onFailure { logger.warn("reply reconciliation failed", it) }
+        }
+    }
+
+    /**
+     * Build a chat-visible agent reply MessageBase with a caller-supplied STABLE id. Mirrors the
+     * runtime's agent-reply shape: sender = the agent/persona (so isSenderMe() is false → renders as a
+     * received bubble), receiver = the local user. Tagged message_type=chat / migration_phase=local_reply
+     * (NOT env_trigger, which handleIncomingMessage filters out).
+     */
+    private fun buildReconciledReply(messageId: String, text: String): MessageBase {
+        val agentUser =
+                UserInfo(
+                        userId = activeModelKey ?: "local_agent",
+                        userNickname = receiverModelName ?: "Maimchat"
+                )
+        val userUser =
+                UserInfo(
+                        userId = userId,
+                        userNickname = userNickname,
+                        userCardname = userCardName
+                )
+        val msgInfo =
+                BaseMessageInfo(
+                        messageId = messageId,
+                        time = System.currentTimeMillis() / 1000.0,
+                        senderInfo = SenderInfo(userInfo = agentUser),
+                        receiverInfo = ReceiverInfo(userInfo = userUser),
+                        userInfo = agentUser,
+                        formatInfo =
+                                FormatInfo(
+                                        contentFormat = listOf("text"),
+                                        acceptFormat = listOf("text", "image", "emoji", "voice")
+                                ),
+                        additionalConfig =
+                                mapOf(
+                                        "message_type" to "chat",
+                                        "runtime" to "local",
+                                        "migration_phase" to "local_reply"
+                                )
+                )
+        return MessageBase(msgInfo, Seg("text", text), text)
     }
 
     private fun localReplierTaskStoreFor(): ReplierTaskStore {
@@ -925,7 +1334,7 @@ class ChatWebSocketManager {
         if (agentId == null || app == null) {
             val hadConfig = activeAgentConfig != null
             activeAgentConfig = null
-            if (hadConfig && rebuildRuntime && activeTransport.mode == RuntimeMode.LOCAL) {
+            if (hadConfig && rebuildRuntime) {
                 localTransport.rebuildRuntime("角色 LLM 配置清空")
             }
             return
@@ -947,7 +1356,7 @@ class ChatWebSocketManager {
                     return@withContext
                 }
                 activeAgentConfig = config
-                if (rebuildRuntime && activeTransport.mode == RuntimeMode.LOCAL) {
+                if (rebuildRuntime) {
                     localTransport.rebuildRuntime("角色 LLM 配置更新")
                 }
             }
@@ -976,7 +1385,9 @@ class ChatWebSocketManager {
                     timestampMillis = timestamp,
                     motionGroup = motionData?.group,
                     motionIndex = motionData?.index,
-                    motionLoop = motionData?.loop ?: false
+                    motionLoop = motionData?.loop ?: false,
+                    agentActivityJson = agentActivityJson,
+                    fileInfoJson = fileInfoJson
             )
 
     private fun VisibleMessageRecord.toChatMessage(): ChatMessage =
@@ -990,7 +1401,9 @@ class ChatWebSocketManager {
                                 MotionData(motionGroup, motionIndex, motionLoop)
                             } else {
                                 null
-                            }
+                            },
+                    agentActivityJson = agentActivityJson,
+                    fileInfoJson = fileInfoJson
             )
 
     private fun syncEnvironmentRecentMessages() {
@@ -1006,7 +1419,7 @@ class ChatWebSocketManager {
     }
 
     private fun emitModelChangedEnvironmentTrigger() {
-        val transport = localEnvironmentTransport() ?: return
+        val transport = localEnvironmentTransport()
         submitEnvironmentTriggers(
                 transport = transport,
                 submissions = environmentTriggerEmitter.onModelChanged(environmentTriggerContext())
@@ -1014,7 +1427,7 @@ class ChatWebSocketManager {
     }
 
     private fun emitEnvironmentUpdateTriggers(update: ChatEnvironmentUpdate) {
-        val transport = localEnvironmentTransport() ?: return
+        val transport = localEnvironmentTransport()
         submitEnvironmentTriggers(
                 transport = transport,
                 submissions =
@@ -1025,65 +1438,7 @@ class ChatWebSocketManager {
         )
     }
 
-    private fun emitIdleTimerEnvironmentTrigger(idleMillis: Long, timestampMillis: Long) {
-        val transport = localEnvironmentTransport() ?: return
-        submitEnvironmentTriggers(
-                transport = transport,
-                submissions =
-                        environmentTriggerEmitter.onIdleTimer(
-                                idle =
-                                        ChatEnvironmentIdleTimer(
-                                                idleMillis = idleMillis,
-                                                appVisible = idleAppVisible,
-                                                wallpaperVisible = idleWallpaperVisible,
-                                                timestampMillis = timestampMillis
-                                        ),
-                                context = environmentTriggerContext()
-                        )
-        )
-    }
-
-    private fun noteIdleActivity() {
-        lastActivityMillis = System.currentTimeMillis()
-        scheduleIdleEnvironmentTimer()
-    }
-
-    private fun updateIdleVisibility(update: ChatEnvironmentUpdate) {
-        if (update.hasAppVisible) idleAppVisible = update.appVisible == true
-        if (update.hasWallpaperVisible) idleWallpaperVisible = update.wallpaperVisible == true
-    }
-
-    private fun scheduleIdleEnvironmentTimer() {
-        idleTimerJob?.cancel()
-        idleTimerJob = null
-        if (!isLocalMode() || !hasVisibleIdleSurface()) return
-        val scheduledActivityMillis = lastActivityMillis
-        idleTimerJob =
-                scope.launch {
-                    delay(IDLE_TRIGGER_DELAY_MILLIS)
-                    if (!isLocalMode() || !hasVisibleIdleSurface()) return@launch
-                    if (lastActivityMillis != scheduledActivityMillis) return@launch
-                    val firedAtMillis = System.currentTimeMillis()
-                    idleTimerJob = null
-                    emitIdleTimerEnvironmentTrigger(
-                            idleMillis = firedAtMillis - scheduledActivityMillis,
-                            timestampMillis = firedAtMillis
-                    )
-                    lastActivityMillis = firedAtMillis
-                    scheduleIdleEnvironmentTimer()
-                }
-    }
-
-    private fun cancelIdleEnvironmentTimer() {
-        idleTimerJob?.cancel()
-        idleTimerJob = null
-    }
-
-    private fun hasVisibleIdleSurface(): Boolean = idleAppVisible || idleWallpaperVisible
-
-    private fun localEnvironmentTransport(): LocalTransport? =
-            if (activeTransport.mode == RuntimeMode.LOCAL) activeTransport as? LocalTransport
-            else null
+    private fun localEnvironmentTransport(): LocalTransport = localTransport
 
     private fun submitEnvironmentTriggers(
             transport: LocalTransport,
@@ -1105,7 +1460,7 @@ class ChatWebSocketManager {
                 modelKey = modelKey,
                 modelName = modelName,
                 userId = userId,
-                userName = userNickname ?: userCardName ?: "用户",
+                userName = userNickname,
                 agentUserId = agentId,
                 agentName = modelName ?: modelKey ?: "Maimchat"
         )
@@ -1119,36 +1474,20 @@ class ChatWebSocketManager {
             "msg_${System.currentTimeMillis()}_${(Math.random()*1000).toInt()}"
     private fun generateUserId(): String =
             "u_${System.currentTimeMillis()}_${(Math.random()*1000).toInt()}"
-    fun disconnect() {
-        cancelIdleEnvironmentTimer()
-        activeTransport.stop("用户断开", userInitiated = true)
+    fun disconnect() {        localTransport.stop("用户断开", userInitiated = true)
     }
 
-    fun shutdown() {
-        cancelIdleEnvironmentTimer()
-        activeTransport.stop("管理器销毁", userInitiated = false)
+    fun shutdown() {        localTransport.stop("管理器销毁", userInitiated = false)
         scope.cancel()
     }
 
-    fun getConnectionStateDescription(): String =
-            when (activeTransport.mode) {
-                RuntimeMode.LOCAL ->
-                        when (_connectionState.value) {
-                            ConnectionState.DISCONNECTED -> "本地运行时: stopped"
-                            ConnectionState.CONNECTING -> "本地运行时: starting"
-                            ConnectionState.CONNECTED -> "本地运行时: ready"
-                            ConnectionState.ERROR -> "本地运行时: error"
-                        }
-                RuntimeMode.REMOTE ->
-                        when (_connectionState.value) {
-                            ConnectionState.DISCONNECTED -> "远端 WebSocket: 未连接"
-                            ConnectionState.CONNECTING -> "远端 WebSocket: 连接中"
-                            ConnectionState.CONNECTED -> "远端 WebSocket: 已连接"
-                            ConnectionState.ERROR -> "远端 WebSocket: 错误"
-                        }
+    fun getRuntimeStateDescription(): String =
+            when (_runtimeState.value) {
+                RuntimeState.STOPPED -> "本地运行时: stopped"
+                RuntimeState.STARTING -> "本地运行时: starting"
+                RuntimeState.RUNNING -> "本地运行时: ready"
+                RuntimeState.ERROR -> "本地运行时: error"
             }
-
-    fun getPlatform(): String = platform
 }
 
 private fun ChatEnvironmentUpdate.isIdleActivity(): Boolean =

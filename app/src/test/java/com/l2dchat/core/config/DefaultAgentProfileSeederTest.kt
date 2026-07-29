@@ -9,12 +9,11 @@ import com.l2dchat.core.message.PromptTemplateEntity
 import com.l2dchat.core.storage.RuntimeStateDao
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class DefaultAgentProfileSeederTest {
     @Test
-    fun `seeder inserts default agent config and global prompts`() {
+    fun `seeder inserts persona config and scoped prompts`() {
         val dao = FakeRuntimeStateDao()
 
         runBlocking {
@@ -22,7 +21,7 @@ class DefaultAgentProfileSeederTest {
                     source =
                             MapDefaultAgentProfileSource(
                                     mapOf(
-                                            "agents/default/agent.json" to
+                                            "agents/agent-a/agent.json" to
                                                     """
                                                     {
                                                       "display_name": "Default",
@@ -33,13 +32,13 @@ class DefaultAgentProfileSeederTest {
                                                     }
                                                     """
                                                             .trimIndent(),
-                                            "agents/default/prompts/planner_system.md" to
+                                            "agents/agent-a/prompts/planner_system.md" to
                                                     "planner prompt",
-                                            "agents/default/prompts/decision_system.md" to
+                                            "agents/agent-a/prompts/decision_system.md" to
                                                     "decision prompt",
-                                            "agents/default/prompts/replier_system.md" to
+                                            "agents/agent-a/prompts/replier_system.md" to
                                                     "replier system prompt",
-                                            "agents/default/prompts/replier_user.md" to
+                                            "agents/agent-a/prompts/replier_user.md" to
                                                     "replier user prompt"
                                     )
                             ),
@@ -55,11 +54,14 @@ class DefaultAgentProfileSeederTest {
         assertEquals("openai", config.provider)
         assertEquals("model-a", config.model)
         assertEquals("{\"temperature\":0.7}", config.settingsJson)
-        assertEquals("planner prompt", dao.promptTemplates.getValue("default_planner_system").body)
-        assertEquals("decision prompt", dao.promptTemplates.getValue("default_decision_system").body)
-        assertEquals("replier system prompt", dao.promptTemplates.getValue("default_replier_system").body)
-        assertEquals("replier user prompt", dao.promptTemplates.getValue("default_replier_user").body)
-        assertNull(dao.promptTemplates.getValue("default_replier_user").agentId)
+        assertEquals("planner prompt", dao.promptTemplates.getValue("agent-a_planner_system").body)
+        assertEquals("decision prompt", dao.promptTemplates.getValue("agent-a_decision_system").body)
+        assertEquals(
+                "replier system prompt",
+                dao.promptTemplates.getValue("agent-a_replier_system").body
+        )
+        assertEquals("replier user prompt", dao.promptTemplates.getValue("agent-a_replier_user").body)
+        assertEquals("agent-a", dao.promptTemplates.getValue("agent-a_replier_user").agentId)
     }
 
     @Test
@@ -81,7 +83,7 @@ class DefaultAgentProfileSeederTest {
                     source =
                             MapDefaultAgentProfileSource(
                                     mapOf(
-                                            "agents/default/agent.json" to
+                                            "agents/agent-a/agent.json" to
                                                     """{"display_name":"Default","persona":"default"}"""
                                     )
                             ),
@@ -159,6 +161,14 @@ class DefaultAgentProfileSeederTest {
 
         override suspend fun deleteMemory(memoryId: String) = Unit
 
+        override suspend fun deleteAllMemories() = Unit
+
+        override suspend fun deleteAllImpressions() = Unit
+
+        override suspend fun deleteAllMoodState() = Unit
+
+        override suspend fun deleteAllMediaBlocks() = Unit
+
         override suspend fun queryImpression(
                 contextId: String,
                 agentId: String,
@@ -173,5 +183,10 @@ class DefaultAgentProfileSeederTest {
 
         override suspend fun queryMoodState(contextId: String, agentId: String): MoodStateEntity? =
                 null
+
+        override fun observeMoodState(
+                contextId: String,
+                agentId: String
+        ): kotlinx.coroutines.flow.Flow<MoodStateEntity?> = kotlinx.coroutines.flow.flowOf(null)
     }
 }

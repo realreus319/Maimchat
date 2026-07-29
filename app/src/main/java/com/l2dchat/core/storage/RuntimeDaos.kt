@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
 import com.l2dchat.core.message.AgentConfigEntity
 import com.l2dchat.core.message.ImpressionEntity
 import com.l2dchat.core.message.MediaBlockEntity
@@ -41,6 +42,12 @@ interface RuntimeMessageDao {
             """
     )
     suspend fun deleteStandardMessages(contextId: String, agentId: String?)
+
+    // Unscoped wipes for "清空聊天记录 = truly empty context". Conversation data is spread across
+    // inconsistent context/agent ids (user id vs agent self-id), so a per-context delete misses rows.
+    @Query("DELETE FROM messages") suspend fun deleteAllMessages()
+
+    @Query("DELETE FROM standard_messages") suspend fun deleteAllStandardMessages()
 
     @Query(
             """
@@ -97,6 +104,23 @@ interface PlannerStateDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun appendPlannerRound(round: PlannerRoundEntity)
 
+    /** Trigger-message ids of orphan rounds (still 'generating', created before this process started). */
+    @Query("SELECT trigger_message_id FROM planner_rounds WHERE state = 'generating' AND created_at_ms < :beforeMillis")
+    suspend fun queryGeneratingRoundTriggerIds(beforeMillis: Long): List<String?>
+
+    /**
+     * Fail every round left in 'generating' that was created before [beforeMillis]. A round only
+     * leaves 'generating' via the planner coroutine's finalizer, which a process SIGKILL skips — so on
+     * a fresh process start any such row is an orphan that can never resume (in-flight coroutine/LLM/
+     * worker handles are gone). The [beforeMillis] cutoff (= this process's start) ensures a round
+     * created by the CURRENT process is never reaped out from under itself.
+     */
+    @Query(
+            "UPDATE planner_rounds SET state = 'failed', updated_at_ms = :nowMillis " +
+                    "WHERE state = 'generating' AND created_at_ms < :beforeMillis"
+    )
+    suspend fun failGeneratingRounds(nowMillis: Long, beforeMillis: Long): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun appendPlannerMessage(message: PlannerMessageEntity)
 
@@ -121,6 +145,14 @@ interface PlannerStateDao {
             updatedAtMillis: Long
     )
 
+    // Unscoped session-log wipes for "清空聊天记录" — runtime planner history (not part of the LLM
+    // prompt, but tied to the cleared conversation; cleared for a true clean slate).
+    @Query("DELETE FROM planner_rounds") suspend fun deleteAllPlannerRounds()
+
+    @Query("DELETE FROM planner_messages") suspend fun deleteAllPlannerMessages()
+
+    @Query("DELETE FROM tool_tasks") suspend fun deleteAllToolTasks()
+
     @Query(
             """
             SELECT * FROM planner_messages
@@ -129,7 +161,40 @@ interface PlannerStateDao {
             """
     )
     suspend fun queryPlannerMessages(roundId: String): List<PlannerMessageEntity>
+
+    /**
+     * Recent COMPLETED user-message rounds together with their FINAL assistant reply text. Used by the
+     * reconcile/poll reply delivery: a reply is always durably saved here (planner_messages), but the
+     * chat UI push can be lost to delivery timing (await timeout / process death) — the reconciler
+     * re-delivers any reply that never reached the chat, deduped by a stable id. Only MSG-triggered
+     * rounds (trigger_message_id LIKE 'msg%') — env/proactive rounds have their own delivery and must
+     * NOT surface as chat turns.
+     */
+    @Query(
+            """
+            SELECT r.round_id AS roundId, r.trigger_message_id AS triggerMessageId,
+                   m.content AS replyText, r.created_at_ms AS createdAtMs
+            FROM planner_rounds r
+            JOIN planner_messages m ON m.round_id = r.round_id AND m.role = 'assistant'
+                AND m.sequence = (
+                    SELECT MAX(sequence) FROM planner_messages
+                    WHERE round_id = r.round_id AND role = 'assistant'
+                )
+            WHERE r.state = 'completed' AND r.trigger_message_id LIKE 'msg%'
+                AND r.created_at_ms >= :sinceMs AND m.content IS NOT NULL AND m.content != ''
+            ORDER BY r.created_at_ms ASC
+            """
+    )
+    suspend fun queryRecentCompletedReplies(sinceMs: Long): List<CompletedReplyRow>
 }
+
+/** One completed user-message round + its final assistant reply text (reconcile/poll delivery). */
+data class CompletedReplyRow(
+        val roundId: String,
+        val triggerMessageId: String?,
+        val replyText: String,
+        val createdAtMs: Long
+)
 
 @Dao
 interface RuntimeStateDao {
@@ -225,6 +290,18 @@ interface RuntimeStateDao {
     @Query("DELETE FROM memories WHERE memory_id = :memoryId")
     suspend fun deleteMemory(memoryId: String)
 
+    // Unscoped persona-state wipes for "清空聊天记录" — these (memories/impressions/mood) are
+    // RE-INJECTED into the planner+replier prompts every turn, so they MUST be cleared for the context
+    // to actually be empty; the durable memory_store, the user impression/relationship summary, and
+    // the carried-over mood would otherwise survive a chat clear.
+    @Query("DELETE FROM memories") suspend fun deleteAllMemories()
+
+    @Query("DELETE FROM impressions") suspend fun deleteAllImpressions()
+
+    @Query("DELETE FROM mood_state") suspend fun deleteAllMoodState()
+
+    @Query("DELETE FROM media_blocks") suspend fun deleteAllMediaBlocks()
+
     @Query(
             """
             SELECT * FROM impressions
@@ -264,4 +341,15 @@ interface RuntimeStateDao {
             """
     )
     suspend fun queryMoodState(contextId: String, agentId: String): MoodStateEntity?
+
+    /** Reactive mood for the mood→Live2D-motion mapping: emits on every upsert (LLM mood update). */
+    @Query(
+            """
+            SELECT * FROM mood_state
+            WHERE context_id = :contextId
+              AND agent_id = :agentId
+            LIMIT 1
+            """
+    )
+    fun observeMoodState(contextId: String, agentId: String): Flow<MoodStateEntity?>
 }

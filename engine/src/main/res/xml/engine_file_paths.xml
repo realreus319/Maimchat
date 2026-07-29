@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Exposes the worker's proot rootfs so submit_file can hand a file to the main app via a
+         content:// URI (with a temporary read grant) — no size limit, unlike base64-over-Binder. -->
+    <files-path name="rootfs" path="rootfs/" />
+</paths>

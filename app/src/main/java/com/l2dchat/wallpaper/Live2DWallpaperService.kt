@@ -18,6 +18,7 @@ import android.view.MotionEvent
 import android.view.SurfaceHolder
 import com.l2dchat.chat.service.ChatServiceClient.ChatMessageSnapshot
 import com.l2dchat.live2d.Live2DGestureDispatcher
+import com.l2dchat.preferences.ChatPreferenceKeys
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
 import com.live2d.demo.full.LAppDelegate
@@ -47,6 +48,19 @@ class Live2DWallpaperService : WallpaperService() {
                     Context.MODE_PRIVATE
             )
         }
+
+        /**
+         * The model the wallpaper should show. SINGLE source of truth = the model chosen in "更换模型"
+         * (chat_prefs/selected_model_folder). The renderer only defaults to the first model on disk when
+         * nothing has ever been selected.
+         */
+        private fun resolveModelFolder(): String? =
+                this@Live2DWallpaperService.applicationContext
+                        .getSharedPreferences(
+                                ChatPreferenceKeys.PREFS_NAME,
+                                Context.MODE_PRIVATE
+                        )
+                        .getString(ChatPreferenceKeys.SELECTED_MODEL_FOLDER, null)
         private var renderer = WallpaperLive2DRenderer(applicationContext)
         private val bubbleListener =
                 object : WallpaperChatCoordinator.Listener {
@@ -349,10 +363,7 @@ class Live2DWallpaperService : WallpaperService() {
                             WallpaperComm.ACTION_REFRESH_MODEL -> {
                                 val folder =
                                         intent.getStringExtra(WallpaperComm.EXTRA_MODEL_FOLDER)
-                                                ?: prefs.getString(
-                                                        WallpaperComm.PREF_WALLPAPER_MODEL_FOLDER,
-                                                        null
-                                                )
+                                                ?: resolveModelFolder()
                                 lastRequestedModelFolder = folder
                                 renderer.setModelFolder(folder)
                             }
@@ -397,7 +408,7 @@ class Live2DWallpaperService : WallpaperService() {
             }
             startGlThread("engine init")
             logger.info("GL thread start requested")
-            val initialModel = prefs.getString(WallpaperComm.PREF_WALLPAPER_MODEL_FOLDER, null)
+            val initialModel = resolveModelFolder()
             lastRequestedModelFolder = initialModel
             renderer.setModelFolder(initialModel)
             applyBubbleCount(lastBubbleCount)
@@ -437,7 +448,9 @@ class Live2DWallpaperService : WallpaperService() {
             persistWallpaperVisibility(visible)
             if (visible) {
                 synchronized(glThreadGuard) { glThread }?.onResume()
-                lastRequestedModelFolder?.let { renderer.setModelFolder(it) }
+                // Re-resolve in case the selected model changed while the wallpaper was hidden.
+                lastRequestedModelFolder = resolveModelFolder()
+                renderer.setModelFolder(lastRequestedModelFolder)
                 loadBackgroundAsync(lastRequestedBackgroundPath, force = true)
             } else {
                 synchronized(glThreadGuard) { glThread }?.onPause()
@@ -449,7 +462,8 @@ class Live2DWallpaperService : WallpaperService() {
             logger.info("Surface created: ${holder.surface?.isValid}")
             currentSurfaceHolder = holder
             synchronized(glThreadGuard) { glThread }?.onSurfaceCreated(holder)
-            lastRequestedModelFolder?.let { renderer.setModelFolder(it) }
+            lastRequestedModelFolder = resolveModelFolder()
+            renderer.setModelFolder(lastRequestedModelFolder)
             loadBackgroundAsync(lastRequestedBackgroundPath, force = true)
         }
 

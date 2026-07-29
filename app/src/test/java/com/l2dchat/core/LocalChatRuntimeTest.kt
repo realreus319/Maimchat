@@ -34,7 +34,6 @@ class LocalChatRuntimeTest {
             val handled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "你好"),
-                            fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
@@ -43,7 +42,6 @@ class LocalChatRuntimeTest {
             assertEquals(1, runtime.activePerceptionWorkerCount())
             assertEquals(1, runtime.activePlannerLoopCount())
             val reply = emitted.single()
-            assertEquals("test_platform", reply.messageInfo.platform)
             assertEquals("bot-id", reply.messageInfo.senderInfo?.userInfo?.userId)
             assertEquals("user-id", reply.messageInfo.receiverInfo?.userInfo?.userId)
             assertEquals("chat", reply.messageInfo.additionalConfig?.get("message_type"))
@@ -63,7 +61,6 @@ class LocalChatRuntimeTest {
             val handled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "播放动作", messageType = "motion"),
-                            fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
@@ -101,7 +98,6 @@ class LocalChatRuntimeTest {
             val handled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "记录我"),
-                            fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = sink
                     )
@@ -132,7 +128,6 @@ class LocalChatRuntimeTest {
             val handled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "你好"),
-                            fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
@@ -178,7 +173,6 @@ class LocalChatRuntimeTest {
                                                             "agent_user_name" to "Mao"
                                                     )
                                     ),
-                            fallbackPlatform = "live2d_chat",
                             fallbackAgentName = "Mao",
                             replySink = collectingSink(emitted)
                     )
@@ -187,7 +181,6 @@ class LocalChatRuntimeTest {
             waitForMessages(emitted, expectedCount = 1)
             val reply = emitted.single()
             assertEquals("我在这里。", reply.rawMessage)
-            assertEquals("live2d_chat", reply.messageInfo.platform)
             assertEquals("agent_mao", reply.messageInfo.senderInfo?.userInfo?.userId)
             assertEquals("Mao", reply.messageInfo.senderInfo?.userInfo?.userNickname)
             assertEquals("user-42", reply.messageInfo.receiverInfo?.userInfo?.userId)
@@ -221,7 +214,6 @@ class LocalChatRuntimeTest {
                                             text = "应用切回前台",
                                             source = "android_app"
                                     ),
-                            fallbackPlatform = "live2d_chat",
                             fallbackAgentName = "Mao",
                             replySink = collectingSink(emitted)
                     )
@@ -263,7 +255,6 @@ class LocalChatRuntimeTest {
                     async {
                         runtime.handleMessage(
                                 inbound = buildMessage(content = "first", messageId = "first-id"),
-                                fallbackPlatform = "fallback",
                                 fallbackAgentName = "Maimchat",
                                 replySink = collectingSink(emitted)
                         )
@@ -273,7 +264,6 @@ class LocalChatRuntimeTest {
             val secondHandled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "second", messageId = "second-id"),
-                            fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
@@ -286,11 +276,38 @@ class LocalChatRuntimeTest {
     }
 
     @Test
+    fun `createReply copies inbound receiver normalized agent key onto reply sender`() {
+        // The inbound user message's receiver is the assistant, whose userId is the normalized
+        // agent key (== routing agentId, e.g. "hiyori"). createReply copies receiverInfo.userInfo
+        // onto the reply's senderInfo.userInfo, so the persisted reply's senderUserId equals the
+        // agentId and `senderUserId == agentId` recognizes it as an assistant turn. Storing the
+        // human-readable display name (e.g. "Hiyori") here would break that equality.
+        val reply =
+                LocalChatRuntime().createReply(
+                        inbound =
+                                buildMessage(
+                                        content = "你好",
+                                        receiver =
+                                                ReceiverInfo(
+                                                        userInfo =
+                                                                UserInfo(
+                                                                        userId = "hiyori",
+                                                                        userNickname = "Hiyori"
+                                                                )
+                                                )
+                                ),
+                        fallbackAgentName = "Hiyori"
+                )
+
+        assertEquals("hiyori", reply.messageInfo.senderInfo?.userInfo?.userId)
+        assertEquals("Hiyori", reply.messageInfo.senderInfo?.userInfo?.userNickname)
+    }
+
+    @Test
     fun `createReply uses fallback agent when receiver is missing`() {
         val reply =
                 LocalChatRuntime().createReply(
                         inbound = buildMessage(content = "", receiver = null),
-                        fallbackPlatform = "fallback_platform",
                         fallbackAgentName = "Fallback Agent"
                 )
 
@@ -321,7 +338,6 @@ class LocalChatRuntimeTest {
                     ReceiverInfo(
                             userInfo =
                                     UserInfo(
-                                            platform = "test_platform",
                                             userId = "bot-id",
                                             userNickname = "Bot"
                                     )
@@ -331,13 +347,11 @@ class LocalChatRuntimeTest {
         return MessageBase(
                 messageInfo =
                         BaseMessageInfo(
-                                platform = "test_platform",
                                 messageId = messageId,
                                 senderInfo =
                                         SenderInfo(
                                                 userInfo =
                                                         UserInfo(
-                                                                platform = "test_platform",
                                                                 userId = "user-id",
                                                                 userNickname = "Alice"
                                                         )

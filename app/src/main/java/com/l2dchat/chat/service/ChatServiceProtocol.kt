@@ -4,7 +4,6 @@ object ChatServiceProtocol {
     // Client -> Service commands
     const val MSG_REGISTER_CLIENT = 1
     const val MSG_UNREGISTER_CLIENT = 2
-    const val MSG_CONNECT = 3
     const val MSG_DISCONNECT = 4
     const val MSG_SEND_MESSAGE = 5
     const val MSG_UPDATE_CONFIG = 6
@@ -15,6 +14,7 @@ object ChatServiceProtocol {
     const val MSG_START_LOCAL_RUNTIME = 11
     const val MSG_UPDATE_ENVIRONMENT_STATE = 12
     const val MSG_REPORT_MOTION_FINISHED = 13
+    const val MSG_SET_ACTIVE_PERSONA = 14
 
     // Service -> Client events
     const val MSG_EVENT_CONNECTION_STATE = 101
@@ -26,15 +26,10 @@ object ChatServiceProtocol {
     const val MSG_EVENT_PROCESSING = 107
 
     // Common extras
-    const val EXTRA_URL = "extra_url"
-    const val EXTRA_PLATFORM = "extra_platform"
-    const val EXTRA_AUTH_TOKEN = "extra_auth_token"
     const val EXTRA_MESSAGE_TEXT = "extra_message_text"
     const val EXTRA_NICKNAME = "extra_nickname"
-    const val EXTRA_RECEIVER_ID = "extra_receiver_id"
-    const val EXTRA_RECEIVER_NICKNAME = "extra_receiver_nickname"
     const val EXTRA_MODEL_NAME = "extra_model_name"
-    const val EXTRA_RUNTIME_MODE = "extra_runtime_mode"
+    const val EXTRA_PERSONA_ID = "extra_persona_id"
     const val EXTRA_LOCAL_LLM_ENABLED = "extra_local_llm_enabled"
     const val EXTRA_LOCAL_LLM_BASE_URL = "extra_local_llm_base_url"
     const val EXTRA_LOCAL_LLM_API_KEY = "extra_local_llm_api_key"
@@ -44,6 +39,11 @@ object ChatServiceProtocol {
     const val EXTRA_LOCAL_LLM_TEMPERATURE = "extra_local_llm_temperature"
     const val EXTRA_LOCAL_LLM_MAX_TOKENS = "extra_local_llm_max_tokens"
     const val EXTRA_LOCAL_LLM_TIMEOUT_MILLIS = "extra_local_llm_timeout_millis"
+    // Worker (cc_research) config — delivered through the same MSG_UPDATE_CONFIG bundle.
+    const val EXTRA_WORKER_BASE_URL = "extra_worker_base_url"
+    const val EXTRA_WORKER_API_KEY = "extra_worker_api_key"
+    const val EXTRA_WORKER_MODEL = "extra_worker_model"
+    const val EXTRA_WORKER_SETTINGS_JSON = "extra_worker_settings_json"
     const val EXTRA_ENV_MODEL_KEY = "extra_env_model_key"
     const val EXTRA_ENV_MODEL_NAME = "extra_env_model_name"
     const val EXTRA_ENV_MODEL_FOLDER_PATH = "extra_env_model_folder_path"
@@ -79,6 +79,10 @@ object ChatServiceProtocol {
     const val EXTRA_MESSAGE_FROM_USER = "extra_message_from_user"
     const val EXTRA_MESSAGE_TIMESTAMP = "extra_message_timestamp"
     const val EXTRA_MESSAGE_FAILED = "extra_message_failed"
+    // JSON of WorkerActivity when a message is an inline AI-agent activity bubble (else absent).
+    const val EXTRA_MESSAGE_AGENT_ACTIVITY = "extra_message_agent_activity"
+    // JSON (name/path/mime/size/description) when a message is a worker-submitted file (else absent).
+    const val EXTRA_MESSAGE_FILE_INFO = "extra_message_file_info"
     const val EXTRA_PROCESSING = "extra_processing"
     const val EXTRA_MESSAGE_BUNDLE_LIST = "extra_message_bundle_list"
     const val EXTRA_STANDARD_MESSAGE_LIST = "extra_standard_message_list"

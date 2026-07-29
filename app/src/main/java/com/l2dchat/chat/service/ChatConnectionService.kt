@@ -15,12 +15,13 @@ import com.l2dchat.chat.ChatEnvironmentUpdate
 import com.l2dchat.chat.ChatEnvironmentVisualSnapshot
 import com.l2dchat.chat.ChatWebSocketManager
 import com.l2dchat.chat.ChatWebSocketManager.ChatMessage
-import com.l2dchat.chat.ChatWebSocketManager.ConnectionState
+import com.l2dchat.chat.ChatWebSocketManager.RuntimeState
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.core.config.LocalLlmSettings
+import com.l2dchat.core.config.WorkerLlmSettings
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
-import com.l2dchat.wallpaper.WallpaperComm
+import com.l2dchat.preferences.ChatPreferenceKeys
 import java.lang.ref.WeakReference
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlinx.coroutines.CoroutineScope
@@ -42,14 +43,9 @@ class ChatConnectionService : Service() {
 
     private lateinit var manager: ChatWebSocketManager
 
-    private var lastKnownUrl: String? = null
-    private var lastKnownPlatform: String? = null
-    private var lastKnownAuth: String? = null
     private var lastKnownNickname: String? = null
-    private var lastKnownReceiverId: String? = null
-    private var lastKnownReceiverNickname: String? = null
     private var localLlmSettings = LocalLlmSettings()
-    private var runtimeMode = ChatRuntimeMode.LOCAL
+    private var workerLlmSettings = WorkerLlmSettings()
     private var lastConnectionError: String? = null
 
     override fun onCreate() {
@@ -77,46 +73,36 @@ class ChatConnectionService : Service() {
     }
 
     private fun restoreModelName(): String? {
-        val prefs = getSharedPreferences(WallpaperComm.PREF_WALLPAPER, MODE_PRIVATE)
-        val folder = prefs.getString(WallpaperComm.PREF_WALLPAPER_MODEL_FOLDER, null)
+        val prefs = getSharedPreferences(ChatPreferenceKeys.PREFS_NAME, MODE_PRIVATE)
+        val folder = prefs.getString(ChatPreferenceKeys.SELECTED_MODEL_FOLDER, null)
         return folder?.substringAfterLast('/')?.ifBlank { null }
     }
 
     private fun applyStoredConfiguration() {
         val prefs = getSharedPreferences(CHAT_PREFS, MODE_PRIVATE)
-        lastKnownUrl = prefs.getString(KEY_LAST_URL, null)?.takeUnless { it.isNullOrBlank() }
-        lastKnownPlatform = prefs.getString(KEY_PLATFORM, null)?.takeUnless { it.isNullOrBlank() }
-        lastKnownAuth =
-                ChatSecurePreferences.readMigratingString(prefs, secureStore, KEY_AUTH_TOKEN)
-                        ?.takeUnless { it.isBlank() }
         lastKnownNickname = prefs.getString(KEY_NICKNAME, null)
-        lastKnownReceiverId = prefs.getString(KEY_RECEIVER_ID, null)?.ifBlank { null }
-        lastKnownReceiverNickname = prefs.getString(KEY_RECEIVER_NICKNAME, null)?.ifBlank { null }
 
-        lastKnownPlatform?.let { manager.updatePlatformPreference(it) }
-        manager.setConnectionConfig(manager.getPlatform(), lastKnownAuth)
         lastKnownNickname?.takeUnless { it.isNullOrBlank() }?.let { manager.setUserProfile(it) }
-        if (!lastKnownReceiverId.isNullOrBlank() || !lastKnownReceiverNickname.isNullOrBlank()) {
-            manager.setReceiverInfo(lastKnownReceiverId, lastKnownReceiverNickname)
-        }
         localLlmSettings = LocalLlmSettingsStore.read(prefs, secureStore)
-        runtimeMode = ChatRuntimeModeStore.read(prefs)
         manager.setLocalLlmSettings(localLlmSettings)
-        if (runtimeMode == ChatRuntimeMode.LOCAL) {
-            manager.startLocalRuntime()
-        }
+        workerLlmSettings = WorkerLlmSettingsStore.read(prefs, secureStore)
+        manager.setWorkerLlmSettings(workerLlmSettings)
+        manager.startLocalRuntime()
     }
 
     private fun startObservers() {
         serviceScope.launch {
-            manager.connectionState.collect { state -> broadcastConnectionState(state) }
+            manager.runtimeState.collect { state -> broadcastRuntimeState(state) }
         }
         serviceScope.launch {
-            var lastBroadcastId: String? = null
+            // Broadcast the last message when its id OR its agent-activity changes — the latter lets an
+            // in-place inline agent bubble (running→done) propagate to clients (which replace by id).
+            var lastBroadcast: Pair<String, String?>? = null
             manager.messages.collect { list ->
                 val last = list.lastOrNull() ?: return@collect
-                if (last.id == lastBroadcastId) return@collect
-                lastBroadcastId = last.id
+                val key = last.id to last.agentActivityJson
+                if (key == lastBroadcast) return@collect
+                lastBroadcast = key
                 broadcastChatMessage(last)
             }
         }
@@ -134,8 +120,8 @@ class ChatConnectionService : Service() {
             manager.errors.collect { message ->
                 lastConnectionError = message
                 notifyError(message)
-                if (manager.connectionState.value == ConnectionState.ERROR) {
-                    broadcastConnectionState(ConnectionState.ERROR)
+                if (manager.runtimeState.value == RuntimeState.ERROR) {
+                    broadcastRuntimeState(RuntimeState.ERROR)
                 }
             }
         }
@@ -145,14 +131,19 @@ class ChatConnectionService : Service() {
         serviceScope.launch {
             manager.messageFailures.collect { id -> broadcastMessageFailed(id) }
         }
+        serviceScope.launch {
+            // After a bulk history reload, push the FULL list (carries agent/file bubble JSON) — the
+            // per-message broadcast only re-sends the last message.
+            manager.historyReloaded.collect { sendSnapshot() }
+        }
     }
 
-    private fun broadcastConnectionState(state: ConnectionState) {
-        if (state != ConnectionState.ERROR) {
+    private fun broadcastRuntimeState(state: RuntimeState) {
+        if (state != RuntimeState.ERROR) {
             lastConnectionError = null
         }
         val diagnostic =
-                if (state == ConnectionState.ERROR) {
+                if (state == RuntimeState.ERROR) {
                     lastConnectionError?.let(::compactConnectionError)
                 } else {
                     null
@@ -162,9 +153,8 @@ class ChatConnectionService : Service() {
                     putInt(ChatServiceProtocol.EXTRA_CONNECTION_STATE, state.ordinal)
                     putString(
                             ChatServiceProtocol.EXTRA_CONNECTION_LABEL,
-                            connectionLabelFor(state, diagnostic)
+                            runtimeLabelFor(state, diagnostic)
                     )
-                    putString(ChatServiceProtocol.EXTRA_RUNTIME_MODE, runtimeMode.wireValue)
                     diagnostic?.let {
                         putString(ChatServiceProtocol.EXTRA_ERROR_MESSAGE, it)
                     }
@@ -172,23 +162,13 @@ class ChatConnectionService : Service() {
         sendToClients(ChatServiceProtocol.MSG_EVENT_CONNECTION_STATE, bundle)
     }
 
-    private fun connectionLabelFor(state: ConnectionState, diagnostic: String?): String {
+    private fun runtimeLabelFor(state: RuntimeState, diagnostic: String?): String {
         val base =
-                when (runtimeMode) {
-                    ChatRuntimeMode.LOCAL ->
-                            when (state) {
-                                ConnectionState.DISCONNECTED -> "本地运行时: stopped"
-                                ConnectionState.CONNECTING -> "本地运行时: starting"
-                                ConnectionState.CONNECTED -> "本地运行时: ready"
-                                ConnectionState.ERROR -> "本地运行时: error"
-                            }
-                    ChatRuntimeMode.REMOTE ->
-                            when (state) {
-                                ConnectionState.DISCONNECTED -> "远端 WebSocket: 未连接"
-                                ConnectionState.CONNECTING -> "远端 WebSocket: 连接中"
-                                ConnectionState.CONNECTED -> "远端 WebSocket: 已连接"
-                                ConnectionState.ERROR -> "远端 WebSocket: 错误"
-                            }
+                when (state) {
+                    RuntimeState.STOPPED -> "本地运行时: stopped"
+                    RuntimeState.STARTING -> "本地运行时: starting"
+                    RuntimeState.RUNNING -> "本地运行时: ready"
+                    RuntimeState.ERROR -> "本地运行时: error"
                 }
         return diagnostic?.takeIf { it.isNotBlank() }?.let { "$base · $it" } ?: base
     }
@@ -213,6 +193,12 @@ class ChatConnectionService : Service() {
                             ChatServiceProtocol.EXTRA_MESSAGE_FAILED,
                             manager.isMessageFailed(message.id)
                     )
+                    message.agentActivityJson?.let {
+                        putString(ChatServiceProtocol.EXTRA_MESSAGE_AGENT_ACTIVITY, it)
+                    }
+                    message.fileInfoJson?.let {
+                        putString(ChatServiceProtocol.EXTRA_MESSAGE_FILE_INFO, it)
+                    }
                 }
         sendToClients(ChatServiceProtocol.MSG_EVENT_NEW_MESSAGE, bundle)
     }
@@ -249,6 +235,18 @@ class ChatConnectionService : Service() {
                                             ChatServiceProtocol.EXTRA_MESSAGE_FAILED,
                                             manager.isMessageFailed(m.id)
                                     )
+                                    m.agentActivityJson?.let {
+                                        putString(
+                                                ChatServiceProtocol.EXTRA_MESSAGE_AGENT_ACTIVITY,
+                                                it
+                                        )
+                                    }
+                                    m.fileInfoJson?.let {
+                                        putString(
+                                                ChatServiceProtocol.EXTRA_MESSAGE_FILE_INFO,
+                                                it
+                                        )
+                                    }
                                 }
                         )
                     }
@@ -301,140 +299,32 @@ class ChatConnectionService : Service() {
                 false
             }
 
-    private fun ensureConnected(triggerReconnect: Boolean = true) {
-        if (runtimeMode == ChatRuntimeMode.LOCAL) {
-            manager.startLocalRuntime()
-            return
-        }
-        val state = manager.connectionState.value
-        if (state == ConnectionState.CONNECTED || state == ConnectionState.CONNECTING) return
-        if (!triggerReconnect) return
-        val url = lastKnownUrl
-        if (url.isNullOrBlank()) {
-            notifyError("未设置远端 WebSocket 地址，无法连接")
-            return
-        }
-        logger.debug(
-                "ensureConnected() with state=$state trigger=$triggerReconnect url=$url",
-                throttleMs = 1_000L,
-                throttleKey = "ensure_connected"
-        )
-        manager.connect(url, lastKnownPlatform, lastKnownAuth)
-    }
-
     private fun handleSendMessage(data: Bundle) {
         val text = data.getString(ChatServiceProtocol.EXTRA_MESSAGE_TEXT)?.trim()
         if (text.isNullOrEmpty()) {
             notifyError("发送内容不能为空")
             return
         }
-        if (runtimeMode == ChatRuntimeMode.LOCAL) {
-            manager.startLocalRuntime()
-        } else {
-            ensureConnected()
-        }
+        manager.startLocalRuntime()
         manager.sendUserMessage(text)
     }
 
-    private fun handleConnectRequest(data: Bundle) {
-        val url =
-                data.getString(ChatServiceProtocol.EXTRA_URL)?.takeIf { it.isNotBlank() }
-                        ?: lastKnownUrl
-        if (url.isNullOrBlank()) {
-            notifyError("未提供有效的远端 WebSocket 地址")
-            return
-        }
-        val platform =
-                data.getString(ChatServiceProtocol.EXTRA_PLATFORM)?.takeUnless { it.isBlank() }
-                        ?: lastKnownPlatform
-        val auth =
-                data.getString(ChatServiceProtocol.EXTRA_AUTH_TOKEN)?.takeUnless { it.isBlank() }
-                        ?: lastKnownAuth
-
-        logger.info(
-                "handleConnectRequest url=$url platform=$platform " +
-                        "authPresent=${auth != null} caller=${data.keySet()}"
-        )
-
-        applyRuntimeMode(ChatRuntimeMode.REMOTE, startLocal = false)
-        lastKnownUrl = url
-        lastKnownPlatform = platform
-        lastKnownAuth = auth
-        persistConnectionConfig()
-
-        if (!platform.isNullOrBlank() || auth != null) {
-            manager.setConnectionConfig(platform ?: manager.getPlatform(), auth)
-        }
-        logger.info("Invoking ChatWebSocketManager.connect url=$url platform=$platform")
-        manager.connect(url, platform, auth)
-    }
-
     private fun handleConfigUpdate(data: Bundle) {
-        var needReconnect = false
-        val requestedMode =
-                data.runtimeModeOverride()
-                        ?: if (data.containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_ENABLED)) {
-                            ChatRuntimeMode.LOCAL
-                        } else {
-                            null
-                        }
-        data.getString(ChatServiceProtocol.EXTRA_PLATFORM)?.let { platform ->
-            val trimmed = platform.trim()
-            lastKnownPlatform = trimmed.ifBlank { null }
-            manager.updatePlatformPreference(lastKnownPlatform)
-            needReconnect = true
-        }
-        data.getString(ChatServiceProtocol.EXTRA_AUTH_TOKEN)?.let { token ->
-            lastKnownAuth = token.takeUnless { it.isBlank() }
-            manager.setConnectionConfig(lastKnownPlatform ?: manager.getPlatform(), lastKnownAuth)
-            needReconnect = true
-        }
         data.getString(ChatServiceProtocol.EXTRA_NICKNAME)?.let { name ->
             lastKnownNickname = name
             if (name.isNotBlank()) {
                 manager.setUserProfile(name)
             }
         }
-        if (data.containsKey(ChatServiceProtocol.EXTRA_RECEIVER_ID) ||
-                        data.containsKey(ChatServiceProtocol.EXTRA_RECEIVER_NICKNAME)
-        ) {
-            lastKnownReceiverId =
-                    data.getString(ChatServiceProtocol.EXTRA_RECEIVER_ID)?.ifBlank { null }
-            lastKnownReceiverNickname =
-                    data.getString(ChatServiceProtocol.EXTRA_RECEIVER_NICKNAME)?.ifBlank { null }
-            manager.setReceiverInfo(lastKnownReceiverId, lastKnownReceiverNickname)
-        }
         if (data.containsLocalLlmSettings()) {
             localLlmSettings = localLlmSettings.updatedFrom(data)
             manager.setLocalLlmSettings(localLlmSettings)
         }
-        data.getString(ChatServiceProtocol.EXTRA_URL)?.let { url ->
-            val trimmed = url.trim()
-            lastKnownUrl = trimmed.ifBlank { null }
-            needReconnect = true
+        if (data.containsWorkerLlmSettings()) {
+            workerLlmSettings = workerLlmSettings.updatedFrom(data)
+            manager.setWorkerLlmSettings(workerLlmSettings)
         }
-        requestedMode?.let { applyRuntimeMode(it) }
         persistConnectionConfig()
-        if (needReconnect && runtimeMode == ChatRuntimeMode.REMOTE) {
-            ensureConnected(triggerReconnect = true)
-        }
-    }
-
-    private fun applyRuntimeMode(mode: ChatRuntimeMode, startLocal: Boolean = true) {
-        val previous = runtimeMode
-        runtimeMode = mode
-        when (mode) {
-            ChatRuntimeMode.LOCAL -> {
-                if (startLocal) {
-                    manager.startLocalRuntime()
-                }
-            }
-            ChatRuntimeMode.REMOTE -> {
-                if (previous != ChatRuntimeMode.REMOTE && manager.isLocalMode()) {
-                    manager.disconnect()
-                }
-            }
-        }
     }
 
     private fun handleClearMessages(persist: Boolean) {
@@ -445,6 +335,12 @@ class ChatConnectionService : Service() {
     private fun handleSetActiveModel(data: Bundle) {
         val modelName = data.getString(ChatServiceProtocol.EXTRA_MODEL_NAME)
         manager.setActiveModel(applicationContext, modelName)
+        sendSnapshot()
+    }
+
+    private fun handleSetActivePersona(data: Bundle) {
+        val personaId = data.getString(ChatServiceProtocol.EXTRA_PERSONA_ID) ?: return
+        manager.setActivePersona(applicationContext, personaId)
         sendSnapshot()
     }
 
@@ -587,25 +483,44 @@ class ChatConnectionService : Service() {
     }
 
     private fun persistConnectionConfig() {
-        ChatSecurePreferences.writeString(secureStore, KEY_AUTH_TOKEN, lastKnownAuth)
         val prefs = getSharedPreferences(CHAT_PREFS, MODE_PRIVATE)
         val editor = prefs.edit()
-        if (lastKnownUrl != null) editor.putString(KEY_LAST_URL, lastKnownUrl)
-        else editor.remove(KEY_LAST_URL)
-        if (lastKnownPlatform != null) editor.putString(KEY_PLATFORM, lastKnownPlatform)
-        else editor.remove(KEY_PLATFORM)
-        editor.remove(KEY_AUTH_TOKEN)
         if (!lastKnownNickname.isNullOrEmpty()) editor.putString(KEY_NICKNAME, lastKnownNickname)
         else editor.remove(KEY_NICKNAME)
-        if (lastKnownReceiverId != null) editor.putString(KEY_RECEIVER_ID, lastKnownReceiverId)
-        else editor.remove(KEY_RECEIVER_ID)
-        if (lastKnownReceiverNickname != null)
-                editor.putString(KEY_RECEIVER_NICKNAME, lastKnownReceiverNickname)
-        else editor.remove(KEY_RECEIVER_NICKNAME)
         editor.apply()
         LocalLlmSettingsStore.persist(prefs, secureStore, localLlmSettings)
-        ChatRuntimeModeStore.persist(prefs, runtimeMode)
+        WorkerLlmSettingsStore.persist(prefs, secureStore, workerLlmSettings)
     }
+
+    private fun Bundle.containsWorkerLlmSettings(): Boolean =
+            containsKey(ChatServiceProtocol.EXTRA_WORKER_BASE_URL) ||
+                    containsKey(ChatServiceProtocol.EXTRA_WORKER_API_KEY) ||
+                    containsKey(ChatServiceProtocol.EXTRA_WORKER_MODEL) ||
+                    containsKey(ChatServiceProtocol.EXTRA_WORKER_SETTINGS_JSON)
+
+    private fun WorkerLlmSettings.updatedFrom(data: Bundle): WorkerLlmSettings =
+            copy(
+                    baseUrl =
+                            data.optionalStringOrExisting(
+                                    ChatServiceProtocol.EXTRA_WORKER_BASE_URL,
+                                    baseUrl
+                            ),
+                    apiKey =
+                            data.optionalStringOrExisting(
+                                    ChatServiceProtocol.EXTRA_WORKER_API_KEY,
+                                    apiKey
+                            ),
+                    model =
+                            data.optionalStringOrExisting(
+                                    ChatServiceProtocol.EXTRA_WORKER_MODEL,
+                                    model
+                            ),
+                    settingsJson =
+                            data.optionalStringOrExisting(
+                                    ChatServiceProtocol.EXTRA_WORKER_SETTINGS_JSON,
+                                    settingsJson
+                            ),
+            )
 
     private fun Bundle.containsLocalLlmSettings(): Boolean =
             containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_ENABLED) ||
@@ -617,9 +532,6 @@ class ChatConnectionService : Service() {
                     containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_TEMPERATURE) ||
                     containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_MAX_TOKENS) ||
                     containsKey(ChatServiceProtocol.EXTRA_LOCAL_LLM_TIMEOUT_MILLIS)
-
-    private fun Bundle.runtimeModeOverride(): ChatRuntimeMode? =
-            ChatRuntimeMode.fromWireValue(getString(ChatServiceProtocol.EXTRA_RUNTIME_MODE))
 
     private fun LocalLlmSettings.updatedFrom(data: Bundle): LocalLlmSettings =
             copy(
@@ -715,19 +627,18 @@ class ChatConnectionService : Service() {
                     msg.replyTo?.let {
                         service.clients.add(it)
                         service.sendSnapshot(it)
-                        service.broadcastConnectionState(service.manager.connectionState.value)
+                        service.broadcastRuntimeState(service.manager.runtimeState.value)
                         service.broadcastProcessing(service.manager.processing.value)
                     }
                 }
                 ChatServiceProtocol.MSG_UNREGISTER_CLIENT -> {
                     msg.replyTo?.let { service.clients.remove(it) }
                 }
-                ChatServiceProtocol.MSG_CONNECT -> service.handleConnectRequest(msg.data)
                 ChatServiceProtocol.MSG_DISCONNECT -> service.manager.disconnect()
                 ChatServiceProtocol.MSG_SEND_MESSAGE -> service.handleSendMessage(msg.data)
                 ChatServiceProtocol.MSG_UPDATE_CONFIG -> service.handleConfigUpdate(msg.data)
                 ChatServiceProtocol.MSG_START_LOCAL_RUNTIME -> {
-                    service.applyRuntimeMode(ChatRuntimeMode.LOCAL)
+                    service.manager.startLocalRuntime()
                     service.persistConnectionConfig()
                 }
                 ChatServiceProtocol.MSG_REQUEST_SNAPSHOT -> {
@@ -738,6 +649,8 @@ class ChatConnectionService : Service() {
                 ChatServiceProtocol.MSG_CLEAR_MESSAGES_EPHEMERAL ->
                         service.handleClearMessages(false)
                 ChatServiceProtocol.MSG_SET_ACTIVE_MODEL -> service.handleSetActiveModel(msg.data)
+                ChatServiceProtocol.MSG_SET_ACTIVE_PERSONA ->
+                        service.handleSetActivePersona(msg.data)
                 ChatServiceProtocol.MSG_UPDATE_ENVIRONMENT_STATE ->
                         service.handleEnvironmentStateUpdate(msg.data)
                 ChatServiceProtocol.MSG_REPORT_MOTION_FINISHED ->
@@ -749,12 +662,7 @@ class ChatConnectionService : Service() {
 
     companion object {
         private const val CHAT_PREFS = "chat_prefs"
-        private const val KEY_LAST_URL = "last_url"
-        private const val KEY_PLATFORM = "platform"
-        private const val KEY_AUTH_TOKEN = "auth_token"
         private const val KEY_NICKNAME = "nickname"
-        private const val KEY_RECEIVER_ID = "receiver_user_id"
-        private const val KEY_RECEIVER_NICKNAME = "receiver_user_nickname"
         private const val CONNECTION_ERROR_PREVIEW_LIMIT = 120
     }
 }

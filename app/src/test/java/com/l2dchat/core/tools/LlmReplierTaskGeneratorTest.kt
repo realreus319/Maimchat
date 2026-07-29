@@ -156,7 +156,7 @@ class LlmReplierTaskGeneratorTest {
                                     timestampSeconds = 1.0,
                                     payload = mapOf("text" to "hello")
                             ),
-                    content = content
+                    thinking = content
             )
 
     private class FakeStreamClient(

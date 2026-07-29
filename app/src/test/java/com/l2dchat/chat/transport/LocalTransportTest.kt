@@ -6,7 +6,7 @@ import com.l2dchat.chat.ReceiverInfo
 import com.l2dchat.chat.Seg
 import com.l2dchat.chat.SenderInfo
 import com.l2dchat.chat.UserInfo
-import com.l2dchat.chat.ChatWebSocketManager.ConnectionState
+import com.l2dchat.chat.ChatWebSocketManager.RuntimeState
 import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.environment.EnvironmentTriggerSubmission
 import com.l2dchat.core.LocalChatRuntime
@@ -24,12 +24,12 @@ import org.junit.Test
 class LocalTransportTest {
     @Test
     fun `send starts runtime without explicit start`() {
-        val states = mutableListOf<ConnectionState>()
+        val states = mutableListOf<RuntimeState>()
         val incoming = mutableListOf<MessageBase>()
 
         val callbacks =
                 object : ChatTransportCallbacks {
-                    override fun onStateChanged(state: ConnectionState) {
+                    override fun onStateChanged(state: RuntimeState) {
                         states += state
                     }
 
@@ -47,7 +47,6 @@ class LocalTransportTest {
                     LocalTransport(
                             scope = this,
                             callbacks = callbacks,
-                            platformProvider = { "test_platform" },
                             agentNameProvider = { "Bot" },
                             runtimeFactory = { runtimeScope ->
                                 runtimeFor("local reply", runtimeScope)
@@ -57,7 +56,7 @@ class LocalTransportTest {
             assertTrue(transport.send(buildMessage("hello", "message-1")))
             withTimeout(1_000L) { incoming.awaitSize(1) }
 
-            assertEquals(listOf(ConnectionState.CONNECTING, ConnectionState.CONNECTED), states)
+            assertEquals(listOf(RuntimeState.STARTING, RuntimeState.RUNNING), states)
             assertEquals("local reply", incoming.single().rawMessage)
             transport.stop("done")
         }
@@ -65,14 +64,14 @@ class LocalTransportTest {
 
     @Test
     fun `rebuildRuntime swaps the runtime used for later sends`() {
-        val states = mutableListOf<ConnectionState>()
+        val states = mutableListOf<RuntimeState>()
         val incoming = mutableListOf<MessageBase>()
         var replyText = "first runtime"
         var factoryCalls = 0
 
         val callbacks =
                 object : ChatTransportCallbacks {
-                    override fun onStateChanged(state: ConnectionState) {
+                    override fun onStateChanged(state: RuntimeState) {
                         states += state
                     }
 
@@ -90,7 +89,6 @@ class LocalTransportTest {
                     LocalTransport(
                             scope = this,
                             callbacks = callbacks,
-                            platformProvider = { "test_platform" },
                             agentNameProvider = { "Bot" },
                             runtimeFactory = { runtimeScope ->
                                 factoryCalls += 1
@@ -112,10 +110,10 @@ class LocalTransportTest {
             assertEquals(2, factoryCalls)
             assertEquals(
                     listOf(
-                            ConnectionState.CONNECTING,
-                            ConnectionState.CONNECTED,
-                            ConnectionState.CONNECTING,
-                            ConnectionState.CONNECTED
+                            RuntimeState.STARTING,
+                            RuntimeState.RUNNING,
+                            RuntimeState.STARTING,
+                            RuntimeState.RUNNING
                     ),
                     states
             )
@@ -125,12 +123,12 @@ class LocalTransportTest {
 
     @Test
     fun `start reports error when runtime factory fails`() {
-        val states = mutableListOf<ConnectionState>()
+        val states = mutableListOf<RuntimeState>()
         val errors = mutableListOf<String>()
 
         val callbacks =
                 object : ChatTransportCallbacks {
-                    override fun onStateChanged(state: ConnectionState) {
+                    override fun onStateChanged(state: RuntimeState) {
                         states += state
                     }
 
@@ -148,27 +146,26 @@ class LocalTransportTest {
                     LocalTransport(
                             scope = this,
                             callbacks = callbacks,
-                            platformProvider = { "test_platform" },
                             agentNameProvider = { "Bot" },
                             runtimeFactory = { throw IllegalStateException("factory boom") }
                     )
 
             transport.start()
 
-            assertEquals(listOf(ConnectionState.CONNECTING, ConnectionState.ERROR), states)
+            assertEquals(listOf(RuntimeState.STARTING, RuntimeState.ERROR), states)
             assertEquals(listOf("本地运行时启动失败：factory boom"), errors)
         }
     }
 
     @Test
     fun `rebuildRuntime reports error when replacement runtime fails`() {
-        val states = mutableListOf<ConnectionState>()
+        val states = mutableListOf<RuntimeState>()
         val errors = mutableListOf<String>()
         var factoryCalls = 0
 
         val callbacks =
                 object : ChatTransportCallbacks {
-                    override fun onStateChanged(state: ConnectionState) {
+                    override fun onStateChanged(state: RuntimeState) {
                         states += state
                     }
 
@@ -186,7 +183,6 @@ class LocalTransportTest {
                     LocalTransport(
                             scope = this,
                             callbacks = callbacks,
-                            platformProvider = { "test_platform" },
                             agentNameProvider = { "Bot" },
                             runtimeFactory = { runtimeScope ->
                                 factoryCalls += 1
@@ -203,10 +199,10 @@ class LocalTransportTest {
             assertEquals(2, factoryCalls)
             assertEquals(
                     listOf(
-                            ConnectionState.CONNECTING,
-                            ConnectionState.CONNECTED,
-                            ConnectionState.CONNECTING,
-                            ConnectionState.ERROR
+                            RuntimeState.STARTING,
+                            RuntimeState.RUNNING,
+                            RuntimeState.STARTING,
+                            RuntimeState.ERROR
                     ),
                     states
             )
@@ -216,14 +212,14 @@ class LocalTransportTest {
 
     @Test
     fun `send reports error when runtime processing fails`() {
-        val states = mutableListOf<ConnectionState>()
+        val states = mutableListOf<RuntimeState>()
         val incoming = mutableListOf<MessageBase>()
         val failures = mutableListOf<Pair<String?, String>>()
         val processingLog = mutableListOf<Boolean>()
 
         val callbacks =
                 object : ChatTransportCallbacks {
-                    override fun onStateChanged(state: ConnectionState) {
+                    override fun onStateChanged(state: RuntimeState) {
                         states += state
                     }
 
@@ -253,7 +249,6 @@ class LocalTransportTest {
                     LocalTransport(
                             scope = this,
                             callbacks = callbacks,
-                            platformProvider = { "test_platform" },
                             agentNameProvider = { "Bot" },
                             runtimeFactory = { runtimeScope ->
                                 LocalChatRuntime(
@@ -272,7 +267,7 @@ class LocalTransportTest {
             withTimeout(1_000L) { failures.awaitSize(1) }
 
             assertTrue(incoming.isEmpty())
-            assertEquals(ConnectionState.ERROR, states.last())
+            assertEquals(RuntimeState.ERROR, states.last())
             // The failure is correlated to the exact message id so the UI can flag that bubble.
             assertEquals(
                     listOf("message-1" to "本地运行时处理消息失败：planner boom"),
@@ -287,12 +282,12 @@ class LocalTransportTest {
 
     @Test
     fun `submitEnvironmentTrigger sends unbound environment replies through callbacks`() {
-        val states = mutableListOf<ConnectionState>()
+        val states = mutableListOf<RuntimeState>()
         val incoming = mutableListOf<MessageBase>()
 
         val callbacks =
                 object : ChatTransportCallbacks {
-                    override fun onStateChanged(state: ConnectionState) {
+                    override fun onStateChanged(state: RuntimeState) {
                         states += state
                     }
 
@@ -310,7 +305,6 @@ class LocalTransportTest {
                     LocalTransport(
                             scope = this,
                             callbacks = callbacks,
-                            platformProvider = { "test_platform" },
                             agentNameProvider = { "Bot" },
                             runtimeFactory = { runtimeScope ->
                                 runtimeFor("environment reply", runtimeScope)
@@ -340,21 +334,21 @@ class LocalTransportTest {
 
             withTimeout(1_000L) { incoming.awaitSize(1) }
             assertEquals("environment reply", incoming.single().rawMessage)
-            assertEquals(ConnectionState.CONNECTED, states.last())
+            assertEquals(RuntimeState.RUNNING, states.last())
             transport.stop("done")
         }
     }
 
     @Test
     fun `stop cancels in flight runtime work without reporting error`() {
-        val states = mutableListOf<ConnectionState>()
+        val states = mutableListOf<RuntimeState>()
         val incoming = mutableListOf<MessageBase>()
         val errors = mutableListOf<String>()
         val generationStarted = CompletableDeferred<Unit>()
 
         val callbacks =
                 object : ChatTransportCallbacks {
-                    override fun onStateChanged(state: ConnectionState) {
+                    override fun onStateChanged(state: RuntimeState) {
                         states += state
                     }
 
@@ -372,7 +366,6 @@ class LocalTransportTest {
                     LocalTransport(
                             scope = this,
                             callbacks = callbacks,
-                            platformProvider = { "test_platform" },
                             agentNameProvider = { "Bot" },
                             runtimeFactory = { runtimeScope ->
                                 LocalChatRuntime(
@@ -396,7 +389,7 @@ class LocalTransportTest {
 
             assertTrue(errors.isEmpty())
             assertTrue(incoming.isEmpty())
-            assertEquals(ConnectionState.DISCONNECTED, states.last())
+            assertEquals(RuntimeState.STOPPED, states.last())
         }
     }
 
@@ -418,13 +411,11 @@ class LocalTransportTest {
             MessageBase(
                     messageInfo =
                             BaseMessageInfo(
-                                    platform = "test_platform",
                                     messageId = messageId,
                                     senderInfo =
                                             SenderInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "user-id",
                                                                     userNickname = "Alice"
                                                             )
@@ -433,7 +424,6 @@ class LocalTransportTest {
                                             ReceiverInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "bot-id",
                                                                     userNickname = "Bot"
                                                             )

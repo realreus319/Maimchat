@@ -18,7 +18,11 @@ data class VisibleMessageEntity(
         @ColumnInfo(name = "timestamp_ms") val timestampMillis: Long,
         @ColumnInfo(name = "motion_group") val motionGroup: String? = null,
         @ColumnInfo(name = "motion_index") val motionIndex: Int? = null,
-        @ColumnInfo(name = "motion_loop") val motionLoop: Boolean = false
+        @ColumnInfo(name = "motion_loop") val motionLoop: Boolean = false,
+        // Inline AI-agent activity bubble (JSON of WorkerActivity) / worker-submitted file (JSON) — so
+        // these conversation artifacts survive an app restart / history reload like normal messages.
+        @ColumnInfo(name = "agent_activity_json") val agentActivityJson: String? = null,
+        @ColumnInfo(name = "file_info_json") val fileInfoJson: String? = null
 )
 
 @Entity(
@@ -26,17 +30,14 @@ data class VisibleMessageEntity(
         indices =
                 [
                         Index(value = ["context_id", "agent_id", "timestamp_ms"]),
-                        Index(value = ["sender_user_id"]),
-                        Index(value = ["receiver_user_id"])
+                        Index(value = ["sender_user_id"])
                 ]
 )
 data class StandardMessageEntity(
         @PrimaryKey @ColumnInfo(name = "message_id") val messageId: String,
         @ColumnInfo(name = "context_id") val contextId: String,
         @ColumnInfo(name = "agent_id") val agentId: String?,
-        @ColumnInfo(name = "platform") val platform: String?,
         @ColumnInfo(name = "sender_user_id") val senderUserId: String?,
-        @ColumnInfo(name = "receiver_user_id") val receiverUserId: String?,
         @ColumnInfo(name = "timestamp_ms") val timestampMillis: Long,
         @ColumnInfo(name = "raw_text") val rawText: String?,
         @ColumnInfo(name = "message_json") val messageJson: String

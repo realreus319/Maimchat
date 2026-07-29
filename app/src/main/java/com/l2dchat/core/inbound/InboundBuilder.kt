@@ -8,19 +8,12 @@ class InboundBuilder {
     fun fromMessageBase(
             message: MessageBase,
             fallbackContextId: String? = null,
-            fallbackAgentId: String? = null,
-            fallbackPlatform: String = "android"
+            fallbackAgentId: String? = null
     ): InboundMessage {
         val info = message.messageInfo
         val groupInfo = info.groupInfo ?: info.senderInfo?.groupInfo ?: info.receiverInfo?.groupInfo
         val senderUser = info.senderInfo?.userInfo ?: info.userInfo
         val receiverUser = info.receiverInfo?.userInfo
-        val platform =
-                info.platform
-                        ?: senderUser?.platform
-                        ?: receiverUser?.platform
-                        ?: groupInfo?.platform
-                        ?: fallbackPlatform
         val contextId =
                 groupInfo?.groupId?.takeIf { it.isNotBlank() }
                         ?: senderUser?.userId?.takeIf { it.isNotBlank() }
@@ -38,7 +31,6 @@ class InboundBuilder {
                 messageId =
                         info.messageId?.takeIf { it.isNotBlank() }
                                 ?: stableMessageId(message.toJsonString()),
-                platform = platform,
                 senderId = senderUser?.userId?.takeIf { it.isNotBlank() } ?: "unknown",
                 senderName =
                         senderUser?.userNickname?.takeIf { it.isNotBlank() }

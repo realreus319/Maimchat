@@ -196,7 +196,7 @@ class DecisionToolsTest {
                     taskId = taskId,
                     routingKey = routingKey,
                     trigger = trigger(),
-                    content = "hello"
+                    thinking = "hello"
             )
 
     private fun trigger(): Trigger =

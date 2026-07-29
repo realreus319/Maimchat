@@ -27,7 +27,11 @@ data class ReplierTaskRequest(
         val routingKey: RoutingKey,
         val trigger: Trigger,
         val roundId: String = "round_${trigger.messageId}",
-        val content: String,
+        // The ONLY substance the planner hands over: its read of the situation + 小千's inner
+        // thoughts + anything the planner did that the replier can't otherwise see (e.g. what an AI
+        // agent was asked to do and what it returned). The replier writes the user-facing reply from
+        // this plus the conversation context — the planner never drafts the reply text itself.
+        val thinking: String,
         val replyGuidance: String? = null,
         val styleOverride: String? = null,
         val emotionHint: String? = null,
@@ -38,7 +42,7 @@ data class ReplierTaskRequest(
     init {
         require(taskId.isNotBlank()) { "Replier task id must not be blank" }
         require(roundId.isNotBlank()) { "Replier task round id must not be blank" }
-        require(content.isNotBlank()) { "Replier task content must not be blank" }
+        require(thinking.isNotBlank()) { "Replier task thinking must not be blank" }
         require(replyGuidance == null || replyGuidance.isNotBlank()) {
             "Replier task replyGuidance must not be blank"
         }

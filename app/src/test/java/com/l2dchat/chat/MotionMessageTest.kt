@@ -12,7 +12,6 @@ class MotionMessageTest {
                 MessageBase(
                         messageInfo =
                                 BaseMessageInfo(
-                                        platform = "test",
                                         messageId = "motion-1",
                                         additionalConfig = MotionMessage.additionalConfig(command)
                                 ),

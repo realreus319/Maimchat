@@ -20,7 +20,6 @@ object WallpaperComm {
     const val PREF_WIDGET_LAST_INPUT_KEY = "last_input"
     const val PREF_WALLPAPER = "wallpaper_prefs"
     const val PREF_WALLPAPER_BG_PATH = "bg_path"
-    const val PREF_WALLPAPER_MODEL_FOLDER = "model_folder"
     const val PREF_WALLPAPER_VISIBLE = "wallpaper_visible"
     const val PREF_WALLPAPER_VISIBLE_UPDATED_AT = "wallpaper_visible_updated_at"
     const val PREF_WALLPAPER_INTERACTION_TYPE = "wallpaper_interaction_type"

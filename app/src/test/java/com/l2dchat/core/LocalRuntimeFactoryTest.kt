@@ -57,7 +57,6 @@ class LocalRuntimeFactoryTest {
             val handled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "你好"),
-                            fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
@@ -89,7 +88,6 @@ class LocalRuntimeFactoryTest {
             val handled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "hello"),
-                            fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
@@ -97,7 +95,6 @@ class LocalRuntimeFactoryTest {
             assertTrue(handled)
             val reply = emitted.single()
             assertEquals("generated reply", reply.rawMessage)
-            assertEquals("test_platform", reply.messageInfo.platform)
             assertEquals("bot-id", reply.messageInfo.senderInfo?.userInfo?.userId)
             assertEquals("Bot", reply.messageInfo.senderInfo?.userInfo?.userNickname)
             assertEquals("user-id", reply.messageInfo.receiverInfo?.userInfo?.userId)
@@ -141,7 +138,6 @@ class LocalRuntimeFactoryTest {
             val handled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "provider parity"),
-                            fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
@@ -162,7 +158,7 @@ class LocalRuntimeFactoryTest {
 
             val firstPlannerBody = requests[0].jsonBody()
             assertEquals("planner-model", firstPlannerBody["model"].asString)
-            assertEquals(false, firstPlannerBody["stream"].asBoolean)
+            assertEquals(true, firstPlannerBody["stream"].asBoolean)
             assertTrue(firstPlannerBody.getAsJsonArray("tools").containsTool(ReplierTool.NAME))
 
             val replierBody = requests[1].jsonBody()
@@ -173,6 +169,7 @@ class LocalRuntimeFactoryTest {
             val secondPlannerBody = requests[2].jsonBody()
             val plannerMessages = secondPlannerBody.getAsJsonArray("messages")
             assertEquals("planner-model", secondPlannerBody["model"].asString)
+            assertEquals(true, secondPlannerBody["stream"].asBoolean)
             assertTrue(plannerMessages.anyObject { it.has("tool_calls") })
             assertTrue(
                     plannerMessages.anyObject {
@@ -207,7 +204,6 @@ class LocalRuntimeFactoryTest {
             val handled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "hello"),
-                            fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
@@ -242,7 +238,6 @@ class LocalRuntimeFactoryTest {
                     async {
                         runtime.handleMessage(
                                 inbound = buildMessage(content = "first", messageId = "first-id"),
-                                fallbackPlatform = "fallback",
                                 fallbackAgentName = "Maimchat",
                                 replySink = collectingSink(emitted)
                         )
@@ -252,7 +247,6 @@ class LocalRuntimeFactoryTest {
             val secondHandled =
                     runtime.handleMessage(
                             inbound = buildMessage(content = "second", messageId = "second-id"),
-                            fallbackPlatform = "fallback",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
@@ -283,13 +277,11 @@ class LocalRuntimeFactoryTest {
             MessageBase(
                     messageInfo =
                             BaseMessageInfo(
-                                    platform = "test_platform",
                                     messageId = messageId,
                                     senderInfo =
                                             SenderInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "user-id",
                                                                     userNickname = "Alice"
                                                             )
@@ -298,7 +290,6 @@ class LocalRuntimeFactoryTest {
                                             ReceiverInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "bot-id",
                                                                     userNickname = "Bot"
                                                             )
@@ -342,31 +333,11 @@ class LocalRuntimeFactoryTest {
     private fun scriptedProviderResponse(requestIndex: Int): Response =
             when (requestIndex) {
                 0 ->
-                        jsonResponse(
+                        sseResponse(
                                 """
-                                {
-                                  "id": "planner-tool-call",
-                                  "model": "planner-model",
-                                  "choices": [
-                                    {
-                                      "finish_reason": "tool_calls",
-                                      "message": {
-                                        "role": "assistant",
-                                        "content": null,
-                                        "tool_calls": [
-                                          {
-                                            "id": "call-replier-1",
-                                            "type": "function",
-                                            "function": {
-                                              "name": "replier",
-                                              "arguments": "{\"content\":\"draft from planner\"}"
-                                            }
-                                          }
-                                        ]
-                                      }
-                                    }
-                                  ]
-                                }
+                                data: {"id":"planner-tool-call","model":"planner-model","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-replier-1","type":"function","function":{"name":"replier","arguments":"{\"thinking\":\"draft from planner\"}"}}]},"finish_reason":"tool_calls"}]}
+
+                                data: [DONE]
                                 """.trimIndent()
                         )
                 1 ->
@@ -380,21 +351,11 @@ class LocalRuntimeFactoryTest {
                                 """.trimIndent()
                         )
                 2 ->
-                        jsonResponse(
+                        sseResponse(
                                 """
-                                {
-                                  "id": "planner-final",
-                                  "model": "planner-model",
-                                  "choices": [
-                                    {
-                                      "finish_reason": "stop",
-                                      "message": {
-                                        "role": "assistant",
-                                        "content": "ack"
-                                      }
-                                    }
-                                  ]
-                                }
+                                data: {"id":"planner-final","model":"planner-model","choices":[{"delta":{"role":"assistant","content":"ack"},"finish_reason":"stop"}]}
+
+                                data: [DONE]
                                 """.trimIndent()
                         )
                 else -> error("Unexpected provider request index $requestIndex")
@@ -479,7 +440,7 @@ class LocalRuntimeFactoryTest {
                     LlmToolCall(
                             id = "call-1",
                             name = ReplierTool.NAME,
-                            argumentsJson = """{"content":"planner draft"}"""
+                            argumentsJson = """{"thinking":"planner draft"}"""
                     )
             )
             return LlmResponse(message = LlmMessage.assistant("ignored"), model = config.model)
@@ -500,7 +461,7 @@ class LocalRuntimeFactoryTest {
             return LlmResponse(
                     message =
                             LlmMessage.assistant(
-                                    """{"type":"tool_call","tool":"replier","arguments":{"content":"planner draft"}}"""
+                                    """{"type":"tool_call","tool":"replier","arguments":{"thinking":"planner draft"}}"""
                             ),
                     model = config.model
             )
@@ -591,7 +552,7 @@ class LocalRuntimeFactoryTest {
                         LlmToolCall(
                                 id = "normal-call-1",
                                 name = ReplierTool.NAME,
-                                argumentsJson = """{"content":"slow draft"}"""
+                                argumentsJson = """{"thinking":"slow draft"}"""
                         )
                 )
             }

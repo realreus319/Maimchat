@@ -188,6 +188,14 @@ class RoomPlannerSystemPromptProviderTest {
 
         override suspend fun deleteMemory(memoryId: String) = Unit
 
+        override suspend fun deleteAllMemories() = Unit
+
+        override suspend fun deleteAllImpressions() = Unit
+
+        override suspend fun deleteAllMoodState() = Unit
+
+        override suspend fun deleteAllMediaBlocks() = Unit
+
         override suspend fun queryImpression(
                 contextId: String,
                 agentId: String,
@@ -202,5 +210,10 @@ class RoomPlannerSystemPromptProviderTest {
 
         override suspend fun queryMoodState(contextId: String, agentId: String): MoodStateEntity? =
                 null
+
+        override fun observeMoodState(
+                contextId: String,
+                agentId: String
+        ): kotlinx.coroutines.flow.Flow<MoodStateEntity?> = kotlinx.coroutines.flow.flowOf(null)
     }
 }

@@ -4,12 +4,9 @@ import com.l2dchat.core.config.LocalLlmSettings
 
 object RuntimeSettingsValidation {
     fun validateConfig(
-            url: String,
-            nickname: String,
             localLlmSettings: LocalLlmSettings = LocalLlmSettings()
     ): List<String> {
         val errors = mutableListOf<String>()
-        if (nickname.isBlank()) errors.add("昵称不能为空")
         if (localLlmSettings.enabled) {
             errors += validateLocalProviderConfig(localLlmSettings)
         }

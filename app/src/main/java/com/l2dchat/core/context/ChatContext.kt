@@ -163,11 +163,9 @@ class ChatContext(
 
 data class ChatContextMessage(
         val messageId: String?,
-        val platform: String?,
         val timestampMillis: Long?,
         val senderUserId: String?,
         val senderDisplayName: String?,
-        val receiverUserId: String?,
         val text: String,
         val isAssistant: Boolean,
         val message: MessageBase
@@ -176,15 +174,12 @@ data class ChatContextMessage(
 private fun MessageBase.toContextMessage(agentId: String): ChatContextMessage {
     val info = messageInfo
     val sender = info.senderInfo?.userInfo ?: info.userInfo
-    val receiver = info.receiverInfo?.userInfo
     val senderUserId = sender?.userId?.trim()?.takeIf { it.isNotBlank() }
     return ChatContextMessage(
             messageId = info.messageId?.trim()?.takeIf { it.isNotBlank() },
-            platform = info.platform?.trim()?.takeIf { it.isNotBlank() },
             timestampMillis = info.time?.takeIf { it > 0.0 }?.let { (it * 1000).toLong() },
             senderUserId = senderUserId,
             senderDisplayName = sender.displayName(),
-            receiverUserId = receiver?.userId?.trim()?.takeIf { it.isNotBlank() },
             text = promptText(),
             isAssistant = senderUserId == agentId,
             message = this

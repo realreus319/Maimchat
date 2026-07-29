@@ -61,7 +61,6 @@ class RealProviderRuntimeParityTest {
             val handled =
                     runtime.handleMessage(
                             inbound = buildMessage(env.prompt),
-                            fallbackPlatform = "real-provider-parity",
                             fallbackAgentName = "Maimchat",
                             replySink = collectingSink(emitted)
                     )
@@ -91,14 +90,11 @@ class RealProviderRuntimeParityTest {
             MessageBase(
                     messageInfo =
                             BaseMessageInfo(
-                                    platform = "real-provider-parity",
                                     messageId = "real-provider-message",
                                     senderInfo =
                                             SenderInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform =
-                                                                            "real-provider-parity",
                                                                     userId = "user-id",
                                                                     userNickname = "Tester"
                                                             )
@@ -107,8 +103,6 @@ class RealProviderRuntimeParityTest {
                                             ReceiverInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform =
-                                                                            "real-provider-parity",
                                                                     userId = "bot-id",
                                                                     userNickname = "Maimchat"
                                                             )

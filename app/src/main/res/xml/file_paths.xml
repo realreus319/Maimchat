@@ -2,4 +2,5 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="crop_cache" path="." />
     <files-path name="wallpaper_files" path="wallpaper/" />
+    <files-path name="agent_files" path="agent_files/" />
 </paths>

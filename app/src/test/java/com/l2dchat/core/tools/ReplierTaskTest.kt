@@ -169,7 +169,7 @@ class ReplierTaskTest {
                                     payload = mapOf("text" to "hello")
                             ),
                     roundId = roundId,
-                    content = "hello"
+                    thinking = "hello"
             )
 
     private class RecordingReplierTaskStore : ReplierTaskStore {

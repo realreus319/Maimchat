@@ -26,14 +26,11 @@ class RuntimeMessageMapperTest {
         assertEquals("msg-1", entity.messageId)
         assertEquals("ctx-1", entity.contextId)
         assertEquals("agent-1", entity.agentId)
-        assertEquals("test_platform", entity.platform)
         assertEquals("user-id", entity.senderUserId)
-        assertEquals("bot-id", entity.receiverUserId)
         assertEquals(1234L, entity.timestampMillis)
         assertEquals("hello", entity.rawText)
         val restored = RuntimeMessageMapper.toStandardMessage(entity)
         assertEquals("msg-1", restored.messageInfo.messageId)
-        assertEquals("test_platform", restored.messageInfo.platform)
         assertEquals("user-id", restored.messageInfo.senderInfo?.userInfo?.userId)
         assertEquals("bot-id", restored.messageInfo.receiverInfo?.userInfo?.userId)
         assertEquals("text", restored.messageSegment.type)
@@ -97,14 +94,12 @@ class RuntimeMessageMapperTest {
             MessageBase(
                     messageInfo =
                             BaseMessageInfo(
-                                    platform = "test_platform",
                                     messageId = messageId,
                                     time = timeSeconds,
                                     senderInfo =
                                             SenderInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "user-id",
                                                                     userNickname = "Alice"
                                                             )
@@ -113,7 +108,6 @@ class RuntimeMessageMapperTest {
                                             ReceiverInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "bot-id",
                                                                     userNickname = "Bot"
                                                             )

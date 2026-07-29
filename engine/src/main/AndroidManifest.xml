@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Without this on Android 13+, the worker FGS notification is suppressed (importance=NONE), so
+         aggressive ROMs (ColorOS OplusHansManager) don't recognize the foreground service and CGROUP-
+         FREEZE the engine mid-task (do_freezer_trap) — even while the main app is foreground. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Only apps signed with the SAME key may bind the engine. -->
+    <permission
+        android:name="com.l2dchat.permission.SHELL_ENGINE"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.l2dchat.permission.SHELL_ENGINE" />
+
+    <application
+        android:allowBackup="false"
+        android:label="L2D Shell Engine"
+        android:usesCleartextTraffic="true">
+
+        <!-- Headless worker engine. The main app binds here over IPC. -->
+        <service
+            android:name=".ShellService"
+            android:exported="true"
+            android:foregroundServiceType="dataSync"
+            android:permission="com.l2dchat.permission.SHELL_ENGINE" />
+
+        <!-- Hands worker-submitted files to the main app via content:// URIs (temporary read grant). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/engine_file_paths" />
+        </provider>
+
+        <!-- DEBUG-ONLY self-test (binds the local service and runs a task). NO launcher intent-filter:
+             the engine is HEADLESS and must not show an app-drawer icon. Still adb-launchable:
+             `am start -n com.l2dchat.shell/.PocActivity`. -->
+        <activity
+            android:name=".PocActivity"
+            android:exported="true" />
+    </application>
+</manifest>

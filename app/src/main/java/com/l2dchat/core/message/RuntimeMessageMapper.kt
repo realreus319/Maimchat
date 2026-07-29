@@ -9,7 +9,9 @@ data class VisibleMessageRecord(
         val timestampMillis: Long,
         val motionGroup: String? = null,
         val motionIndex: Int? = null,
-        val motionLoop: Boolean = false
+        val motionLoop: Boolean = false,
+        val agentActivityJson: String? = null,
+        val fileInfoJson: String? = null
 )
 
 object RuntimeMessageMapper {
@@ -32,7 +34,9 @@ object RuntimeMessageMapper {
                     timestampMillis = record.timestampMillis,
                     motionGroup = record.motionGroup,
                     motionIndex = record.motionIndex,
-                    motionLoop = record.motionLoop
+                    motionLoop = record.motionLoop,
+                    agentActivityJson = record.agentActivityJson,
+                    fileInfoJson = record.fileInfoJson
             )
 
     fun toVisibleRecord(entity: VisibleMessageEntity): VisibleMessageRecord =
@@ -43,7 +47,9 @@ object RuntimeMessageMapper {
                     timestampMillis = entity.timestampMillis,
                     motionGroup = entity.motionGroup,
                     motionIndex = entity.motionIndex,
-                    motionLoop = entity.motionLoop
+                    motionLoop = entity.motionLoop,
+                    agentActivityJson = entity.agentActivityJson,
+                    fileInfoJson = entity.fileInfoJson
             )
 
     fun toStandardEntity(
@@ -58,9 +64,7 @@ object RuntimeMessageMapper {
                 messageId = info.messageId?.takeIf { it.isNotBlank() } ?: stableMessageId(json),
                 contextId = contextId,
                 agentId = agentId,
-                platform = info.platform,
                 senderUserId = info.senderInfo?.userInfo?.userId,
-                receiverUserId = info.receiverInfo?.userInfo?.userId,
                 timestampMillis = timestampMillis(info.time, fallbackTimestampMillis),
                 rawText = message.rawMessage,
                 messageJson = json

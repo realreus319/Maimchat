@@ -39,11 +39,16 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Default to NO baked credentials (release/published builds carry nothing). The debug
-        // build type overrides these from local.properties below.
+        // Provider (base_url + api_key) is a SECRET: left blank here and injected ONLY in the debug
+        // build type from the gitignored local.properties. Model ids + planner-thinking are NOT
+        // secret and ARE baked here (committed to git), so every build (debug & release) defaults to
+        // this role split: planner=step (thinking on), replier=qwen, worker=kimi.
         buildConfigField("String", "LLM_DEFAULT_BASE_URL", "\"\"")
         buildConfigField("String", "LLM_DEFAULT_API_KEY", "\"\"")
-        buildConfigField("String", "LLM_DEFAULT_PLANNER_MODEL", "\"\"")
+        buildConfigField("String", "LLM_DEFAULT_PLANNER_MODEL", "\"stepfun/step-3.7-flash\"")
+        buildConfigField("String", "LLM_DEFAULT_REPLIER_MODEL", "\"qwen3.7-plus\"")
+        buildConfigField("String", "LLM_DEFAULT_WORKER_MODEL", "\"kimi-k2.7-code\"")
+        buildConfigField("boolean", "LLM_DEFAULT_PLANNER_THINKING", "true")
     }
 
     signingConfigs {
@@ -77,14 +82,10 @@ android {
         debug {
             // 保持 debug 可读性
             isMinifyEnabled = false
-            // 仅本地 debug 构建从 local.properties 注入默认 provider 凭据（不入库）。
+            // 仅本地 debug 构建从 local.properties 注入默认 provider 凭据（base_url + api_key，不入库）。
+            // 模型 id 与 thinking 已在 defaultConfig 硬编码（入库），此处不再覆盖。
             buildConfigField("String", "LLM_DEFAULT_BASE_URL", "\"${llmDefault("llm.default.baseUrl")}\"")
             buildConfigField("String", "LLM_DEFAULT_API_KEY", "\"${llmDefault("llm.default.apiKey")}\"")
-            buildConfigField(
-                "String",
-                "LLM_DEFAULT_PLANNER_MODEL",
-                "\"${llmDefault("llm.default.plannerModel")}\""
-            )
         }
     }
     compileOptions {
@@ -149,6 +150,7 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.room.testing)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
@@ -183,3 +185,19 @@ tasks.register("publishAllApks") {
     description = "Build and copy both debug and release APKs into build/published-apks"
     dependsOn("publishDebugApk", "publishReleaseApk")
 }
+
+// --- Bundle the headless worker engine APK as an asset so the app can auto-install it ---
+android { sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/engineAssets")) }
+
+// Expose the exported Room schemas to androidTest as assets so MigrationTestHelper can load
+// the schema JSONs (room.schemaLocation == "$projectDir/schemas") and validate migrations.
+android { sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas") }
+
+val copyEngineApk by tasks.registering(Copy::class) {
+    dependsOn(":engine:assembleDebug")
+    from(project(":engine").layout.buildDirectory.file("outputs/apk/debug/engine-debug.apk"))
+    into(layout.buildDirectory.dir("generated/engineAssets/engine"))
+    rename { "engine.apk" }
+}
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
+        .configureEach { dependsOn(copyEngineApk) }

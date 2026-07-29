@@ -134,7 +134,6 @@ class RoomChatHistoryStoreTest {
             MessageBase(
                     messageInfo =
                             BaseMessageInfo(
-                                    platform = "test",
                                     messageId = id,
                                     time = timeSeconds
                             ),
@@ -168,6 +167,14 @@ class RoomChatHistoryStoreTest {
             standardMessages.removeAll {
                 it.contextId == contextId && (agentId == null || it.agentId == agentId)
             }
+        }
+
+        override suspend fun deleteAllMessages() {
+            visibleMessages.clear()
+        }
+
+        override suspend fun deleteAllStandardMessages() {
+            standardMessages.clear()
         }
 
         override suspend fun queryRecentMessages(

@@ -17,19 +17,19 @@ class ReplierTool(
             LlmToolDefinition(
                     name = NAME,
                     description =
-                            "Prepare the exact chat reply text. In planner-managed mode this tool returns the reply text and does not send it directly.",
+                            "Produce the chat reply. You (the planner) do NOT write the reply text — you only pass your `thinking`, and the replier composes the in-character reply from that plus the conversation context. The tool returns the generated reply text and does not send it directly.",
                     parameters =
                             mapOf(
                                     "type" to "object",
                                     "additionalProperties" to false,
-                                    "required" to listOf("content"),
+                                    "required" to listOf("thinking"),
                                     "properties" to
                                             mapOf(
-                                                    "content" to
+                                                    "thinking" to
                                                             mapOf(
                                                                     "type" to "string",
                                                                     "description" to
-                                                                            "The exact message content to send to the user."
+                                                                            "The ONLY thing you pass. Your read of the situation + 小千's inner thoughts, PLUS anything you did that the replier can't see — especially what you asked the AI agent to do and what it returned (e.g. 'user wanted the local IP; I had the AI agent check it, it's 192.168.1.5'). Do NOT write the user-facing reply here; the replier reads this plus the conversation context and composes the in-character reply itself. This is NOT shown to the user verbatim."
                                                             ),
                                                     "reply_guidance" to
                                                             mapOf(
@@ -75,8 +75,8 @@ class ReplierTool(
             context: ToolExecutionContext,
             arguments: JsonObject
     ): ToolExecutionResult {
-        val content = arguments.stringOrNull("content")?.trim().orEmpty()
-        require(content.isNotBlank()) { "replier.content must not be blank" }
+        val thinking = arguments.stringOrNull("thinking")?.trimOrNull()
+        require(thinking != null) { "replier.thinking must not be blank" }
         val task =
                 taskManager?.startTask(
                         ReplierTaskRequest(
@@ -84,7 +84,7 @@ class ReplierTool(
                                 routingKey = context.routingKey,
                                 trigger = context.trigger,
                                 roundId = context.roundId,
-                                content = content,
+                                thinking = thinking,
                                 replyGuidance =
                                         arguments.stringOrNull("reply_guidance")?.trimOrNull(),
                                 styleOverride =
@@ -122,7 +122,7 @@ class ReplierTool(
                     metadata = mapOf("task_id" to taskSnapshot.taskId)
             )
         }
-        val replyText = taskSnapshot?.replyText ?: content
+        val replyText = taskSnapshot?.replyText.orEmpty()
         val resultJson =
                 JsonObject().apply {
                     taskSnapshot?.let {

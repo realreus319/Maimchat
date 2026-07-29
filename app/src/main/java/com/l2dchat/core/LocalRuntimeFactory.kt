@@ -65,6 +65,8 @@ object LocalRuntimeFactory {
             environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
             motionController: MotionController = NoopMotionController,
             runtimeStateDaoProvider: () -> RuntimeStateDao? = { null },
+            extraNormalTools: List<com.l2dchat.core.tools.Tool> = emptyList(),
+            backgroundStatusProvider: PlannerPromptContextProvider = EmptyPlannerPromptContextProvider,
             gson: Gson = Gson()
     ): LocalChatRuntime {
         if (llmConfig == null) {
@@ -113,12 +115,21 @@ object LocalRuntimeFactory {
                                             motionController = motionController,
                                             runtimeStateDao = runtimeStateDaoProvider(),
                                             replierTaskManager = taskManager,
-                                            replierTaskIdFactory = taskIdFactory
+                                            replierTaskIdFactory = taskIdFactory,
+                                            extraTools = extraNormalTools
                                     ),
                             mode = ToolExecutionMode.NORMAL,
                             promptBuilder =
                                     PlannerPromptBuilder(
-                                            contextProvider = memoryPlannerContextProvider(runtimeStateDaoProvider())
+                                            contextProvider =
+                                                    CompositePlannerPromptContextProvider(
+                                                            listOf(
+                                                                    backgroundStatusProvider,
+                                                                    memoryPlannerContextProvider(
+                                                                            runtimeStateDaoProvider()
+                                                                    )
+                                                            )
+                                                    )
                                     ),
                             systemPromptProvider = plannerSystemPromptProvider
                     )
@@ -137,6 +148,7 @@ object LocalRuntimeFactory {
                                             contextProvider =
                                                     CompositePlannerPromptContextProvider(
                                                             listOf(
+                                                                    backgroundStatusProvider,
                                                                     BackgroundReplierPromptContextProvider(
                                                                             taskManager
                                                                     ),

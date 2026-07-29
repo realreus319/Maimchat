@@ -222,7 +222,7 @@ class PlannerLoopTest {
             loop.submitTrigger(trigger("third"))
 
             withTimeout(1_000L) { thirdDone.await() }
-            assertEquals(listOf("third"), normalProcessed)
+            assertEquals(listOf("second", "third"), normalProcessed)
             loop.shutdown()
         }
     }

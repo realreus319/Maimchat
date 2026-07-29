@@ -33,3 +33,6 @@ include(":app")
 include(":framework")
 project(":framework").projectDir = file("app/CubismSdkForJava-5-r.4.1/Framework/framework")
 
+// 本地 Shell/Worker 引擎包（headless PoC，targetSdk 28，承载 proot+Alpine+Python worker）
+include(":engine")
+

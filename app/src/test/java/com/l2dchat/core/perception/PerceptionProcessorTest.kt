@@ -71,19 +71,16 @@ class PerceptionProcessorTest {
             MessageBase(
                     messageInfo =
                             BaseMessageInfo(
-                                    platform = "test_platform",
                                     messageId = "message-id",
                                     time = 1000.0,
                                     senderInfo =
                                             SenderInfo(
                                                     groupInfo =
                                                             com.l2dchat.chat.GroupInfo(
-                                                                    platform = "test_platform",
                                                                     groupId = "group-id"
                                                             ),
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "user-id",
                                                                     userNickname = "Alice"
                                                             )
@@ -92,7 +89,6 @@ class PerceptionProcessorTest {
                                             ReceiverInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "bot-id",
                                                                     userNickname = "Maimai"
                                                             )

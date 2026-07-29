@@ -33,11 +33,10 @@ class InboundBuilderTest {
                         rawMessage = "看这里 [image1]"
                 )
 
-        val inbound = builder.fromMessageBase(message, fallbackPlatform = "fallback")
+        val inbound = builder.fromMessageBase(message)
 
         assertEquals("group-id", inbound.routingKey.contextId)
         assertEquals("bot-id", inbound.routingKey.agentId)
-        assertEquals("test_platform", inbound.platform)
         assertEquals("user-id", inbound.senderId)
         assertEquals("Alice", inbound.senderName)
         assertEquals("看这里 [image1]", inbound.text)
@@ -74,19 +73,16 @@ class InboundBuilderTest {
             MessageBase(
                     messageInfo =
                             BaseMessageInfo(
-                                    platform = "test_platform",
                                     messageId = "message-id",
                                     time = 1000.0,
                                     senderInfo =
                                             SenderInfo(
                                                     groupInfo =
                                                             GroupInfo(
-                                                                    platform = "test_platform",
                                                                     groupId = "group-id"
                                                             ),
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "user-id",
                                                                     userNickname = "Alice"
                                                             )
@@ -95,7 +91,6 @@ class InboundBuilderTest {
                                             ReceiverInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "bot-id",
                                                                     userNickname = "Bot"
                                                             )

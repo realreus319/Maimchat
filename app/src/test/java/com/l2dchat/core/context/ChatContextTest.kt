@@ -61,6 +61,55 @@ class ChatContextTest {
     }
 
     @Test
+    fun `assistant detection requires normalized agent id not display name`() = runBlocking {
+        // The routing agentId is the normalized model key (modelName.lowercase() with
+        // non [a-z0-9_-] runs collapsed to '_'), e.g. "hiyori".
+        val agentKey = "hiyori"
+        val context =
+                ChatContext(
+                        routingKey = RoutingKey(contextId = "room-h", agentId = agentKey),
+                        historyStore =
+                                FakeHistoryStore(
+                                        recentStandardMessages =
+                                                listOf(
+                                                        // senderId is the human-readable DISPLAY
+                                                        // name "Hiyori" — this is exactly the bug
+                                                        // the ChatWebSocketManager fix prevents.
+                                                        // It does NOT equal the normalized agentId
+                                                        // "hiyori", so it would be misjudged as a
+                                                        // user turn. Persistence MUST store the
+                                                        // normalized key, not the display name.
+                                                        message(
+                                                                id = "msg-2",
+                                                                timeSeconds = 2.0,
+                                                                senderId = "Hiyori",
+                                                                senderName = "Hiyori",
+                                                                text = "display-name sender"
+                                                        ),
+                                                        // senderId is the normalized agent key and
+                                                        // equals agentId -> assistant.
+                                                        message(
+                                                                id = "msg-1",
+                                                                timeSeconds = 1.0,
+                                                                senderId = agentKey,
+                                                                senderName = "Hiyori",
+                                                                text = "normalized sender"
+                                                        )
+                                                )
+                                ),
+                        stateDao = FakeRuntimeStateDao()
+                )
+
+        val history = context.getConversationHistory(limit = 2)
+
+        assertEquals(listOf("msg-1", "msg-2"), history.map { it.messageId })
+        // Normalized key matches agentId -> recognized as assistant.
+        assertTrue(history[0].isAssistant)
+        // Display name "Hiyori" != normalized key "hiyori" -> would be misjudged as a user turn.
+        assertFalse(history[1].isAssistant)
+    }
+
+    @Test
     fun `trigger history falls back to recent messages when anchor is missing`() = runBlocking {
         val context =
                 ChatContext(
@@ -171,14 +220,12 @@ class ChatContextTest {
             MessageBase(
                     messageInfo =
                             BaseMessageInfo(
-                                    platform = "test",
                                     messageId = id,
                                     time = timeSeconds,
                                     senderInfo =
                                             SenderInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test",
                                                                     userId = senderId,
                                                                     userNickname = senderName
                                                             )
@@ -249,9 +296,12 @@ class ChatContextTest {
             private val agentConfig: AgentConfigEntity? = null,
             private val templates: List<PromptTemplateEntity> = emptyList(),
             private val memories: MutableList<MemoryEntity> = mutableListOf(),
-            private val impressions: List<ImpressionEntity> = emptyList(),
-            private val moodState: MoodStateEntity? = null
+            impressions: List<ImpressionEntity> = emptyList(),
+            moodState: MoodStateEntity? = null
     ) : RuntimeStateDao {
+        private val impressions = impressions.toMutableList()
+        private var moodState = moodState
+
         override suspend fun upsertAgentConfig(config: AgentConfigEntity) = Unit
 
         override suspend fun upsertPromptTemplate(template: PromptTemplateEntity) = Unit
@@ -316,6 +366,20 @@ class ChatContextTest {
             memories.removeAll { it.memoryId == memoryId }
         }
 
+        override suspend fun deleteAllMemories() {
+            memories.clear()
+        }
+
+        override suspend fun deleteAllImpressions() {
+            impressions.clear()
+        }
+
+        override suspend fun deleteAllMoodState() {
+            moodState = null
+        }
+
+        override suspend fun deleteAllMediaBlocks() = Unit
+
         override suspend fun queryImpression(
                 contextId: String,
                 agentId: String,
@@ -337,6 +401,14 @@ class ChatContextTest {
 
         override suspend fun queryMoodState(contextId: String, agentId: String): MoodStateEntity? =
                 moodState?.takeIf { it.contextId == contextId && it.agentId == agentId }
+
+        override fun observeMoodState(
+                contextId: String,
+                agentId: String
+        ): kotlinx.coroutines.flow.Flow<MoodStateEntity?> =
+                kotlinx.coroutines.flow.flowOf(
+                        moodState?.takeIf { it.contextId == contextId && it.agentId == agentId }
+                )
     }
 }
 

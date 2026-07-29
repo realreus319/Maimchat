@@ -26,12 +26,14 @@ import com.l2dchat.core.trigger.TriggerPriority
 import com.l2dchat.core.trigger.TriggerType
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -49,13 +51,21 @@ class ToolCallingPlannerTriggerProcessorTest {
                                         LlmToolCall(
                                                 id = "call-1",
                                                 name = ReplierTool.NAME,
-                                                argumentsJson = """{"content":"tool reply"}"""
+                                                argumentsJson = """{"thinking":"tool reply"}"""
                                         )
                                 ),
                         finalText = "final text that should not be sent"
                 )
 
         runBlocking {
+            val taskManager =
+                    ReplierTaskManager(
+                            scope = this,
+                            generator =
+                                    ReplierTaskGenerator { request ->
+                                        flow { emit(ReplierTaskUpdate.Completed(request.thinking)) }
+                                    }
+                    )
             val loop =
                     PlannerLoop(
                             routingKey = routingKey,
@@ -64,7 +74,10 @@ class ToolCallingPlannerTriggerProcessorTest {
                                     ToolCallingPlannerTriggerProcessor(
                                             llmClient = client,
                                             config = LlmGenerationConfig(model = "fake"),
-                                            toolRegistry = ToolRegistry(listOf(ReplierTool())),
+                                            toolRegistry =
+                                                    ToolRegistry(
+                                                            listOf(ReplierTool(taskManager = taskManager))
+                                                    ),
                                             promptBuilder = PlannerPromptBuilder(systemPrompt = "system")
                                     ),
                             replySink = PlannerReplySink { replyDone.complete(it) }
@@ -83,7 +96,7 @@ class ToolCallingPlannerTriggerProcessorTest {
     }
 
     @Test
-    fun `processor falls back to final assistant text when tool does not reply`() {
+    fun `processor does not surface planner text when tool does not reply`() {
         val replyDone = CompletableDeferred<PlannerReply>()
         val client =
                 ExecutingToolClient(
@@ -92,7 +105,7 @@ class ToolCallingPlannerTriggerProcessorTest {
                                         LlmToolCall(
                                                 id = "call-1",
                                                 name = ReplierTool.NAME,
-                                                argumentsJson = """{"content":"   "}"""
+                                                argumentsJson = """{"thinking":"   "}"""
                                         )
                                 ),
                         finalText = "fallback reply"
@@ -114,7 +127,9 @@ class ToolCallingPlannerTriggerProcessorTest {
             loop.start()
             loop.submitTrigger(trigger("hello"))
 
-            assertEquals("fallback reply", withTimeout(1_000L) { replyDone.await() }.text)
+            withTimeout(1_000L) { client.completionDone.await() }
+            waitUntilIdle(loop)
+            assertFalse(replyDone.isCompleted)
             assertTrue(client.toolResults.single().isError)
             loop.shutdown()
         }
@@ -144,7 +159,9 @@ class ToolCallingPlannerTriggerProcessorTest {
             loop.start()
             loop.submitTrigger(trigger("hello"))
 
-            assertEquals("native reply", withTimeout(1_000L) { replyDone.await() }.text)
+            withTimeout(1_000L) { client.completionDone.await() }
+            waitUntilIdle(loop)
+            assertFalse(replyDone.isCompleted)
             assertEquals("room system", client.messages.single().first().textContent())
             loop.shutdown()
         }
@@ -212,7 +229,7 @@ class ToolCallingPlannerTriggerProcessorTest {
     }
 
     @Test
-    fun `processor sends current decision reply after killing background task`() {
+    fun `processor kills background task without surfacing planner text`() {
         val replyDone = CompletableDeferred<PlannerReply>()
         val taskStarted = CompletableDeferred<Unit>()
         val client =
@@ -265,10 +282,9 @@ class ToolCallingPlannerTriggerProcessorTest {
             try {
                 loop.submitTrigger(trigger("new message"))
 
-                assertEquals(
-                        "reply to current message",
-                        withTimeout(1_000L) { replyDone.await() }.text
-                )
+                withTimeout(1_000L) { client.completionDone.await() }
+                waitUntilIdle(loop)
+                assertFalse(replyDone.isCompleted)
                 val resultContent =
                         JsonParser.parseString(client.toolResults.single().content).asJsonObject
                 assertEquals("CANCELLED", resultContent["state"].asString)
@@ -282,7 +298,7 @@ class ToolCallingPlannerTriggerProcessorTest {
     }
 
     @Test
-    fun `processor sends current decision reply when background adoption fails`() {
+    fun `processor reports failed background adoption without surfacing planner text`() {
         val replyDone = CompletableDeferred<PlannerReply>()
         val client =
                 ExecutingToolClient(
@@ -324,7 +340,9 @@ class ToolCallingPlannerTriggerProcessorTest {
             try {
                 loop.submitTrigger(trigger("new message"))
 
-                assertEquals("fresh current reply", withTimeout(1_000L) { replyDone.await() }.text)
+                withTimeout(1_000L) { client.completionDone.await() }
+                waitUntilIdle(loop)
+                assertFalse(replyDone.isCompleted)
                 val toolResult = client.toolResults.single()
                 assertTrue(toolResult.isError)
                 assertEquals("Replier task not found: missing-task", toolResult.content)
@@ -350,8 +368,16 @@ class ToolCallingPlannerTriggerProcessorTest {
                     taskId = taskId,
                     routingKey = routingKey,
                     trigger = trigger("old message"),
-                    content = "old message"
+                    thinking = "old message"
             )
+
+    private suspend fun waitUntilIdle(loop: PlannerLoop) {
+        withTimeout(1_000L) {
+            while (loop.state != PlannerLoopState.IDLE) {
+                delay(10L)
+            }
+        }
+    }
 
     private class ExecutingToolClient(
             private val toolCalls: List<LlmToolCall>,
@@ -360,6 +386,7 @@ class ToolCallingPlannerTriggerProcessorTest {
         val messages = mutableListOf<List<LlmMessage>>()
         val toolDefinitions = mutableListOf<List<LlmToolDefinition>>()
         val toolResults = mutableListOf<LlmToolResult>()
+        val completionDone = CompletableDeferred<Unit>()
 
         override suspend fun chatCompletion(
                 messages: List<LlmMessage>,
@@ -380,6 +407,7 @@ class ToolCallingPlannerTriggerProcessorTest {
             this.messages.add(messages)
             toolDefinitions.add(tools)
             toolCalls.forEach { toolResults.add(toolExecutor.execute(it)) }
+            completionDone.complete(Unit)
             return LlmResponse(message = LlmMessage.assistant(finalText), model = config.model)
         }
     }

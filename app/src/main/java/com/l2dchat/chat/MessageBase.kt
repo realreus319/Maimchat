@@ -20,8 +20,7 @@ private fun jsonGetString(obj: JsonObject?, key: String): String? {
 
 private fun UserInfo?.takeIfMeaningful(): UserInfo? {
     if (this == null) return null
-    return if (platform.isNullOrBlank() &&
-                    userId.isNullOrBlank() &&
+    return if (userId.isNullOrBlank() &&
                     userNickname.isNullOrBlank() &&
                     userCardname.isNullOrBlank()
     ) {
@@ -59,13 +58,11 @@ data class Seg(@SerializedName("type") val type: String, @SerializedName("data")
 }
 
 data class GroupInfo(
-        @SerializedName("platform") val platform: String? = null,
         @SerializedName("group_id") val groupId: String? = null,
         @SerializedName("group_name") val groupName: String? = null
 ) {
     fun toJson(): JsonObject {
         val json = JsonObject()
-        platform?.let { json.addProperty("platform", it) }
         groupId?.let { json.addProperty("group_id", it) }
         groupName?.let { json.addProperty("group_name", it) }
         return json
@@ -75,7 +72,6 @@ data class GroupInfo(
             if (json == null) return null
             val gid = jsonGetString(json, "group_id") ?: return null
             return GroupInfo(
-                    jsonGetString(json, "platform"),
                     gid,
                     jsonGetString(json, "group_name")
             )
@@ -84,14 +80,12 @@ data class GroupInfo(
 }
 
 data class UserInfo(
-        @SerializedName("platform") val platform: String? = null,
         @SerializedName("user_id") val userId: String? = null,
         @SerializedName("user_nickname") val userNickname: String? = null,
         @SerializedName("user_cardname") val userCardname: String? = null
 ) {
     fun toJson(): JsonObject {
         val json = JsonObject()
-        platform?.let { json.addProperty("platform", it) }
         userId?.let { json.addProperty("user_id", it) }
         userNickname?.let { json.addProperty("user_nickname", it) }
         userCardname?.let { json.addProperty("user_cardname", it) }
@@ -100,7 +94,6 @@ data class UserInfo(
     companion object {
         fun fromJson(json: JsonObject?): UserInfo =
                 UserInfo(
-                        jsonGetString(json, "platform"),
                         jsonGetString(json, "user_id"),
                         jsonGetString(json, "user_nickname"),
                         jsonGetString(json, "user_cardname")
@@ -214,7 +207,6 @@ data class TemplateInfo(
 }
 
 data class BaseMessageInfo(
-        @SerializedName("platform") val platform: String? = null,
         @SerializedName("message_id") val messageId: String? = null,
         @SerializedName("time") val time: Double? = null,
         @SerializedName("sender_info") val senderInfo: SenderInfo? = null,
@@ -227,7 +219,6 @@ data class BaseMessageInfo(
 ) {
     fun toJson(): JsonObject {
         val json = JsonObject()
-        platform?.let { json.addProperty("platform", it) }
         messageId?.let { json.addProperty("message_id", it) }
         time?.let { json.addProperty("time", it) }
         senderInfo?.let { json.add("sender_info", it.toJson()) }
@@ -291,7 +282,6 @@ data class BaseMessageInfo(
                     }
 
             return BaseMessageInfo(
-                    platform = json?.get("platform")?.asString,
                     messageId = json?.get("message_id")?.asString,
                     time = json?.get("time")?.asDouble,
                     senderInfo = senderInfo,

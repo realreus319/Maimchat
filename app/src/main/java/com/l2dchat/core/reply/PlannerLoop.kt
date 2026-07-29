@@ -2,17 +2,31 @@ package com.l2dchat.core.reply
 
 import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.trigger.Trigger
+import com.l2dchat.core.trigger.TriggerPriority
+import com.l2dchat.core.trigger.TriggerType
 import java.util.PriorityQueue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+
+/**
+ * Hard upper bound for ONE planner turn (planner LLM call(s) + any worker/replier tools). A turn must
+ * always finalize so the round never hangs in 'generating'. Must comfortably fit a FULL worker turn:
+ * the worker tool caps at ~300s, AND the planner needs post-worker LLM calls (decide → replier, each
+ * with first-token timeout × retries) to turn the worker result into a reply. 420s (only ~120s left
+ * after a 300s worker) was too tight — a 398s worker turn's post-step hit the budget and the reply was
+ * lost. 600s leaves ~300s for the post-worker replier path.
+ */
+private const val TURN_BUDGET_MILLIS = 600_000L
 
 class PlannerLoop(
         val routingKey: RoutingKey,
@@ -30,10 +44,16 @@ class PlannerLoop(
     private val lock = Any()
     private val triggerQueue = PriorityQueue<QueuedPlannerTrigger>()
     private val signal = Channel<Unit>(Channel.UNLIMITED)
+    private val tlog = com.l2dchat.logging.L2DLogger.module(com.l2dchat.logging.LogModule.CHAT)
 
     private var loopJob: Job? = null
     private var currentJob: Job? = null
     private var loopState: PlannerLoopState = PlannerLoopState.IDLE
+
+    // Trigger type of the turn currently being processed. A SYS turn is a background-worker completion
+    // delivery — it must NOT be interrupted (forking a result delivery into a decision is pointless in
+    // the async model), so shouldInterrupt excludes it.
+    private var activeTriggerType: TriggerType? = null
     private var foregroundEpoch: Int = 0
     private var foregroundReplySent: Boolean = false
     private var shutdownRequested: Boolean = false
@@ -71,7 +91,13 @@ class PlannerLoop(
                     val shouldInterrupt =
                             trigger.canInterrupt() &&
                                     (loopState == PlannerLoopState.GENERATING ||
-                                            loopState == PlannerLoopState.DECIDING)
+                                            loopState == PlannerLoopState.DECIDING) &&
+                                    // Never interrupt a background-worker completion (SYS) delivery...
+                                    activeTriggerType != TriggerType.SYS &&
+                                    // ...and a SYS completion itself never interrupts an in-progress
+                                    // turn — it QUEUES and delivers after (forking a background result
+                                    // into a decision/adopt path drops it ~1/3 of the time).
+                                    trigger.triggerType != TriggerType.SYS
                     if (shouldInterrupt) {
                         foregroundEpoch += 1
                     }
@@ -80,6 +106,11 @@ class PlannerLoop(
                                     trigger = trigger,
                                     requiresDecision = shouldInterrupt && decisionProcessor != null
                             )
+                    )
+                    tlog.info(
+                        "[trig] submit ${trigger.triggerType} ${trigger.messageId} " +
+                            "interrupt=$shouldInterrupt state=$loopState active=$activeTriggerType " +
+                            "qsize=${triggerQueue.size}"
                     )
                     currentJob.takeIf { shouldInterrupt }
                 }
@@ -156,10 +187,12 @@ class PlannerLoop(
         val ownerEpoch =
                 synchronized(lock) {
                     foregroundEpoch += 1
-                    foregroundReplySent = false
+                    foregroundReplySent = queuedTrigger.preReplySent
                     loopState = stateForTurn
+                    activeTriggerType = trigger.triggerType
                     foregroundEpoch
                 }
+        tlog.info("[trig] process ${trigger.triggerType} ${trigger.messageId} decision=${queuedTrigger.requiresDecision}")
         val activeRound = createActiveRound(trigger, ownerEpoch)
         val context =
                 PlannerTurnContext(
@@ -175,7 +208,15 @@ class PlannerLoop(
                     var finalState = PlannerSessionState.COMPLETED
                     try {
                         persistRoundStart(activeRound, trigger)
-                        turnProcessor.process(context)
+                        // Hard turn budget: a turn must never hang forever. The planner's per-LLM-call
+                        // timeout is the user's model budget (can be large/unset), and a stalled network
+                        // call — or any other never-returning suspend — would otherwise leave the round
+                        // stuck in 'generating' with no reply. Bound the WHOLE turn so it always reaches
+                        // the finalizer below; the budget is generous enough for a full worker turn.
+                        withTimeout(TURN_BUDGET_MILLIS) { turnProcessor.process(context) }
+                    } catch (throwable: TimeoutCancellationException) {
+                        finalState = PlannerSessionState.FAILED
+                        onError(routingKey, trigger, throwable)
                     } catch (throwable: CancellationException) {
                         finalState = PlannerSessionState.CANCELLED
                         onCancelled(routingKey, trigger)
@@ -216,6 +257,60 @@ class PlannerLoop(
                     }
                 }
             }
+        }
+
+        // Closing edge of the fork/decision loop (docs/plans/interrupt_fork_design.md). A DECISION
+        // turn ONLY disposes the in-flight reply (`adopt` sends the old one / `kill` discards it). When
+        // it settles (still the latest turn, not superseded/cancelled), ALWAYS return to NORMAL via a
+        // real SYS trigger — its own slot in the prompt ("[sys_trigger] …"). The SYS text tells the
+        // resumed NORMAL planner what happened:
+        //   - kill  (no reply sent) -> "请重新回复最新消息" -> planner calls replier -> fresh reply
+        //   - adopt (reply sent)    -> "已回复,只做事后操作" -> post-ops only; replier is duplicate-blocked
+        //                              because the continuation carries preReplySent=true.
+        val (settledDecision, decisionReplySent) =
+                synchronized(lock) {
+                    val settled =
+                            queuedTrigger.requiresDecision &&
+                                    ownerEpoch == foregroundEpoch &&
+                                    !shutdownRequested
+                    settled to foregroundReplySent
+                }
+        if (settledDecision) {
+            val userText = trigger.payload["text"]?.toString()?.trim().orEmpty()
+            val sysText =
+                    if (decisionReplySent) {
+                        "你刚才采用的后台回复已经发送给用户了，本轮回复已完成。不要再回复用户，只需做必要的" +
+                                "事后处理（如更新心情、动作）后结束本回合。"
+                    } else {
+                        // Embed the interrupting message's own text so the resumed NORMAL planner/replier
+                        // actually answers IT (the SYS trigger is the "current message"; without the text
+                        // the replier only sees memory context and falls back to a generic greeting).
+                        "用户刚刚发来一条更新的消息：「$userText」，它打断并取消了你上一条尚未完成的回复。" +
+                                "请现在就直接回复这条最新消息（像平时回复用户一样，正常回复一次即可）。"
+                    }
+            val sysTrigger =
+                    Trigger(
+                            contextId = trigger.contextId,
+                            agentId = trigger.agentId,
+                            // Reuse the ORIGINAL interrupting message id so the continuation's reply
+                            // threads back to that user message (completes its pending + displays). The
+                            // trigger TYPE is still SYS, so the prompt renders "[sys_trigger] <text>".
+                            messageId = trigger.messageId,
+                            triggerType = TriggerType.SYS,
+                            priority = TriggerPriority.HIGH,
+                            timestampSeconds = clockMillis() / 1000.0,
+                            payload = mapOf("text" to sysText)
+                    )
+            synchronized(lock) {
+                triggerQueue.add(
+                        QueuedPlannerTrigger(
+                                trigger = sysTrigger,
+                                requiresDecision = false,
+                                preReplySent = decisionReplySent
+                        )
+                )
+            }
+            signal.send(Unit)
         }
     }
 
@@ -323,7 +418,11 @@ class PlannerLoop(
 
     private data class QueuedPlannerTrigger(
             val trigger: Trigger,
-            val requiresDecision: Boolean
+            val requiresDecision: Boolean,
+            // Seeds foregroundReplySent for this turn. A SYS continuation after an `adopt` decision
+            // carries `true` so the post-ops-only continuation can't re-send a duplicate reply; a
+            // `kill` continuation carries `false` so it CAN generate the fresh reply.
+            val preReplySent: Boolean = false
     ) : Comparable<QueuedPlannerTrigger> {
         override fun compareTo(other: QueuedPlannerTrigger): Int =
                 trigger.compareTo(other.trigger)

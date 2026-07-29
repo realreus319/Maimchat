@@ -68,9 +68,7 @@ class ReplierPromptBuilder(
                 appendLine()
                 appendLine("[current_trigger]")
                 appendLine(request.trigger.toSessionMessage(triggerText(request)).getValue("content"))
-                appendLine()
-                appendLine("[planner_content]")
-                appendLine(request.content.trim())
+                appendSection("planner_thinking", request.thinking)
                 appendSection("reply_guidance", request.replyGuidance)
                 appendSection("style_override", request.styleOverride)
                 appendSection("emotion_hint", request.emotionHint)
@@ -116,7 +114,12 @@ class ReplierPromptBuilder(
                                     "\n\n最近聊天记录：\n$it\n"
                                 }
                                         .orEmpty(),
-                        "content" to request.content.trim(),
+                        "thinking" to request.thinking.trim(),
+                        "thinking_section" to
+                                request.thinking.trim().takeIf { it.isNotBlank() }?.let {
+                                    "\n\nPlanner的内心判断与已做的事（含借助 AI 智能体得到的结果，仅供你理解当前情况，不要机械复述）：\n$it\n"
+                                }
+                                        .orEmpty(),
                         "reply_guidance" to guidance,
                         "guidance_section" to
                                 guidance.takeIf { it.isNotBlank() }?.let {
@@ -144,7 +147,7 @@ class ReplierPromptBuilder(
 
     private fun triggerText(request: ReplierTaskRequest): String =
             request.trigger.payload["text"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: request.content
+                    .orEmpty()
 
     private fun triggerImageParts(request: ReplierTaskRequest): List<LlmImageUrlPart> {
         @Suppress("UNCHECKED_CAST")

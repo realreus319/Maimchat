@@ -6,7 +6,6 @@ import com.l2dchat.core.context.RoutingKey
 data class InboundMessage(
         val routingKey: RoutingKey,
         val messageId: String,
-        val platform: String,
         val senderId: String,
         val senderName: String?,
         val text: String,

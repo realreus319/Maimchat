@@ -1,7 +1,6 @@
 package com.l2dchat.chat.transport
 
-import com.l2dchat.chat.ChatWebSocketManager.ConnectionState
-import com.l2dchat.chat.ChatWebSocketManager.RuntimeMode
+import com.l2dchat.chat.ChatWebSocketManager.RuntimeState
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.core.LocalChatRuntime
 import com.l2dchat.core.LocalRuntimeFactory
@@ -37,7 +36,6 @@ import kotlinx.coroutines.launch
 class LocalTransport(
         private val scope: CoroutineScope,
         private val callbacks: ChatTransportCallbacks,
-        private val platformProvider: () -> String,
         private val agentNameProvider: () -> String?,
         perceptionStoreFactory: (RoutingKey) -> PerceptionStore? = { null },
         plannerSessionStoreFactory: (RoutingKey) -> PlannerSessionStore = {
@@ -57,6 +55,9 @@ class LocalTransport(
         environmentStateProvider: EnvironmentStateProvider = EmptyEnvironmentStateProvider,
         motionController: MotionController = NoopMotionController,
         runtimeStateDaoProvider: () -> RuntimeStateDao? = { null },
+        extraNormalTools: List<com.l2dchat.core.tools.Tool> = emptyList(),
+        backgroundStatusProvider: com.l2dchat.core.reply.PlannerPromptContextProvider =
+                com.l2dchat.core.reply.EmptyPlannerPromptContextProvider,
         private val runtimeFactory: (CoroutineScope) -> LocalChatRuntime = { runtimeScope ->
             LocalRuntimeFactory.create(
                     scope = runtimeScope,
@@ -83,12 +84,12 @@ class LocalTransport(
                     replierTaskStore = replierTaskStoreProvider(),
                     environmentStateProvider = environmentStateProvider,
                     motionController = motionController,
-                    runtimeStateDaoProvider = runtimeStateDaoProvider
+                    runtimeStateDaoProvider = runtimeStateDaoProvider,
+                    extraNormalTools = extraNormalTools,
+                    backgroundStatusProvider = backgroundStatusProvider
             )
         }
 ) : ChatTransport {
-    override val mode: RuntimeMode = RuntimeMode.LOCAL
-
     private val logger = L2DLogger.module(LogModule.CHAT)
     private val runtimeLock = Any()
     private var running = false
@@ -110,7 +111,7 @@ class LocalTransport(
                     !running || runtime == null || runtimeJob?.isActive != true
                 }
         if (shouldEmitStarting) {
-            callbacks.onStateChanged(ConnectionState.CONNECTING)
+            callbacks.onStateChanged(RuntimeState.STARTING)
         }
         val wasRunning =
                 try {
@@ -126,7 +127,7 @@ class LocalTransport(
                     return
                 }
         inErrorState = false
-        callbacks.onStateChanged(ConnectionState.CONNECTED)
+        callbacks.onStateChanged(RuntimeState.RUNNING)
         if (!wasRunning) {
             logger.info("本地聊天运行时已启动")
         }
@@ -134,7 +135,7 @@ class LocalTransport(
 
     fun rebuildRuntime(reason: String = "runtime configuration changed") {
         if (isRunning()) {
-            callbacks.onStateChanged(ConnectionState.CONNECTING)
+            callbacks.onStateChanged(RuntimeState.STARTING)
         }
         var previous: RuntimeSnapshot? = null
         try {
@@ -157,7 +158,7 @@ class LocalTransport(
         logger.info("本地聊天运行时已重建：$reason")
         if (rebuilt.wasRunning) {
             inErrorState = false
-            callbacks.onStateChanged(ConnectionState.CONNECTED)
+            callbacks.onStateChanged(RuntimeState.RUNNING)
         }
     }
 
@@ -174,7 +175,7 @@ class LocalTransport(
         if (previous.wasRunning) {
             logger.info("本地聊天运行时已停止：$reason")
         }
-        callbacks.onStateChanged(ConnectionState.DISCONNECTED)
+        callbacks.onStateChanged(RuntimeState.STOPPED)
     }
 
     override fun send(message: MessageBase): Boolean {
@@ -192,7 +193,6 @@ class LocalTransport(
                 }
                 work.runtime.handleMessage(
                                 inbound = message,
-                                fallbackPlatform = platformProvider(),
                                 fallbackAgentName = agentNameProvider(),
                                 replySink = replySink
                         )
@@ -202,13 +202,13 @@ class LocalTransport(
                 // recovering from an error so normal sends stay quiet.
                 if (isCurrentRuntimeWork(work.generation) && inErrorState) {
                     inErrorState = false
-                    callbacks.onStateChanged(ConnectionState.CONNECTED)
+                    callbacks.onStateChanged(RuntimeState.RUNNING)
                 }
             } catch (_: CancellationException) {
                 // Expected when local runtime is stopped, rebuilt, or the service is destroyed.
             } catch (e: Exception) {
                 inErrorState = true
-                callbacks.onStateChanged(ConnectionState.ERROR)
+                callbacks.onStateChanged(RuntimeState.ERROR)
                 // Flag the specific message that failed so the UI can mark it (red "!"), and still
                 // surface the human-readable error for the connection banner.
                 callbacks.onMessageFailed(
@@ -235,7 +235,6 @@ class LocalTransport(
                 }
                 work.runtime.submitEnvironmentTrigger(
                         submission = submission,
-                        fallbackPlatform = platformProvider(),
                         fallbackAgentName = agentNameProvider(),
                         replySink = replySink
                 )
@@ -243,8 +242,35 @@ class LocalTransport(
                 // Expected when local runtime is stopped, rebuilt, or the service is destroyed.
             } catch (e: Exception) {
                 inErrorState = true
-                callbacks.onStateChanged(ConnectionState.ERROR)
+                callbacks.onStateChanged(RuntimeState.ERROR)
                 callbacks.onError("本地运行时处理环境触发失败：${e.message ?: "未知错误"}", e)
+            }
+        }
+        return true
+    }
+
+    /** Submit a raw background trigger (SYS worker-completion) into the live runtime; reply → [replySink]. */
+    fun submitBackgroundTrigger(trigger: com.l2dchat.core.trigger.Trigger): Boolean {
+        if (!isRunning()) {
+            start()
+        }
+        val work = currentRuntimeWork()
+        work.scope.launch {
+            try {
+                if (!isCurrentRuntimeWork(work.generation)) {
+                    return@launch
+                }
+                work.runtime.submitBackgroundTrigger(
+                        trigger = trigger,
+                        fallbackAgentName = agentNameProvider(),
+                        replySink = replySink
+                )
+            } catch (_: CancellationException) {
+                // Expected when local runtime is stopped/rebuilt/destroyed.
+            } catch (e: Exception) {
+                inErrorState = true
+                callbacks.onStateChanged(RuntimeState.ERROR)
+                callbacks.onError("本地运行时处理后台任务完成失败：${e.message ?: "未知错误"}", e)
             }
         }
         return true
@@ -316,7 +342,7 @@ class LocalTransport(
         snapshot.runtime?.cancel()
         snapshot.job?.cancel()
         inErrorState = true
-        callbacks.onStateChanged(ConnectionState.ERROR)
+        callbacks.onStateChanged(RuntimeState.ERROR)
     }
 
     private data class RuntimeWork(

@@ -5,6 +5,8 @@ import com.l2dchat.core.reply.PlannerPromptContextProvider
 import com.l2dchat.core.reply.PlannerTurnContext
 import com.l2dchat.core.tools.CANONICAL_SUBJECT_ID
 import com.l2dchat.core.tools.decayedMood
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 /**
@@ -22,6 +24,15 @@ class RoomPlannerPromptContextProvider(
         val agentId = context.routingKey.agentId
         val now = clockMillis()
         val blocks = mutableListOf<PlannerPromptContextBlock>()
+
+        // Anchor the decision-maker in real time. Without this the planner never knows today's date, so
+        // "最新/今年/现在" queries fall back to the model's stale training knowledge. (The replier already
+        // gets current_time; the planner — which actually decides whether to research — did not.)
+        blocks +=
+                PlannerPromptContextBlock(
+                        name = "current_time",
+                        content = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(Date(now))
+                )
 
         val memoryText =
                 stateDao.queryMemories(contextId, agentId, memoryLimit)

@@ -63,19 +63,16 @@ class RoomPerceptionStoreTest {
             MessageBase(
                     messageInfo =
                             BaseMessageInfo(
-                                    platform = "test_platform",
                                     messageId = "message-id",
                                     time = 1000.0,
                                     senderInfo =
                                             SenderInfo(
                                                     groupInfo =
                                                             GroupInfo(
-                                                                    platform = "test_platform",
                                                                     groupId = "group-id"
                                                             ),
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "user-id",
                                                                     userNickname = "Alice"
                                                             )
@@ -84,7 +81,6 @@ class RoomPerceptionStoreTest {
                                             ReceiverInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "bot-id",
                                                                     userNickname = "Bot"
                                                             )
@@ -108,6 +104,12 @@ class RoomPerceptionStoreTest {
         override suspend fun deleteMessages(contextId: String, agentId: String?) = Unit
 
         override suspend fun deleteStandardMessages(contextId: String, agentId: String?) = Unit
+
+        override suspend fun deleteAllMessages() = Unit
+
+        override suspend fun deleteAllStandardMessages() {
+            standardMessages.clear()
+        }
 
         override suspend fun queryRecentMessages(
                 contextId: String,

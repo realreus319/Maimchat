@@ -95,23 +95,17 @@ class LocalChatRuntime(
 
     suspend fun handleMessage(
             inbound: MessageBase,
-            fallbackPlatform: String,
             fallbackAgentName: String?,
             replySink: ReplySink
     ): Boolean {
         if (!shouldReply(inbound)) {
             return false
         }
-        val inboundMessage =
-                inboundBuilder.fromMessageBase(
-                        message = inbound,
-                        fallbackPlatform = fallbackPlatform
-                )
+        val inboundMessage = inboundBuilder.fromMessageBase(message = inbound)
         val pending =
                 registerPending(
                         message = inboundMessage,
                         inbound = inbound,
-                        fallbackPlatform = fallbackPlatform,
                         fallbackAgentName = fallbackAgentName,
                         replySink = replySink
                 )
@@ -131,7 +125,6 @@ class LocalChatRuntime(
 
     suspend fun submitEnvironmentTrigger(
             submission: EnvironmentTriggerSubmission,
-            fallbackPlatform: String,
             fallbackAgentName: String?,
             replySink: ReplySink
     ): Boolean {
@@ -142,13 +135,30 @@ class LocalChatRuntime(
                 routingKey = submission.routingKey,
                 target =
                         RuntimeReplyTarget(
-                                fallbackPlatform = fallbackPlatform,
                                 fallbackAgentName = fallbackAgentName,
                                 replySink = replySink
                         )
         )
         replyLayerFactory.submitTrigger(submission.toTrigger())
         return true
+    }
+
+    /**
+     * Submit a raw background trigger (e.g. a SYS worker-completion) into the planner and route its
+     * reply to [replySink] via the routing-key reply target. Unlike [submitEnvironmentTrigger] this is
+     * NOT gated by [environmentRepliesEnabled] — a worker result is a user-awaited answer, not an
+     * ambient nudge, so it must always be delivered.
+     */
+    suspend fun submitBackgroundTrigger(
+            trigger: Trigger,
+            fallbackAgentName: String?,
+            replySink: ReplySink
+    ) {
+        registerEnvironmentReplyTarget(
+                routingKey = RoutingKey(contextId = trigger.contextId, agentId = trigger.agentId),
+                target = RuntimeReplyTarget(fallbackAgentName = fallbackAgentName, replySink = replySink)
+        )
+        replyLayerFactory.submitTrigger(trigger)
     }
 
     suspend fun stopAndDrain() {
@@ -169,7 +179,6 @@ class LocalChatRuntime(
     private fun registerPending(
             message: InboundMessage,
             inbound: MessageBase,
-            fallbackPlatform: String,
             fallbackAgentName: String?,
             replySink: ReplySink
     ): PendingRuntimeReply {
@@ -177,7 +186,6 @@ class LocalChatRuntime(
         val pending =
                 PendingRuntimeReply(
                         inbound = inbound,
-                        fallbackPlatform = fallbackPlatform,
                         fallbackAgentName = fallbackAgentName,
                         replySink = replySink,
                         completion = CompletableDeferred()
@@ -203,7 +211,6 @@ class LocalChatRuntime(
             pending.replySink.send(
                     createReply(
                             inbound = pending.inbound,
-                            fallbackPlatform = pending.fallbackPlatform,
                             fallbackAgentName = pending.fallbackAgentName,
                             inboundText = reply.text
                     )
@@ -216,7 +223,10 @@ class LocalChatRuntime(
     }
 
     private suspend fun handleUnboundPlannerReply(reply: PlannerReply) {
-        if (reply.trigger.triggerType != TriggerType.ENV) {
+        // ENV = ambient nudges; SYS = background-worker completion (fired via submitBackgroundTrigger).
+        // Both have no per-message pending turn, so they deliver through the routing-key reply target.
+        if (reply.trigger.triggerType != TriggerType.ENV &&
+                        reply.trigger.triggerType != TriggerType.SYS) {
             return
         }
         val target =
@@ -226,7 +236,6 @@ class LocalChatRuntime(
         target.replySink.send(
                 createEnvironmentReply(
                         trigger = reply.trigger,
-                        fallbackPlatform = target.fallbackPlatform,
                         fallbackAgentName = target.fallbackAgentName,
                         replyText = reply.text
                 )
@@ -265,14 +274,12 @@ class LocalChatRuntime(
     private data class PendingTriggerKey(val routingKey: RoutingKey, val messageId: String)
 
     private data class RuntimeReplyTarget(
-            val fallbackPlatform: String,
             val fallbackAgentName: String?,
             val replySink: ReplySink
     )
 
     private data class PendingRuntimeReply(
             val inbound: MessageBase,
-            val fallbackPlatform: String,
             val fallbackAgentName: String?,
             val replySink: ReplySink,
             val completion: CompletableDeferred<Boolean>
@@ -280,19 +287,14 @@ class LocalChatRuntime(
 
     fun createReply(
             inbound: MessageBase,
-            fallbackPlatform: String,
             fallbackAgentName: String?
     ): MessageBase {
         val perception =
                 perceptionProcessor.process(
-                        inboundBuilder.fromMessageBase(
-                                message = inbound,
-                                fallbackPlatform = fallbackPlatform
-                        )
+                        inboundBuilder.fromMessageBase(message = inbound)
                 )
         return createReply(
                 inbound = inbound,
-                fallbackPlatform = fallbackPlatform,
                 fallbackAgentName = fallbackAgentName,
                 inboundText = perception.parsedMessage.text
         )
@@ -300,15 +302,12 @@ class LocalChatRuntime(
 
     private fun createEnvironmentReply(
             trigger: Trigger,
-            fallbackPlatform: String,
             fallbackAgentName: String?,
             replyText: String
     ): MessageBase {
-        val platform = fallbackPlatform.ifBlank { "android" }
         val agentName = fallbackAgentName?.takeIf { it.isNotBlank() } ?: "Maimchat"
         val assistantUser =
                 UserInfo(
-                        platform = platform,
                         userId =
                                 trigger.metadataString("agent_user_id")
                                         ?: trigger.agentId.takeIf { it.isNotBlank() }
@@ -319,7 +318,6 @@ class LocalChatRuntime(
                 )
         val receiverUser =
                 UserInfo(
-                        platform = platform,
                         userId = trigger.metadataString("receiver_user_id") ?: "local_user",
                         userNickname =
                                 trigger.metadataString("receiver_user_name")
@@ -328,7 +326,6 @@ class LocalChatRuntime(
                 )
         val messageInfo =
                 BaseMessageInfo(
-                        platform = platform,
                         messageId = generateMessageId(),
                         time = System.currentTimeMillis() / 1000.0,
                         senderInfo = SenderInfo(userInfo = assistantUser),
@@ -343,7 +340,11 @@ class LocalChatRuntime(
                                 mapOf(
                                         "message_type" to "chat",
                                         "runtime" to "local",
-                                        "migration_phase" to "env_trigger",
+                                        // SYS = background-worker completion → surface like a normal
+                                        // reply (local_reply). ENV = ambient nudge → stays filtered.
+                                        "migration_phase" to
+                                                (if (trigger.triggerType == TriggerType.SYS) "local_reply"
+                                                else "env_trigger"),
                                         "trigger_type" to trigger.triggerType.wireValue,
                                         "trigger_message_id" to trigger.messageId,
                                         "environment_source" to
@@ -355,34 +356,35 @@ class LocalChatRuntime(
 
     private fun createReply(
             inbound: MessageBase,
-            fallbackPlatform: String,
             fallbackAgentName: String?,
             inboundText: String
     ): MessageBase {
-        val platform = inbound.messageInfo.platform ?: fallbackPlatform
         val agentName = fallbackAgentName?.takeIf { it.isNotBlank() } ?: "Maimchat"
         val replyText = inboundText.ifBlank { "本地回复运行时已接管聊天链路。" }
 
         val assistantUser =
                 normalizeUser(
                         inbound.messageInfo.receiverInfo?.userInfo,
-                        platform,
                         fallbackId = "local_agent",
                         fallbackName = agentName
                 )
         val requesterUser =
                 normalizeUser(
                         inbound.messageInfo.senderInfo?.userInfo,
-                        platform,
                         fallbackId = "local_user",
                         fallbackName = "用户"
                 )
         val senderInfo = SenderInfo(groupInfo = inbound.messageInfo.groupInfo, userInfo = assistantUser)
         val receiverInfo = ReceiverInfo(groupInfo = inbound.messageInfo.groupInfo, userInfo = requesterUser)
+        // Stable id derived from the inbound (user) message id so the reconciler can reproduce the
+        // exact same id and dedup (addStandardMessage dedups by messageId). The inbound message id
+        // equals the round's trigger_message_id.
+        val replyMessageId =
+                inbound.messageInfo.messageId?.takeIf { it.isNotBlank() }?.let { "reply_$it" }
+                        ?: generateMessageId()
         val messageInfo =
                 BaseMessageInfo(
-                        platform = platform,
-                        messageId = generateMessageId(),
+                        messageId = replyMessageId,
                         time = System.currentTimeMillis() / 1000.0,
                         senderInfo = senderInfo,
                         receiverInfo = receiverInfo,
@@ -405,12 +407,10 @@ class LocalChatRuntime(
 
     private fun normalizeUser(
             user: UserInfo?,
-            platform: String,
             fallbackId: String,
             fallbackName: String
     ): UserInfo =
             UserInfo(
-                    platform = user?.platform ?: platform,
                     userId = user?.userId?.takeIf { it.isNotBlank() } ?: fallbackId,
                     userNickname = user?.userNickname?.takeIf { it.isNotBlank() } ?: fallbackName,
                     userCardname = user?.userCardname
@@ -425,8 +425,13 @@ class LocalChatRuntime(
     }
 
     companion object {
-        // Generous bound (5 min) covering multi-round tool turns on slow reasoning models.
-        private const val DEFAULT_TURN_TIMEOUT_MILLIS: Long = 300_000L
+        // MUST stay >= PlannerLoop.TURN_BUDGET_MILLIS (420s): this bounds how long the message's
+        // pending entry lives waiting for its reply. If it expires BEFORE the planner turn finishes
+        // (a long worker task can run up to the 420s turn budget), the pending entry is removed and
+        // the reply — when it finally arrives — is "unbound" and dropped (handleUnboundPlannerReply
+        // only delivers ENV). That was the "worker finished but no reply" bug. Margin for the reply
+        // to propagate after the turn caps.
+        private const val DEFAULT_TURN_TIMEOUT_MILLIS: Long = 630_000L
 
         private fun fixedReplyPlannerProcessor(): PlannerTriggerProcessor =
                 PlannerTriggerProcessor { context ->

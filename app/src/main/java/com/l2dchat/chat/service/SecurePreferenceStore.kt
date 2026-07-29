@@ -97,6 +97,7 @@ internal class SecurePreferenceStore(context: Context) : SecretStringStore {
 internal object ChatSecurePreferences {
     const val KEY_AUTH_TOKEN = "auth_token"
     const val KEY_LOCAL_LLM_API_KEY = "local_llm_api_key"
+    const val KEY_WORKER_LLM_API_KEY = "worker_llm_api_key"
 
     fun readMigratingString(
             prefs: SharedPreferences,

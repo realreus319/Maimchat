@@ -38,7 +38,23 @@ class ReplierToolTest {
 
     @Test
     fun `replier returns planner managed reply text`() {
-        val registry = ToolRegistry(listOf(ReplierTool()))
+        val taskManager =
+                ReplierTaskManager(
+                        scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()),
+                        generator =
+                                ReplierTaskGenerator { request ->
+                                    flow { emit(ReplierTaskUpdate.Completed(request.thinking)) }
+                                }
+                )
+        val registry =
+                ToolRegistry(
+                        listOf(
+                                ReplierTool(
+                                        taskManager = taskManager,
+                                        taskIdFactory = { "task-1" }
+                                )
+                        )
+                )
 
         val execution =
                 runBlocking {
@@ -50,7 +66,7 @@ class ReplierToolTest {
                                     argumentsJson =
                                             """
                                             {
-                                              "content": "hello back",
+                                              "thinking": "hello back",
                                               "reply_guidance": "short",
                                               "style_override": "casual",
                                               "emotion_hint": "warm",
@@ -74,7 +90,7 @@ class ReplierToolTest {
     }
 
     @Test
-    fun `replier rejects blank content as tool error`() {
+    fun `replier rejects blank thinking as tool error`() {
         val registry = ToolRegistry(listOf(ReplierTool()))
 
         val execution =
@@ -84,14 +100,14 @@ class ReplierToolTest {
                             LlmToolCall(
                                     id = "call-1",
                                     name = ReplierTool.NAME,
-                                    argumentsJson = """{"content":"   "}"""
+                                    argumentsJson = """{"thinking":"   "}"""
                             )
                     )
                 }
 
         assertTrue(execution.result.isError)
         assertEquals(null, execution.result.replyText)
-        assertEquals("replier.content must not be blank", execution.toLlmToolResult().content)
+        assertEquals("replier.thinking must not be blank", execution.toLlmToolResult().content)
     }
 
     @Test
@@ -121,7 +137,7 @@ class ReplierToolTest {
                             LlmToolCall(
                                     id = "call-1",
                                     name = ReplierTool.NAME,
-                                    argumentsJson = """{"content":"seed reply"}"""
+                                    argumentsJson = """{"thinking":"seed reply"}"""
                             )
                     )
                 }
@@ -161,7 +177,7 @@ class ReplierToolTest {
                             LlmToolCall(
                                     id = "call-1",
                                     name = ReplierTool.NAME,
-                                    argumentsJson = """{"content":"seed reply"}"""
+                                    argumentsJson = """{"thinking":"seed reply"}"""
                             )
                     )
                 }
@@ -209,7 +225,7 @@ class ReplierToolTest {
                                 LlmToolCall(
                                         id = "call-1",
                                         name = ReplierTool.NAME,
-                                        argumentsJson = """{"content":"seed reply"}"""
+                                        argumentsJson = """{"thinking":"seed reply"}"""
                                 )
                         )
                     }

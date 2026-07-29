@@ -12,6 +12,7 @@ import com.l2dchat.core.llm.LlmMessageRole
 import com.l2dchat.core.llm.LlmToolCall
 import com.l2dchat.core.llm.LlmToolDefinition
 import com.l2dchat.core.llm.LlmToolResult
+import com.l2dchat.core.tools.ReplierTool
 import com.l2dchat.core.tools.ToolExecutionContext
 import com.l2dchat.core.tools.ToolExecutionMode
 import com.l2dchat.core.tools.ToolRegistry
@@ -57,18 +58,15 @@ class JsonFallbackPlannerTriggerProcessor(
 
             when (command) {
                 is JsonFallbackCommand.Final -> {
-                    val result = context.sendReply(command.text)
-                    if (result.status == ReplySendStatus.BLANK_REJECTED) {
-                        // The model emitted an empty final answer; force one plain-text reply.
-                        finalizeWithPlainText(context)
-                    }
+                    // ALL replies MUST go through the replier — never surface the planner's own
+                    // "final" text directly. Route it through the replier as its `thinking`.
+                    finalizeViaReplier(toolContext, context, command.text.trim().ifBlank { null })
                     return
                 }
                 is JsonFallbackCommand.ToolCall -> {
                     if (round >= config.maxToolRounds) {
-                        // Tool budget exhausted; degrade to a forced plain-text answer instead
-                        // of failing the turn.
-                        finalizeWithPlainText(context)
+                        // Tool budget exhausted; force the replier to compose the reply.
+                        finalizeViaReplier(toolContext, context, null)
                         return
                     }
                     val execution =
@@ -94,32 +92,57 @@ class JsonFallbackPlannerTriggerProcessor(
             }
         }
 
-        finalizeWithPlainText(context)
+        finalizeViaReplier(toolContext, context, null)
     }
 
-    private suspend fun finalizeWithPlainText(context: PlannerTurnContext) {
-        val messages =
-                promptBuilder
-                        .buildMessages(
-                                context = context,
-                                systemPromptOverride = systemPromptProvider.systemPromptFor(context)
-                        )
-                        .toMutableList()
-        messages.add(
-                LlmMessage.system(
-                        "Reply to the user now with a plain text answer. Do not output JSON " +
-                                "and do not request any tools."
-                )
-        )
-        val response =
-                llmClient.chatCompletion(
-                        messages = messages,
-                        config = config.copy(toolChoice = com.l2dchat.core.llm.LlmToolChoice.NONE)
-                )
-        val result = context.sendReply(response.text)
+    /** Force the reply through the replier and send it; never a planner-authored direct reply. */
+    private suspend fun finalizeViaReplier(
+            toolContext: ToolExecutionContext,
+            context: PlannerTurnContext,
+            plannerThinking: String?
+    ) {
+        val replyText = forceReplier(toolContext, context, plannerThinking)
+        val result = context.sendReply(replyText)
         if (result.status == ReplySendStatus.BLANK_REJECTED) {
-            throw IllegalStateException("JSON fallback planner could not produce a final reply")
+            throw IllegalStateException(
+                    "replier produced no reply even after a forced replier call (compat mode)"
+            )
         }
+    }
+
+    /**
+     * Execute the [ReplierTool] (with a couple of retries) and return its composed reply text — or ""
+     * if it persistently fails. [plannerThinking] (the planner's own text) is passed as the replier's
+     * `thinking` so any tool results the planner narrated reach the replier.
+     */
+    private suspend fun forceReplier(
+            toolContext: ToolExecutionContext,
+            context: PlannerTurnContext,
+            plannerThinking: String?
+    ): String {
+        val thinking =
+                plannerThinking
+                        ?: "请根据当前对话上下文和已完成的工具结果，用角色口吻直接回复用户。"
+        val argumentsJson =
+                JsonObject().apply { addProperty("thinking", thinking) }.toString()
+        repeat(REPLIER_FORCE_ATTEMPTS) { attempt ->
+            val call =
+                    LlmToolCall(
+                            id = "forced-replier-${context.roundId}-$attempt",
+                            name = ReplierTool.NAME,
+                            argumentsJson = argumentsJson
+                    )
+            val execution = runCatching { toolRegistry.execute(toolContext, call) }.getOrNull()
+            val text = execution?.result?.replyText?.trim()?.ifBlank { null }
+            if (execution != null && !execution.result.isError && text != null) {
+                return text
+            }
+        }
+        return ""
+    }
+
+    companion object {
+        private const val REPLIER_FORCE_ATTEMPTS = 2
     }
 
     private fun List<LlmMessage>.withJsonFallbackInstructions(

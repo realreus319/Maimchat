@@ -19,7 +19,7 @@ class ReplierPromptBuilderTest {
         val messages =
                 ReplierPromptBuilder(systemPrompt = "system").buildMessages(
                         request(
-                                content = "answer the user",
+                                thinking = "answer the user",
                                 replyGuidance = "short",
                                 styleOverride = "casual",
                                 emotionHint = "warm",
@@ -32,7 +32,7 @@ class ReplierPromptBuilderTest {
         assertEquals("system", messages[0].textContent())
         assertEquals(LlmMessageRole.USER, messages[1].role)
         assertTrue(messages[1].textContent().contains("[current_trigger]"))
-        assertTrue(messages[1].textContent().contains("[planner_content]"))
+        assertTrue(messages[1].textContent().contains("[planner_thinking]"))
         assertTrue(messages[1].textContent().contains("hello"))
         assertTrue(messages[1].textContent().contains("answer the user"))
         assertTrue(messages[1].textContent().contains("[reply_guidance]"))
@@ -49,7 +49,7 @@ class ReplierPromptBuilderTest {
         val messages =
                 ReplierPromptBuilder(systemPrompt = "system").buildMessages(
                         request(
-                                content = "describe it",
+                                thinking = "describe it",
                                 liveImage = "https://example.test/live.png",
                                 contentBlocks =
                                         listOf(
@@ -79,7 +79,7 @@ class ReplierPromptBuilderTest {
     fun `builder injects persona mood impression memory and history context`() {
         val messages =
                 ReplierPromptBuilder(systemPrompt = "system").buildMessages(
-                        request(content = "answer the user"),
+                        request(thinking = "answer the user"),
                         ReplierPromptContext(
                                 personaPrompt = "你是小倩。",
                                 moodState = "开心",
@@ -122,7 +122,7 @@ class ReplierPromptBuilderTest {
     fun `builder renders replier user template placeholders`() {
         val messages =
                 ReplierPromptBuilder(systemPrompt = "system").buildMessages(
-                        request(content = "planner thoughts", replyGuidance = "keep it short"),
+                        request(thinking = "planner thoughts", replyGuidance = "keep it short"),
                         ReplierPromptContext(
                                 userPromptTemplate =
                                         """
@@ -130,7 +130,7 @@ class ReplierPromptBuilderTest {
                                         mood={mood_state}
                                         impression={impression_text}
                                         history={history_text}
-                                        content={content}
+                                        thinking={thinking}
                                         guidance={reply_guidance}
                                         section={guidance_section}
                                         trigger={current_trigger}
@@ -157,7 +157,7 @@ class ReplierPromptBuilderTest {
         assertTrue(text.contains("mood=平静"))
         assertTrue(text.contains("impression=Alice：初次聊天。"))
         assertTrue(text.contains("history=Alice: 早上好"))
-        assertTrue(text.contains("content=planner thoughts"))
+        assertTrue(text.contains("thinking=planner thoughts"))
         assertTrue(text.contains("guidance=keep it short"))
         assertTrue(text.contains("补充说明：\nkeep it short"))
         assertTrue(text.contains("trigger=[msg_trigger]"))
@@ -166,7 +166,7 @@ class ReplierPromptBuilderTest {
     }
 
     private fun request(
-            content: String,
+            thinking: String,
             replyGuidance: String? = null,
             styleOverride: String? = null,
             emotionHint: String? = null,
@@ -190,7 +190,7 @@ class ReplierPromptBuilderTest {
                                 timestampSeconds = 1.0,
                                 payload = payload
                         ),
-                content = content,
+                thinking = thinking,
                 replyGuidance = replyGuidance,
                 styleOverride = styleOverride,
                 emotionHint = emotionHint,

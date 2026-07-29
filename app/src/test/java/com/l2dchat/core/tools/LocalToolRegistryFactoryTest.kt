@@ -132,7 +132,7 @@ class LocalToolRegistryFactoryTest {
                     scope = CoroutineScope(SupervisorJob()),
                     generator =
                             ReplierTaskGenerator { request ->
-                                flow { emit(ReplierTaskUpdate.Completed(request.content)) }
+                                flow { emit(ReplierTaskUpdate.Completed(request.thinking)) }
                             }
             )
 

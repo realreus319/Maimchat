@@ -151,6 +151,14 @@ scripts/real_provider.env
 # Default LLM provider credentials are injected into local debug builds from local.properties
 # (already ignored above) via BuildConfig — never commit credentials.
 
+# Python tooling caches
+**/__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.kotlin/
+
 # Manual GUI verification screenshots (large binaries, not committed)
 docs/manual_verification/screenshots/
 

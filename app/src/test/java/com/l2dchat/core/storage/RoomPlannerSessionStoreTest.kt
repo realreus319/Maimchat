@@ -88,7 +88,7 @@ class RoomPlannerSessionStoreTest {
         assertEquals("round-1", task.roundId)
         assertEquals(ReplierTool.NAME, task.toolName)
         assertEquals(ReplierTaskState.COMPLETED.name, task.state)
-        assertTrue(task.inputJson.orEmpty().contains("\"content\":\"seed reply\""))
+        assertTrue(task.inputJson.orEmpty().contains("\"thinking\":\"seed reply\""))
         assertTrue(task.outputJson.orEmpty().contains("\"reply_text\":\"final reply\""))
         assertEquals(null, task.error)
         assertEquals(100L, task.createdAtMillis)
@@ -111,7 +111,7 @@ class RoomPlannerSessionStoreTest {
                                 payload = mapOf("text" to "hello")
                         ),
                 roundId = "round-1",
-                content = "seed reply"
+                thinking = "seed reply"
         )
     }
 
@@ -123,6 +123,33 @@ class RoomPlannerSessionStoreTest {
         override suspend fun appendPlannerRound(round: PlannerRoundEntity) {
             rounds.removeAll { it.roundId == round.roundId }
             rounds.add(round)
+        }
+
+        override suspend fun queryGeneratingRoundTriggerIds(beforeMillis: Long): List<String?> =
+                rounds
+                        .filter {
+                            it.state == PlannerSessionState.GENERATING &&
+                                    it.createdAtMillis < beforeMillis
+                        }
+                        .map { it.triggerMessageId }
+
+        override suspend fun failGeneratingRounds(nowMillis: Long, beforeMillis: Long): Int {
+            var updatedCount = 0
+            rounds.indices.forEach { index ->
+                val round = rounds[index]
+                if (
+                        round.state == PlannerSessionState.GENERATING &&
+                                round.createdAtMillis < beforeMillis
+                ) {
+                    rounds[index] =
+                            round.copy(
+                                    state = PlannerSessionState.FAILED,
+                                    updatedAtMillis = nowMillis
+                            )
+                    updatedCount += 1
+                }
+            }
+            return updatedCount
         }
 
         override suspend fun appendPlannerMessage(message: PlannerMessageEntity) {
@@ -155,7 +182,48 @@ class RoomPlannerSessionStoreTest {
             }
         }
 
+        override suspend fun deleteAllPlannerRounds() {
+            rounds.clear()
+        }
+
+        override suspend fun deleteAllPlannerMessages() {
+            messages.clear()
+        }
+
+        override suspend fun deleteAllToolTasks() {
+            toolTasks.clear()
+        }
+
         override suspend fun queryPlannerMessages(roundId: String): List<PlannerMessageEntity> =
                 messages.filter { it.roundId == roundId }.sortedBy { it.sequence }
+
+        override suspend fun queryRecentCompletedReplies(sinceMs: Long): List<CompletedReplyRow> =
+                rounds
+                        .asSequence()
+                        .filter {
+                            it.state == PlannerSessionState.COMPLETED &&
+                                    it.triggerMessageId?.startsWith("msg") == true &&
+                                    it.createdAtMillis >= sinceMs
+                        }
+                        .mapNotNull { round ->
+                            val reply =
+                                    messages
+                                            .asSequence()
+                                            .filter {
+                                                it.roundId == round.roundId &&
+                                                        it.role == PlannerSessionRole.ASSISTANT &&
+                                                        !it.content.isNullOrEmpty()
+                                            }
+                                            .maxByOrNull { it.sequence }
+                                            ?: return@mapNotNull null
+                            CompletedReplyRow(
+                                    roundId = round.roundId,
+                                    triggerMessageId = round.triggerMessageId,
+                                    replyText = reply.content.orEmpty(),
+                                    createdAtMs = round.createdAtMillis
+                            )
+                        }
+                        .sortedBy { it.createdAtMs }
+                        .toList()
     }
 }

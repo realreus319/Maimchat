@@ -300,6 +300,20 @@ class StateToolsTest {
             memories.removeAll { it.memoryId == memoryId }
         }
 
+        override suspend fun deleteAllMemories() {
+            memories.clear()
+        }
+
+        override suspend fun deleteAllImpressions() {
+            impressions.clear()
+        }
+
+        override suspend fun deleteAllMoodState() {
+            moodState = null
+        }
+
+        override suspend fun deleteAllMediaBlocks() = Unit
+
         override suspend fun queryImpression(
                 contextId: String,
                 agentId: String,
@@ -321,6 +335,14 @@ class StateToolsTest {
 
         override suspend fun queryMoodState(contextId: String, agentId: String): MoodStateEntity? =
                 moodState?.takeIf { it.contextId == contextId && it.agentId == agentId }
+
+        override fun observeMoodState(
+                contextId: String,
+                agentId: String
+        ): kotlinx.coroutines.flow.Flow<MoodStateEntity?> =
+                kotlinx.coroutines.flow.flowOf(
+                        moodState?.takeIf { it.contextId == contextId && it.agentId == agentId }
+                )
     }
 }
 

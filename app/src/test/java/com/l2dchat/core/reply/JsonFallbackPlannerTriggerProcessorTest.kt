@@ -12,6 +12,7 @@ import com.l2dchat.core.llm.LlmToolExecutor
 import com.l2dchat.core.tools.ReplierTaskGenerator
 import com.l2dchat.core.tools.ReplierTaskManager
 import com.l2dchat.core.tools.ReplierTaskRequest
+import com.l2dchat.core.tools.ReplierTaskUpdate
 import com.l2dchat.core.tools.ReplierTool
 import com.l2dchat.core.tools.ToolRegistry
 import com.l2dchat.core.tools.WaitForTool
@@ -41,7 +42,7 @@ class JsonFallbackPlannerTriggerProcessorTest {
                                 LlmResponse(
                                         message =
                                                 LlmMessage.assistant(
-                                                        """{"type":"tool_call","tool":"replier","arguments":{"content":"json reply"}}"""
+                                                        """{"type":"tool_call","tool":"replier","arguments":{"thinking":"json reply"}}"""
                                                 ),
                                         model = "fake"
                                 )
@@ -49,6 +50,14 @@ class JsonFallbackPlannerTriggerProcessorTest {
                 )
 
         runBlocking {
+            val taskManager =
+                    ReplierTaskManager(
+                            scope = this,
+                            generator =
+                                    ReplierTaskGenerator { request ->
+                                        flow { emit(ReplierTaskUpdate.Completed(request.thinking)) }
+                                    }
+                    )
             val loop =
                     PlannerLoop(
                             routingKey = routingKey,
@@ -57,7 +66,10 @@ class JsonFallbackPlannerTriggerProcessorTest {
                                     JsonFallbackPlannerTriggerProcessor(
                                             llmClient = client,
                                             config = LlmGenerationConfig(model = "fake"),
-                                            toolRegistry = ToolRegistry(listOf(ReplierTool())),
+                                            toolRegistry =
+                                                    ToolRegistry(
+                                                            listOf(ReplierTool(taskManager = taskManager))
+                                                    ),
                                             promptBuilder = PlannerPromptBuilder(systemPrompt = "system"),
                                             systemPromptProvider =
                                                     PlannerSystemPromptProvider { "room system" }
@@ -101,19 +113,27 @@ class JsonFallbackPlannerTriggerProcessorTest {
                 )
 
         runBlocking {
-            val taskManager =
+            val waitTaskManager =
                     ReplierTaskManager(
                             scope = this,
                             generator = ReplierTaskGenerator { flow { awaitCancellation() } }
                     )
             val task =
-                    taskManager.startTask(
+                    waitTaskManager.startTask(
                             ReplierTaskRequest(
                                     taskId = "task-1",
                                     routingKey = routingKey,
                                     trigger = trigger("old"),
-                                    content = "old"
+                                    thinking = "old"
                             )
+                    )
+            val replyTaskManager =
+                    ReplierTaskManager(
+                            scope = this,
+                            generator =
+                                    ReplierTaskGenerator { request ->
+                                        flow { emit(ReplierTaskUpdate.Completed(request.thinking)) }
+                                    }
                     )
             try {
                 val loop =
@@ -124,7 +144,16 @@ class JsonFallbackPlannerTriggerProcessorTest {
                                         JsonFallbackPlannerTriggerProcessor(
                                                 llmClient = client,
                                                 config = LlmGenerationConfig(model = "fake"),
-                                                toolRegistry = ToolRegistry(listOf(WaitForTool(taskManager)))
+                                                toolRegistry =
+                                                        ToolRegistry(
+                                                                listOf(
+                                                                        WaitForTool(waitTaskManager),
+                                                                        ReplierTool(
+                                                                                taskManager =
+                                                                                        replyTaskManager
+                                                                        )
+                                                                )
+                                                        )
                                         ),
                                 replySink = PlannerReplySink { replyDone.complete(it) }
                         )
@@ -152,7 +181,7 @@ class JsonFallbackPlannerTriggerProcessorTest {
                                         message =
                                                 LlmMessage.assistant(
                                                         "Let me think about this. " +
-                                                                """{"type":"tool_call","tool":"replier","arguments":{"content":"wrapped reply"}}""" +
+                                                                """{"type":"tool_call","tool":"replier","arguments":{"thinking":"wrapped reply"}}""" +
                                                                 " I will reply now."
                                                 ),
                                         model = "fake"
@@ -161,6 +190,14 @@ class JsonFallbackPlannerTriggerProcessorTest {
                 )
 
         runBlocking {
+            val taskManager =
+                    ReplierTaskManager(
+                            scope = this,
+                            generator =
+                                    ReplierTaskGenerator { request ->
+                                        flow { emit(ReplierTaskUpdate.Completed(request.thinking)) }
+                                    }
+                    )
             val loop =
                     PlannerLoop(
                             routingKey = routingKey,
@@ -169,7 +206,10 @@ class JsonFallbackPlannerTriggerProcessorTest {
                                     JsonFallbackPlannerTriggerProcessor(
                                             llmClient = client,
                                             config = LlmGenerationConfig(model = "fake"),
-                                            toolRegistry = ToolRegistry(listOf(ReplierTool()))
+                                            toolRegistry =
+                                                    ToolRegistry(
+                                                            listOf(ReplierTool(taskManager = taskManager))
+                                                    )
                                     ),
                             replySink = PlannerReplySink { replyDone.complete(it) }
                     )
@@ -184,7 +224,7 @@ class JsonFallbackPlannerTriggerProcessorTest {
     }
 
     @Test
-    fun `fallback degrades to plain final answer when tool budget is exhausted`() {
+    fun `fallback forces replier when tool budget is exhausted`() {
         val replyDone = CompletableDeferred<PlannerReply>()
         val client =
                 ScriptedJsonClient(
@@ -192,7 +232,7 @@ class JsonFallbackPlannerTriggerProcessorTest {
                                 LlmResponse(
                                         message =
                                                 LlmMessage.assistant(
-                                                        """{"type":"tool_call","tool":"replier","arguments":{"content":"loop"}}"""
+                                                        """{"type":"tool_call","tool":"replier","arguments":{"thinking":"loop"}}"""
                                                 ),
                                         model = "fake"
                                 ),
@@ -204,6 +244,20 @@ class JsonFallbackPlannerTriggerProcessorTest {
                 )
 
         runBlocking {
+            val taskManager =
+                    ReplierTaskManager(
+                            scope = this,
+                            generator =
+                                    ReplierTaskGenerator {
+                                        flow {
+                                            emit(
+                                                    ReplierTaskUpdate.Completed(
+                                                            "forced replier answer"
+                                                    )
+                                            )
+                                        }
+                                    }
+                    )
             val loop =
                     PlannerLoop(
                             routingKey = routingKey,
@@ -216,16 +270,23 @@ class JsonFallbackPlannerTriggerProcessorTest {
                                                             model = "fake",
                                                             maxToolRounds = 0
                                                     ),
-                                            toolRegistry = ToolRegistry(listOf(ReplierTool()))
+                                            toolRegistry =
+                                                    ToolRegistry(
+                                                            listOf(
+                                                                    ReplierTool(
+                                                                            taskManager = taskManager
+                                                                    )
+                                                            )
+                                                    )
                                     ),
                             replySink = PlannerReplySink { replyDone.complete(it) }
                     )
             loop.start()
             loop.submitTrigger(trigger("hello"))
 
-            // Tool budget is 0, so instead of throwing it forces a plain-text completion.
-            assertEquals("plain final answer", withTimeout(1_000L) { replyDone.await() }.text)
-            assertEquals(2, client.messages.size)
+            // Tool budget is 0, so the planner text is not surfaced; the replier composes the reply.
+            assertEquals("forced replier answer", withTimeout(1_000L) { replyDone.await() }.text)
+            assertEquals(1, client.messages.size)
             loop.shutdown()
         }
     }

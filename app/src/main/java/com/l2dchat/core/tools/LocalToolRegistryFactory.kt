@@ -14,7 +14,8 @@ object LocalToolRegistryFactory {
             motionController: MotionController = NoopMotionController,
             runtimeStateDao: RuntimeStateDao? = null,
             replierTaskManager: ReplierTaskManager? = null,
-            replierTaskIdFactory: ((ToolExecutionContext) -> String)? = null
+            replierTaskIdFactory: ((ToolExecutionContext) -> String)? = null,
+            extraTools: List<Tool> = emptyList()
     ): List<Tool> {
         val tools =
                 mutableListOf<Tool>(
@@ -38,6 +39,7 @@ object LocalToolRegistryFactory {
             tools += QueryImpressionTool(stateDao = runtimeStateDao, gson = gson)
             tools += UpdateMoodStateTool(stateDao = runtimeStateDao, gson = gson)
         }
+        tools += extraTools
         return tools
     }
 
@@ -47,7 +49,8 @@ object LocalToolRegistryFactory {
             motionController: MotionController = NoopMotionController,
             runtimeStateDao: RuntimeStateDao? = null,
             replierTaskManager: ReplierTaskManager? = null,
-            replierTaskIdFactory: ((ToolExecutionContext) -> String)? = null
+            replierTaskIdFactory: ((ToolExecutionContext) -> String)? = null,
+            extraTools: List<Tool> = emptyList()
     ): ToolRegistry =
             ToolRegistry(
                     normalTools(
@@ -56,7 +59,8 @@ object LocalToolRegistryFactory {
                             motionController = motionController,
                             runtimeStateDao = runtimeStateDao,
                             replierTaskManager = replierTaskManager,
-                            replierTaskIdFactory = replierTaskIdFactory
+                            replierTaskIdFactory = replierTaskIdFactory,
+                            extraTools = extraTools
                     )
             )
 

@@ -205,6 +205,6 @@ class PlannerPromptBuilderTest {
                                     timestampSeconds = 1.0,
                                     payload = mapOf("text" to text)
                             ),
-                    content = text
+                    thinking = text
             )
 }

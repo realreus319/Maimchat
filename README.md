@@ -31,7 +31,6 @@ androidproj/
 │   ├── libs/               # 放置 Live2DCubismCore.aar（二进制需自行下载）
 │   └── CubismSdkForJava-*/ # 下载后解压得到的 Cubism Framework 模块
 ├── webdriver-test-server.js# 本地 WebSocket 测试服务
-├── WEBSOCKET_CONFIG_GUIDE.md
 ├── wallpaper_guide.md
 └── signing.properties.example
 ```

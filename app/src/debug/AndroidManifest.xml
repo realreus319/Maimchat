@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only test-control surface. Merged into the debug build only; never in release. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Verify the cross-package worker delegation path (start via adb). -->
+        <activity
+            android:name="com.l2dchat.worker.WorkerDebugActivity"
+            android:exported="true" />
+
+        <!-- Drive the in-process WebView + CDP browser stack (P1). -->
+        <activity
+            android:name="com.l2dchat.browser.BrowserDebugActivity"
+            android:exported="true" />
+
+        <!-- Drive the engine MCP server + reverse bridge without worker/LLM. -->
+        <activity
+            android:name="com.l2dchat.browser.BrowserMcpDebugActivity"
+            android:exported="true" />
+
+        <receiver
+            android:name="com.l2dchat.test.TestControlReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.l2dchat.test.SEND" />
+                <action android:name="com.l2dchat.test.CLEAR" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

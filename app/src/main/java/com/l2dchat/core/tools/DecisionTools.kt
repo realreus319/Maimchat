@@ -10,8 +10,10 @@ object DecisionTools {
             taskManager: ReplierTaskManager,
             gson: Gson = Gson()
     ): List<Tool> =
+            // DECISION mode is ONLY adopt/kill — NO wait_for. The decision turn just disposes the
+            // in-flight reply (adopt sends the old one / kill discards it); waiting, post-ops, and any
+            // fresh replier generation all happen back in NORMAL (the loop returns to GENERATING).
             listOf(
-                    WaitForTool(taskManager = taskManager, gson = gson),
                     AdoptBackgroundReplyTool(taskManager = taskManager, gson = gson),
                     KillBackgroundReplyTool(taskManager = taskManager, gson = gson)
             )

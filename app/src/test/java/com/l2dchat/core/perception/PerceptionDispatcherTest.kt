@@ -84,19 +84,16 @@ class PerceptionDispatcherTest {
             MessageBase(
                     messageInfo =
                             BaseMessageInfo(
-                                    platform = "test_platform",
                                     messageId = messageId,
                                     time = 1000.0,
                                     senderInfo =
                                             SenderInfo(
                                                     groupInfo =
                                                             GroupInfo(
-                                                                    platform = "test_platform",
                                                                     groupId = groupId
                                                             ),
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = "user-id",
                                                                     userNickname = "Alice"
                                                             )
@@ -105,7 +102,6 @@ class PerceptionDispatcherTest {
                                             ReceiverInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test_platform",
                                                                     userId = agentId,
                                                                     userNickname = "Bot"
                                                             )

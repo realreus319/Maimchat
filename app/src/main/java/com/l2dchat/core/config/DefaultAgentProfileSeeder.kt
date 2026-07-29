@@ -23,6 +23,13 @@ class AssetDefaultAgentProfileSource(context: Context) : DefaultAgentProfileSour
             }
 }
 
+/**
+ * Seeds a PERSONA's profile + prompts into the DB. The [agentId] doubles as the asset-bundle id: the
+ * agent.json + prompts are read from `assets/agents/<agentId>/`, and BOTH the agent config and the
+ * prompt templates are scoped to that agentId — so each persona has its own prompts (the
+ * `queryPromptTemplate` query prefers an agent-scoped row over the null default). Re-seeds the untouched
+ * default (updatedAtMillis == 0) but never clobbers a row the user has edited.
+ */
 object DefaultAgentProfileSeeder {
     suspend fun seed(
             context: Context,
@@ -45,11 +52,8 @@ object DefaultAgentProfileSeeder {
             displayName: String?
     ) {
         val normalizedAgentId = agentId.trim().takeIf { it.isNotBlank() } ?: return
-        val profile = source.readProfile()
+        val profile = source.readProfile(normalizedAgentId)
 
-        // Seed when absent, and refresh whenever the stored row is still the untouched default
-        // (updatedAtMillis == DEFAULT_UPDATED_AT). This lets a new default persona/prompt take
-        // effect on upgrade, while never clobbering a row the user has edited (non-zero timestamp).
         val existingConfig = stateDao.queryAgentConfig(normalizedAgentId)
         val desiredConfig =
                 AgentConfigEntity(
@@ -71,10 +75,13 @@ object DefaultAgentProfileSeeder {
             stateDao.upsertAgentConfig(desiredConfig)
         }
 
-        DEFAULT_PROMPTS.forEach { prompt ->
-            val body = source.readText(prompt.path)?.trim()?.takeIf { it.isNotBlank() }
-                    ?: return@forEach
-            val templateId = "default_${prompt.name}"
+        PROMPT_NAMES.forEach { name ->
+            val body =
+                    source.readText("agents/$normalizedAgentId/prompts/$name.md")
+                            ?.trim()
+                            ?.takeIf { it.isNotBlank() }
+                            ?: return@forEach
+            val templateId = "${normalizedAgentId}_$name"
             val existing = stateDao.queryPromptTemplateById(templateId)
             if (existing != null &&
                             (existing.updatedAtMillis != DEFAULT_UPDATED_AT || existing.body == body)
@@ -85,8 +92,8 @@ object DefaultAgentProfileSeeder {
             stateDao.upsertPromptTemplate(
                     PromptTemplateEntity(
                             templateId = templateId,
-                            agentId = null,
-                            name = prompt.name,
+                            agentId = normalizedAgentId,
+                            name = name,
                             body = body,
                             updatedAtMillis = DEFAULT_UPDATED_AT
                     )
@@ -94,9 +101,10 @@ object DefaultAgentProfileSeeder {
         }
     }
 
-    private fun DefaultAgentProfileSource.readProfile(): DefaultAgentProfile {
-        val json = readText(AGENT_JSON_PATH)?.trim()?.takeIf { it.isNotBlank() }
-                ?: return DefaultAgentProfile()
+    private fun DefaultAgentProfileSource.readProfile(bundleId: String): DefaultAgentProfile {
+        val json =
+                readText("agents/$bundleId/agent.json")?.trim()?.takeIf { it.isNotBlank() }
+                        ?: return DefaultAgentProfile()
         val root = runCatching { GSON.fromJson(json, JsonObject::class.java) }.getOrNull()
                 ?: return DefaultAgentProfile()
         return DefaultAgentProfile(
@@ -128,29 +136,14 @@ object DefaultAgentProfileSeeder {
             val settingsJson: String? = null
     )
 
-    private data class DefaultPrompt(val name: String, val path: String)
-
-    private val DEFAULT_PROMPTS =
+    private val PROMPT_NAMES =
             listOf(
-                    DefaultPrompt(
-                            AgentPromptTemplateNames.PLANNER_SYSTEM,
-                            "agents/default/prompts/planner_system.md"
-                    ),
-                    DefaultPrompt(
-                            AgentPromptTemplateNames.DECISION_SYSTEM,
-                            "agents/default/prompts/decision_system.md"
-                    ),
-                    DefaultPrompt(
-                            AgentPromptTemplateNames.REPLIER_SYSTEM,
-                            "agents/default/prompts/replier_system.md"
-                    ),
-                    DefaultPrompt(
-                            AgentPromptTemplateNames.REPLIER_USER,
-                            "agents/default/prompts/replier_user.md"
-                    )
+                    AgentPromptTemplateNames.PLANNER_SYSTEM,
+                    AgentPromptTemplateNames.DECISION_SYSTEM,
+                    AgentPromptTemplateNames.REPLIER_SYSTEM,
+                    AgentPromptTemplateNames.REPLIER_USER
             )
 
-    private const val AGENT_JSON_PATH = "agents/default/agent.json"
     private const val DEFAULT_UPDATED_AT = 0L
     private val GSON = Gson()
 }

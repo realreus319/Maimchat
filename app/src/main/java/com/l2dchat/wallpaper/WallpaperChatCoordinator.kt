@@ -1,11 +1,11 @@
 package com.l2dchat.wallpaper
 
 import android.content.Context
-import com.l2dchat.chat.service.ChatRuntimeMode
 import com.l2dchat.chat.service.ChatServiceClient
 import com.l2dchat.chat.service.ChatServiceClient.ChatMessageSnapshot
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
+import com.l2dchat.preferences.ChatPreferenceKeys
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.min
@@ -26,11 +26,7 @@ object WallpaperChatCoordinator {
     private const val ENVIRONMENT_VISUAL_SNAPSHOT_MIME_TYPE =
             "application/vnd.l2dchat.environment-snapshot+json"
     private const val CHAT_PREFS = "chat_prefs"
-    private const val KEY_LAST_URL = "last_url"
     private const val KEY_NICKNAME = "nickname"
-    private const val KEY_PLATFORM = "platform"
-    private const val KEY_RECEIVER_ID = "receiver_user_id"
-    private const val KEY_RECEIVER_NICKNAME = "receiver_user_nickname"
     private const val CONNECTION_TIMEOUT_MS = 4_000L
     private const val PREVIEW_MAX_CHARS = 80
 
@@ -56,12 +52,28 @@ object WallpaperChatCoordinator {
         val client = ensureClient(appContext)
         client.ensureBound()
         updateWidgetPreview(appContext, trimmed, fromUser = true)
-        val connected = ensureConnection(appContext, client)
+        val connected = ensureConnection(client)
         if (!connected) {
             logger.warn("无法在超时时间内连接到服务器，发送失败", throttleMs = 2_000L, throttleKey = "send_timeout")
             return false
         }
         client.sendUserMessage(trimmed)
+        return true
+    }
+
+    /**
+     * Wipe the active conversation (same as the in-app "清空聊天记录" button). Used by the debug
+     * TestControlReceiver to give E2E tests a clean slate without the flaky UI/IME path.
+     */
+    suspend fun clearChat(context: Context): Boolean {
+        val appContext = context.applicationContext
+        val client = ensureClient(appContext)
+        client.ensureBound()
+        if (!ensureConnection(client)) {
+            logger.warn("清空失败：无法连接服务", throttleMs = 2_000L, throttleKey = "clear_timeout")
+            return false
+        }
+        client.clearMessages()
         return true
     }
 
@@ -196,30 +208,15 @@ object WallpaperChatCoordinator {
     private fun applyUserConfig(context: Context, client: ChatServiceClient) {
         client.ensureBound()
         val prefs = context.getSharedPreferences(CHAT_PREFS, Context.MODE_PRIVATE)
-        val platform = prefs.getString(KEY_PLATFORM, null)?.trim().takeUnless { it.isNullOrEmpty() }
-        client.updatePlatformPreference(platform)
         prefs.getString(KEY_NICKNAME, null)?.takeUnless { it.isBlank() }?.let {
             client.setUserProfile(it)
         }
-        val receiverId = prefs.getString(KEY_RECEIVER_ID, null)?.ifBlank { null }
-        val receiverNickname = prefs.getString(KEY_RECEIVER_NICKNAME, null)?.ifBlank { null }
-        if (receiverId != null || receiverNickname != null) {
-            client.setReceiverInfo(receiverId, receiverNickname)
-        }
-        // 将当前壁纸模型名作为历史缓存 key，沿用 app 内行为
-        val wallpaperPrefs =
-                context.getSharedPreferences(WallpaperComm.PREF_WALLPAPER, Context.MODE_PRIVATE)
-        wallpaperPrefs.getString(WallpaperComm.PREF_WALLPAPER_MODEL_FOLDER, null)?.let { folder ->
+        // 以"更换模型"选定的模型（chat_prefs/selected_model_folder）为唯一真相源，沿用 app 内行为
+        prefs.getString(ChatPreferenceKeys.SELECTED_MODEL_FOLDER, null)?.let { folder ->
             val modelName = folder.substringAfterLast('/')
             client.setActiveModel(modelName)
         }
-        when (client.getRuntimeMode()) {
-            ChatRuntimeMode.LOCAL -> client.startLocalRuntime()
-            ChatRuntimeMode.REMOTE ->
-                    prefs.getString(KEY_LAST_URL, null)?.takeUnless { it.isBlank() }?.let { url ->
-                        client.connect(url, platform)
-                    }
-        }
+        client.startLocalRuntime()
         client.requestSnapshot()
     }
 
@@ -229,15 +226,19 @@ object WallpaperChatCoordinator {
         // instead of accumulating only newly-arriving messages.
         scope.launch {
             client.snapshot.collect { messages ->
-                messages.lastOrNull()?.let {
+                // Only real conversation bubbles reach the wallpaper/widget — agent-activity and
+                // file-attachment bubbles (empty content) would render as black boxes on the wallpaper.
+                val convo = messages.filter { it.isConversationBubble() }
+                convo.lastOrNull()?.let {
                     updateWidgetPreview(context, it.content, fromUser = it.isFromUser)
                 }
-                notifyHistoryLoaded(messages)
+                notifyHistoryLoaded(convo)
             }
         }
         // Incremental appends.
         scope.launch {
             client.newMessages.collect { message ->
+                if (!message.isConversationBubble()) return@collect
                 updateWidgetPreview(context, message.content, fromUser = message.isFromUser)
                 notifyListeners(message)
                 if (!message.isFromUser) {
@@ -248,6 +249,11 @@ object WallpaperChatCoordinator {
             }
         }
     }
+
+    /** A real chat bubble (vs an inline agent-activity / file-attachment bubble, which the wallpaper
+     *  must not render). */
+    private fun ChatMessageSnapshot.isConversationBubble(): Boolean =
+            agentActivityJson == null && fileInfoJson == null
 
     private fun notifyHistoryLoaded(messages: List<ChatMessageSnapshot>) {
         listeners.forEach { listener ->
@@ -276,10 +282,12 @@ object WallpaperChatCoordinator {
             height: Int
     ): String {
         val prefs = context.getSharedPreferences(WallpaperComm.PREF_WALLPAPER, Context.MODE_PRIVATE)
+        val chatPrefs =
+                context.getSharedPreferences(ChatPreferenceKeys.PREFS_NAME, Context.MODE_PRIVATE)
         val fingerprint =
                 listOf(
                                 "android_wallpaper",
-                                prefs.getString(WallpaperComm.PREF_WALLPAPER_MODEL_FOLDER, null)
+                                chatPrefs.getString(ChatPreferenceKeys.SELECTED_MODEL_FOLDER, null)
                                         .orEmpty(),
                                 prefs.getString(WallpaperComm.PREF_WALLPAPER_BG_PATH, null)
                                         .orEmpty(),
@@ -292,15 +300,10 @@ object WallpaperChatCoordinator {
         return "android_wallpaper:${Integer.toHexString(fingerprint)}"
     }
 
-    private suspend fun ensureConnection(context: Context, client: ChatServiceClient): Boolean {
-        val prefs = context.getSharedPreferences(CHAT_PREFS, Context.MODE_PRIVATE)
-        val url = prefs.getString(KEY_LAST_URL, null)?.takeUnless { it.isBlank() }
-        val platform = prefs.getString(KEY_PLATFORM, null)?.takeUnless { it.isBlank() }
+    private suspend fun ensureConnection(client: ChatServiceClient): Boolean {
         return when (
                 WallpaperChatConnectionPolicy.nextAction(
-                        runtimeMode = client.getRuntimeMode(),
-                        connectionState = client.connectionState.value,
-                        remoteUrl = url
+                        runtimeState = client.runtimeState.value
                 )
         ) {
             WallpaperChatConnectionPolicy.Action.READY -> true
@@ -309,28 +312,16 @@ object WallpaperChatCoordinator {
                 client.startLocalRuntime()
                 waitForConnection(client)
             }
-            WallpaperChatConnectionPolicy.Action.CONNECT_REMOTE -> {
-                client.connect(url, platform)
-                waitForConnection(client)
-            }
-            WallpaperChatConnectionPolicy.Action.FAIL_MISSING_REMOTE_URL -> {
-                logger.warn(
-                        "尚未配置 WebSocket URL，无法建立远端连接",
-                        throttleMs = 3_000L,
-                        throttleKey = "missing_url"
-                )
-                false
-            }
         }
     }
 
     private suspend fun waitForConnection(client: ChatServiceClient): Boolean {
-        if (client.connectionState.value == ChatServiceClient.ChatConnectionState.CONNECTED) {
+        if (client.runtimeState.value == ChatServiceClient.RuntimeState.RUNNING) {
             return true
         }
         return withTimeoutOrNull(CONNECTION_TIMEOUT_MS) {
-            client.connectionState
-                    .filter { it == ChatServiceClient.ChatConnectionState.CONNECTED }
+            client.runtimeState
+                    .filter { it == ChatServiceClient.RuntimeState.RUNNING }
                     .first()
             true
         }

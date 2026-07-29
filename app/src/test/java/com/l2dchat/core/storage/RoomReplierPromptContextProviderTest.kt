@@ -161,7 +161,7 @@ class RoomReplierPromptContextProviderTest {
                                     timestampSeconds = 3.0,
                                     payload = mapOf("text" to "现在的问题", "sender_id" to "user-1")
                             ),
-                    content = "planner thoughts"
+                    thinking = "planner thoughts"
             )
 
     private fun message(
@@ -174,14 +174,12 @@ class RoomReplierPromptContextProviderTest {
             MessageBase(
                     messageInfo =
                             BaseMessageInfo(
-                                    platform = "test",
                                     messageId = id,
                                     time = timeSeconds,
                                     senderInfo =
                                             SenderInfo(
                                                     userInfo =
                                                             UserInfo(
-                                                                    platform = "test",
                                                                     userId = senderId,
                                                                     userNickname = senderName
                                                             )
@@ -234,9 +232,12 @@ class RoomReplierPromptContextProviderTest {
             private val agentConfig: AgentConfigEntity? = null,
             private val templates: List<PromptTemplateEntity> = emptyList(),
             private val memories: MutableList<MemoryEntity> = mutableListOf(),
-            private val impressions: List<ImpressionEntity> = emptyList(),
-            private val moodState: MoodStateEntity? = null
+            impressions: List<ImpressionEntity> = emptyList(),
+            moodState: MoodStateEntity? = null
     ) : RuntimeStateDao {
+        private val impressions = impressions.toMutableList()
+        private var moodState = moodState
+
         override suspend fun upsertAgentConfig(config: AgentConfigEntity) = Unit
 
         override suspend fun upsertPromptTemplate(template: PromptTemplateEntity) = Unit
@@ -312,6 +313,20 @@ class RoomReplierPromptContextProviderTest {
             memories.removeAll { it.memoryId == memoryId }
         }
 
+        override suspend fun deleteAllMemories() {
+            memories.clear()
+        }
+
+        override suspend fun deleteAllImpressions() {
+            impressions.clear()
+        }
+
+        override suspend fun deleteAllMoodState() {
+            moodState = null
+        }
+
+        override suspend fun deleteAllMediaBlocks() = Unit
+
         override suspend fun queryImpression(
                 contextId: String,
                 agentId: String,
@@ -333,5 +348,13 @@ class RoomReplierPromptContextProviderTest {
 
         override suspend fun queryMoodState(contextId: String, agentId: String): MoodStateEntity? =
                 moodState?.takeIf { it.contextId == contextId && it.agentId == agentId }
+
+        override fun observeMoodState(
+                contextId: String,
+                agentId: String
+        ): kotlinx.coroutines.flow.Flow<MoodStateEntity?> =
+                kotlinx.coroutines.flow.flowOf(
+                        moodState?.takeIf { it.contextId == contextId && it.agentId == agentId }
+                )
     }
 }

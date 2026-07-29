@@ -82,49 +82,19 @@ class OpenAiCompatibleClientTest {
                         httpClient =
                                 fakeHttpClient(recorded) {
                                     if (recorded.size == 1) {
-                                        jsonResponse(
+                                        sseResponse(
                                                 """
-                                                {
-                                                  "id": "chatcmpl-tool",
-                                                  "model": "fake-model",
-                                                  "choices": [
-                                                    {
-                                                      "finish_reason": "tool_calls",
-                                                      "message": {
-                                                        "role": "assistant",
-                                                        "content": null,
-                                                        "tool_calls": [
-                                                          {
-                                                            "id": "call-1",
-                                                            "type": "function",
-                                                            "function": {
-                                                              "name": "replier",
-                                                              "arguments": "{\"reply_text\":\"hi\"}"
-                                                            }
-                                                          }
-                                                        ]
-                                                      }
-                                                    }
-                                                  ]
-                                                }
+                                                data: {"id":"chatcmpl-tool","model":"fake-model","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"replier","arguments":"{\"reply_text\":\"hi\"}"}}]},"finish_reason":"tool_calls"}]}
+
+                                                data: [DONE]
                                                 """.trimIndent()
                                         )
                                     } else {
-                                        jsonResponse(
+                                        sseResponse(
                                                 """
-                                                {
-                                                  "id": "chatcmpl-final",
-                                                  "model": "fake-model",
-                                                  "choices": [
-                                                    {
-                                                      "finish_reason": "stop",
-                                                      "message": {
-                                                        "role": "assistant",
-                                                        "content": "done"
-                                                      }
-                                                    }
-                                                  ]
-                                                }
+                                                data: {"id":"chatcmpl-final","model":"fake-model","choices":[{"delta":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}
+
+                                                data: [DONE]
                                                 """.trimIndent()
                                         )
                                     }
@@ -160,6 +130,7 @@ class OpenAiCompatibleClientTest {
         assertEquals("done", response.text)
         assertEquals("replier", executed.single().name)
         assertEquals(2, recorded.size)
+        assertEquals(true, JsonParser.parseString(recorded[0].body).asJsonObject["stream"].asBoolean)
         val secondBody = JsonParser.parseString(recorded[1].body).asJsonObject
         val messages = secondBody.getAsJsonArray("messages")
         assertEquals("assistant", messages[1].asJsonObject["role"].asString)
@@ -211,26 +182,9 @@ class OpenAiCompatibleClientTest {
         val recorded = mutableListOf<RecordedRequest>()
         val toolCallResponse =
                 """
-                {
-                  "id": "chatcmpl-tool",
-                  "model": "fake-model",
-                  "choices": [
-                    {
-                      "finish_reason": "tool_calls",
-                      "message": {
-                        "role": "assistant",
-                        "content": null,
-                        "tool_calls": [
-                          {
-                            "id": "call-1",
-                            "type": "function",
-                            "function": {"name": "replier", "arguments": "{}"}
-                          }
-                        ]
-                      }
-                    }
-                  ]
-                }
+                data: {"id":"chatcmpl-tool","model":"fake-model","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"replier","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}
+
+                data: [DONE]
                 """.trimIndent()
         val client =
                 OpenAiCompatibleClient(
@@ -245,18 +199,13 @@ class OpenAiCompatibleClientTest {
                                                     .asJsonObject
                                                     .has("tools")
                                     if (wantsTools) {
-                                        jsonResponse(toolCallResponse)
+                                        sseResponse(toolCallResponse)
                                     } else {
-                                        jsonResponse(
+                                        sseResponse(
                                                 """
-                                                {
-                                                  "id": "chatcmpl-final",
-                                                  "model": "fake-model",
-                                                  "choices": [
-                                                    {"finish_reason": "stop",
-                                                     "message": {"role": "assistant", "content": "forced answer"}}
-                                                  ]
-                                                }
+                                                data: {"id":"chatcmpl-final","model":"fake-model","choices":[{"delta":{"role":"assistant","content":"forced answer"},"finish_reason":"stop"}]}
+
+                                                data: [DONE]
                                                 """.trimIndent()
                                         )
                                     }
@@ -279,6 +228,7 @@ class OpenAiCompatibleClientTest {
         // Instead of throwing after the round budget, it issues one tools-disabled request.
         assertEquals("forced answer", response.text)
         val finalBody = JsonParser.parseString(recorded.last().body).asJsonObject
+        assertEquals(true, finalBody["stream"].asBoolean)
         assertEquals(false, finalBody.has("tools"))
     }
 

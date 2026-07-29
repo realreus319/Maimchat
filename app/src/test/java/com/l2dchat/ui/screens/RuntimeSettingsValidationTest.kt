@@ -10,8 +10,6 @@ class RuntimeSettingsValidationTest {
     fun `local mode allows empty provider config for fixed reply runtime`() {
         val errors =
                 RuntimeSettingsValidation.validateConfig(
-                        url = "",
-                        nickname = "tester",
                         localLlmSettings = LocalLlmSettings(enabled = true)
                 )
 
@@ -22,8 +20,6 @@ class RuntimeSettingsValidationTest {
     fun `local mode requires complete provider config when partially configured`() {
         val plannerOnlyErrors =
                 RuntimeSettingsValidation.validateConfig(
-                        url = "",
-                        nickname = "tester",
                         localLlmSettings =
                                 LocalLlmSettings(
                                         enabled = true,
@@ -32,8 +28,6 @@ class RuntimeSettingsValidationTest {
                 )
         val endpointOnlyErrors =
                 RuntimeSettingsValidation.validateConfig(
-                        url = "",
-                        nickname = "tester",
                         localLlmSettings =
                                 LocalLlmSettings(
                                         enabled = true,
@@ -49,8 +43,6 @@ class RuntimeSettingsValidationTest {
     fun `local mode treats api key as provider input`() {
         val errors =
                 RuntimeSettingsValidation.validateConfig(
-                        url = "",
-                        nickname = "tester",
                         localLlmSettings =
                                 LocalLlmSettings(enabled = true, apiKey = "secret")
                 )
@@ -62,8 +54,6 @@ class RuntimeSettingsValidationTest {
     fun `local mode validates endpoint scheme when provider is configured`() {
         val errors =
                 RuntimeSettingsValidation.validateConfig(
-                        url = "",
-                        nickname = "tester",
                         localLlmSettings =
                                 LocalLlmSettings(
                                         enabled = true,
@@ -79,23 +69,9 @@ class RuntimeSettingsValidationTest {
     fun `disabled provider stays in local runtime and does not require websocket endpoint`() {
         val errors =
                 RuntimeSettingsValidation.validateConfig(
-                        url = "https://api.example.com",
-                        nickname = "tester",
                         localLlmSettings = LocalLlmSettings(enabled = false)
                 )
 
         assertTrue(errors.isEmpty())
-    }
-
-    @Test
-    fun `nickname remains required for local fixed reply runtime`() {
-        val errors =
-                RuntimeSettingsValidation.validateConfig(
-                        url = "",
-                        nickname = " ",
-                        localLlmSettings = LocalLlmSettings(enabled = true)
-                )
-
-        assertEquals(listOf("昵称不能为空"), errors)
     }
 }

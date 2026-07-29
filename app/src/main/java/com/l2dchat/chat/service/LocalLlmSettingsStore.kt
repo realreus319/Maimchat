@@ -14,6 +14,7 @@ internal object LocalLlmSettingsStore {
     const val KEY_LOCAL_LLM_TEMPERATURE = "local_llm_temperature"
     const val KEY_LOCAL_LLM_MAX_TOKENS = "local_llm_max_tokens"
     const val KEY_LOCAL_LLM_TIMEOUT_MILLIS = "local_llm_timeout_millis"
+    const val KEY_LOCAL_LLM_PLANNER_THINKING = "local_llm_planner_thinking"
 
     fun read(prefs: SharedPreferences, secureStore: SecretStringStore): LocalLlmSettings =
             LocalLlmSettings(
@@ -35,7 +36,14 @@ internal object LocalLlmSettingsStore {
                     plannerModel =
                             prefs.getString(KEY_LOCAL_LLM_PLANNER_MODEL, null)
                                     ?: LocalLlmSettings.DEFAULT_PLANNER_MODEL,
-                    replierModel = prefs.getString(KEY_LOCAL_LLM_REPLIER_MODEL, null),
+                    replierModel =
+                            prefs.getString(KEY_LOCAL_LLM_REPLIER_MODEL, null)
+                                    ?: LocalLlmSettings.DEFAULT_REPLIER_MODEL,
+                    plannerThinking =
+                            prefs.getBoolean(
+                                    KEY_LOCAL_LLM_PLANNER_THINKING,
+                                    LocalLlmSettings.DEFAULT_PLANNER_THINKING
+                            ),
                     nativeToolCalling =
                             prefs.getBoolean(KEY_LOCAL_LLM_NATIVE_TOOL_CALLING, true),
                     environmentRepliesEnabled =
@@ -67,6 +75,7 @@ internal object LocalLlmSettingsStore {
                 .putBoolean(KEY_LOCAL_LLM_ENABLED, settings.enabled)
                 .putBoolean(KEY_LOCAL_LLM_NATIVE_TOOL_CALLING, settings.nativeToolCalling)
                 .putBoolean(KEY_LOCAL_LLM_ENV_REPLIES, settings.environmentRepliesEnabled)
+                .putBoolean(KEY_LOCAL_LLM_PLANNER_THINKING, settings.plannerThinking)
                 .putOptionalString(KEY_LOCAL_LLM_BASE_URL, settings.baseUrl)
                 .remove(KEY_LOCAL_LLM_API_KEY)
                 .putOptionalString(KEY_LOCAL_LLM_PLANNER_MODEL, settings.plannerModel)
