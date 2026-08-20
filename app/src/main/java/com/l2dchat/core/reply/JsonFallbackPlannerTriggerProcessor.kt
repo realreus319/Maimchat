@@ -6,9 +6,12 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.JsonSyntaxException
 import com.l2dchat.core.llm.LlmClient
+import com.l2dchat.core.llm.LlmContentPart
 import com.l2dchat.core.llm.LlmGenerationConfig
+import com.l2dchat.core.llm.LlmImageUrlPart
 import com.l2dchat.core.llm.LlmMessage
 import com.l2dchat.core.llm.LlmMessageRole
+import com.l2dchat.core.llm.LlmTextPart
 import com.l2dchat.core.llm.LlmToolCall
 import com.l2dchat.core.llm.LlmToolDefinition
 import com.l2dchat.core.llm.LlmToolResult
@@ -25,7 +28,8 @@ class JsonFallbackPlannerTriggerProcessor(
         private val systemPromptProvider: PlannerSystemPromptProvider =
                 EmptyPlannerSystemPromptProvider,
         private val toolMode: ToolExecutionMode = ToolExecutionMode.NORMAL,
-        private val gson: Gson = Gson()
+        private val gson: Gson = Gson(),
+        private val mediaReader: LtmMediaReader = LtmMediaReader.DEFAULT,
 ) : PlannerTriggerProcessor {
     init {
         require(toolRegistry.definitionsFor(toolMode).isNotEmpty()) {
@@ -87,7 +91,22 @@ class JsonFallbackPlannerTriggerProcessor(
                         }
                     }
                     history.add(response.message)
-                    history.add(LlmMessage.user(execution.toLlmToolResult().toFallbackPrompt()))
+                    val toolResult = execution.toLlmToolResult()
+                    val fallbackText = toolResult.toFallbackPrompt()
+                    val mediaParts = toolResult.ltmReadMediaPhotoParts(mediaReader)
+                    if (mediaParts != null) {
+                        // T5: photo result — emit the fallback text plus the inlined image as a
+                        // multimodal user message (the JSON fallback path has no native tool
+                        // message, so the image rides on the same user turn).
+                        history.add(
+                                LlmMessage(
+                                        role = LlmMessageRole.USER,
+                                        content = listOf(LlmTextPart(fallbackText)) + mediaParts,
+                                )
+                        )
+                    } else {
+                        history.add(LlmMessage.user(fallbackText))
+                    }
                 }
             }
         }
@@ -313,3 +332,28 @@ private sealed interface JsonFallbackCommand {
 
     data class Final(val text: String) : JsonFallbackCommand
 }
+
+/**
+ * T5 (JSON-fallback path): returns the `image_url` content parts to inject for an
+ * `ltm_read_media` photo result, or `null` when the result is not a photo / has an error / the
+ * file cannot be read. Mirrors [ToolCallingPlannerTriggerProcessor]'s injection but returns the
+ * parts directly (the fallback path has no native tool message to attach them to).
+ */
+private fun LlmToolResult.ltmReadMediaPhotoParts(
+        mediaReader: LtmMediaReader,
+): List<LlmContentPart>? {
+    if (isError || name != LTM_READ_MEDIA_TOOL) return null
+    val parsed = runCatching { JsonParser.parseString(content).asJsonObject }.getOrNull() ?: return null
+    if (parsed.get("error")?.takeIf { !it.isJsonNull } != null) return null
+    val modality = parsed.get("modality")?.takeIf { !it.isJsonNull }?.asString
+    if (modality != "photo") return null
+    val mediaPath = parsed.get("media_path")?.takeIf { !it.isJsonNull }?.asString
+    if (mediaPath.isNullOrBlank()) return null
+    val dataUrl = runCatching { mediaReader.readDataUrl(mediaPath) }.getOrNull() ?: return null
+    return listOf(
+            LlmTextPart("[media injected: $mediaPath]"),
+            LlmImageUrlPart(url = dataUrl),
+    )
+}
+
+private const val LTM_READ_MEDIA_TOOL: String = "ltm_read_media"

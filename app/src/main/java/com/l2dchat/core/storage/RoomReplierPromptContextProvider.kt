@@ -16,7 +16,6 @@ class RoomReplierPromptContextProvider(
         private val historyStore: ChatHistoryStore,
         private val stateDao: RuntimeStateDao,
         private val historyLimit: Int = DEFAULT_HISTORY_LIMIT,
-        private val memoryLimit: Int = DEFAULT_MEMORY_LIMIT,
         private val clockMillis: () -> Long = { System.currentTimeMillis() },
         private val timeFormatter: (Long) -> String = ::defaultTimeText
 ) : ReplierPromptContextProvider {
@@ -37,12 +36,6 @@ class RoomReplierPromptContextProvider(
                         )
                         .filterNot { it.messageId == request.trigger.messageId }
                         .mapNotNull { it.toPromptHistoryMessage(agentId, agentConfig) }
-        val memoryText =
-                chatContext
-                        .getMemories(limit = memoryLimit)
-                        .mapNotNull { it.content.trim().takeIf { content -> content.isNotBlank() } }
-                        .joinToString("\n") { "- $it" }
-                        .takeIf { it.isNotBlank() }
         val impressionText =
                 chatContext
                         .getImpression(subjectId)
@@ -57,7 +50,6 @@ class RoomReplierPromptContextProvider(
                 personaPrompt = agentConfig.toPersonaPrompt(),
                 moodState = moodText,
                 impressionText = impressionText,
-                memoryText = memoryText,
                 historyMessages = historyMessages,
                 currentTimeText = timeFormatter(clockMillis()),
                 agentDisplayName = agentConfig?.displayName?.trim()?.takeIf { it.isNotBlank() }
@@ -104,7 +96,6 @@ class RoomReplierPromptContextProvider(
 
     companion object {
         private const val DEFAULT_HISTORY_LIMIT = 12
-        private const val DEFAULT_MEMORY_LIMIT = 5
         private const val REPLIER_SYSTEM_TEMPLATE = "replier_system"
         private const val REPLIER_USER_TEMPLATE = "replier_user"
 

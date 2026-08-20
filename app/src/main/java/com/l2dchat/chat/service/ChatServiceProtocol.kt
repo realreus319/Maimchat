@@ -15,6 +15,7 @@ object ChatServiceProtocol {
     const val MSG_UPDATE_ENVIRONMENT_STATE = 12
     const val MSG_REPORT_MOTION_FINISHED = 13
     const val MSG_SET_ACTIVE_PERSONA = 14
+    const val MSG_SEND_LIFE_CAPTURE = 15
 
     // Service -> Client events
     const val MSG_EVENT_CONNECTION_STATE = 101
@@ -27,6 +28,10 @@ object ChatServiceProtocol {
 
     // Common extras
     const val EXTRA_MESSAGE_TEXT = "extra_message_text"
+    // Phase-7 life capture (photo/video/voice) payload for MSG_SEND_LIFE_CAPTURE.
+    const val EXTRA_LIFE_CAPTURE_MEDIA_PATH = "extra_life_capture_media_path"
+    const val EXTRA_LIFE_CAPTURE_MODALITY = "extra_life_capture_modality"
+    const val EXTRA_LIFE_CAPTURE_CAPTION = "extra_life_capture_caption"
     const val EXTRA_NICKNAME = "extra_nickname"
     const val EXTRA_MODEL_NAME = "extra_model_name"
     const val EXTRA_PERSONA_ID = "extra_persona_id"

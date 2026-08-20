@@ -76,7 +76,7 @@ class ReplierPromptBuilderTest {
     }
 
     @Test
-    fun `builder injects persona mood impression memory and history context`() {
+    fun `builder injects persona mood impression and history context`() {
         val messages =
                 ReplierPromptBuilder(systemPrompt = "system").buildMessages(
                         request(thinking = "answer the user"),
@@ -84,7 +84,6 @@ class ReplierPromptBuilderTest {
                                 personaPrompt = "你是小倩。",
                                 moodState = "开心",
                                 impressionText = "Alice：熟悉的用户。",
-                                memoryText = "- Alice 喜欢咖啡",
                                 historyMessages =
                                         listOf(
                                                 ReplierPromptHistoryMessage(
@@ -110,8 +109,6 @@ class ReplierPromptBuilderTest {
         assertTrue(text.contains("开心"))
         assertTrue(text.contains("[impression]"))
         assertTrue(text.contains("Alice：熟悉的用户。"))
-        assertTrue(text.contains("[memory]"))
-        assertTrue(text.contains("- Alice 喜欢咖啡"))
         assertTrue(text.contains("[history]"))
         assertTrue(text.contains("Alice: 你好"))
         assertTrue(text.contains("小倩(你): 你好，我是小倩。"))

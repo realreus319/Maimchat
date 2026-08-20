@@ -63,7 +63,6 @@ class ReplierPromptBuilder(
                 appendSection("current_time", context.currentTimeText)
                 appendSection("mood", context.moodState)
                 appendSection("impression", context.impressionText)
-                appendSection("memory", context.memoryText)
                 appendSection("history", historyText(context))
                 appendLine()
                 appendLine("[current_trigger]")
@@ -107,7 +106,6 @@ class ReplierPromptBuilder(
                         "mood_state" to (context.moodState ?: DEFAULT_MOOD_STATE),
                         "impression_text" to
                                 (context.impressionText ?: DEFAULT_IMPRESSION_TEXT),
-                        "memory_text" to context.memoryText.orEmpty(),
                         "history_text" to history,
                         "history_section" to
                                 history.takeIf { it.isNotBlank() }?.let {

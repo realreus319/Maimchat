@@ -5,8 +5,10 @@ import android.app.WallpaperManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.widget.Toast
@@ -28,10 +30,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
@@ -65,6 +69,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.chat.MotionCommand
@@ -76,6 +81,7 @@ import com.l2dchat.core.config.EditableAgentProfile
 import com.l2dchat.core.config.LocalLlmSettings
 import com.l2dchat.core.config.PersonaRegistry
 import com.l2dchat.core.config.WorkerLlmSettings
+import com.l2dchat.core.media.LifeCaptureStore
 import com.l2dchat.core.storage.ChatDatabase
 import com.l2dchat.live2d.ImprovedLive2DRenderer
 import com.l2dchat.live2d.Live2DModelLifecycleManager
@@ -298,6 +304,149 @@ fun ChatWithModelScreen(
                     }
                 }
             }
+
+    // ---- Phase-7 life capture (photo/album/video/voice) ----
+    var pendingPhotoFile by remember { mutableStateOf<File?>(null) }
+    var pendingVideoFile by remember { mutableStateOf<File?>(null) }
+    var isRecordingVoice by remember { mutableStateOf(false) }
+    var activeVoiceRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var activeVoiceFile by remember { mutableStateOf<File?>(null) }
+
+    fun stopVoiceRecording(save: Boolean) {
+        val recorder = activeVoiceRecorder
+        val file = activeVoiceFile
+        activeVoiceRecorder = null
+        activeVoiceFile = null
+        isRecordingVoice = false
+        if (recorder != null) {
+            // stop() throws RuntimeException when the recorder never actually started producing
+            // frames (e.g. stop tapped immediately); that still means "discard".
+            runCatching { recorder.stop() }
+                    .onFailure { uiLogger.warn("停止录音失败", it) }
+            recorder.release()
+        }
+        if (file == null) return
+        if (save && file.exists() && file.length() > 0L) {
+            chatManager.sendLifeCapture(file.absolutePath, "voice", inputText)
+            inputText = ""
+        } else {
+            file.delete()
+            if (save) Toast.makeText(context, "录音无效，已丢弃", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun startVoiceRecording() {
+        val file = LifeCaptureStore.newCaptureFile(context, "m4a")
+        val recorder =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context)
+                else @Suppress("DEPRECATION") MediaRecorder()
+        try {
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            recorder.setOutputFile(file.absolutePath)
+            recorder.prepare()
+            recorder.start()
+            activeVoiceRecorder = recorder
+            activeVoiceFile = file
+            isRecordingVoice = true
+        } catch (e: Exception) {
+            uiLogger.error("启动录音失败", e)
+            runCatching { recorder.release() }
+            file.delete()
+            Toast.makeText(context, "无法开始录音", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val takePictureLauncher =
+            rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+                val file = pendingPhotoFile
+                pendingPhotoFile = null
+                if (success && file != null && file.exists() && file.length() > 0L) {
+                    chatManager.sendLifeCapture(file.absolutePath, "photo", inputText)
+                    inputText = ""
+                } else {
+                    file?.delete()
+                    Toast.makeText(context, "已取消拍照", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+    fun launchTakePicture() {
+        val file = LifeCaptureStore.newCaptureFile(context, "jpg")
+        val authority = "${context.packageName}.fileprovider"
+        pendingPhotoFile = file
+        takePictureLauncher.launch(FileProvider.getUriForFile(context, authority, file))
+    }
+
+    val cameraPermissionLauncher =
+            rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+                    granted ->
+                if (granted) {
+                    launchTakePicture()
+                } else {
+                    Toast.makeText(context, "需要相机权限才能拍照", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+    val albumPickerLauncher =
+            rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                if (uri == null) return@rememberLauncherForActivityResult
+                val caption = inputText
+                scope.launch {
+                    val path =
+                            withContext(Dispatchers.IO) {
+                                LifeCaptureStore.copyIntoStore(context, uri, "jpg")
+                            }
+                    if (path != null) {
+                        chatManager.sendLifeCapture(path, "photo", caption)
+                        inputText = ""
+                    } else {
+                        Toast.makeText(context, "图片保存失败", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
+    val captureVideoLauncher =
+            rememberLauncherForActivityResult(ActivityResultContracts.CaptureVideo()) { success ->
+                val file = pendingVideoFile
+                pendingVideoFile = null
+                if (success && file != null && file.exists() && file.length() > 0L) {
+                    chatManager.sendLifeCapture(file.absolutePath, "video", inputText)
+                    inputText = ""
+                } else {
+                    file?.delete()
+                    Toast.makeText(context, "已取消录像", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+    fun launchCaptureVideo() {
+        val file = LifeCaptureStore.newCaptureFile(context, "mp4")
+        val authority = "${context.packageName}.fileprovider"
+        pendingVideoFile = file
+        captureVideoLauncher.launch(FileProvider.getUriForFile(context, authority, file))
+    }
+
+    val micPermissionLauncher =
+            rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+                    granted ->
+                if (granted) {
+                    startVoiceRecording()
+                } else {
+                    Toast.makeText(context, "需要麦克风权限才能录音", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            val recorder = activeVoiceRecorder
+            if (recorder != null) {
+                runCatching { recorder.stop() }
+                        .onFailure { uiLogger.warn("界面销毁时停止录音失败", it) }
+                recorder.release()
+                activeVoiceFile?.delete()
+            }
+        }
+    }
 
     LaunchedEffect(chatManager) {
         chatManager.errors.collect { raw ->
@@ -712,6 +861,37 @@ fun ChatWithModelScreen(
                                 inputText = ""
                             }
                         },
+                        isRecordingVoice = isRecordingVoice,
+                        onCapturePhoto = {
+                            if (ContextCompat.checkSelfPermission(
+                                            context,
+                                            android.Manifest.permission.CAMERA
+                                    ) == PackageManager.PERMISSION_GRANTED
+                            ) {
+                                launchTakePicture()
+                            } else {
+                                cameraPermissionLauncher.launch(
+                                        android.Manifest.permission.CAMERA
+                                )
+                            }
+                        },
+                        onPickAlbum = { albumPickerLauncher.launch("image/*") },
+                        onCaptureVideo = { launchCaptureVideo() },
+                        onToggleVoice = {
+                            if (isRecordingVoice) {
+                                stopVoiceRecording(save = true)
+                            } else if (ContextCompat.checkSelfPermission(
+                                            context,
+                                            android.Manifest.permission.RECORD_AUDIO
+                                    ) == PackageManager.PERMISSION_GRANTED
+                            ) {
+                                startVoiceRecording()
+                            } else {
+                                micPermissionLauncher.launch(
+                                        android.Manifest.permission.RECORD_AUDIO
+                                )
+                            }
+                        },
                         modifier =
                                 Modifier.align(Alignment.BottomCenter).onSizeChanged { coords ->
                                     val newHeight = coords.height
@@ -915,6 +1095,11 @@ private fun ChatInputBar(
         inputText: String,
         onInputChange: (String) -> Unit,
         onSend: () -> Unit,
+        isRecordingVoice: Boolean,
+        onCapturePhoto: () -> Unit,
+        onPickAlbum: () -> Unit,
+        onCaptureVideo: () -> Unit,
+        onToggleVoice: () -> Unit,
         modifier: Modifier = Modifier
 ) {
     Surface(
@@ -927,11 +1112,66 @@ private fun ChatInputBar(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.Bottom
         ) {
+            var attachExpanded by remember { mutableStateOf(false) }
+            Box {
+                IconButton(
+                        onClick = {
+                            if (isRecordingVoice) onToggleVoice() else attachExpanded = true
+                        }
+                ) {
+                    Icon(
+                            imageVector =
+                                    if (isRecordingVoice) Icons.Default.Stop
+                                    else Icons.Default.Add,
+                            contentDescription =
+                                    if (isRecordingVoice) "停止录音" else "添加附件",
+                            tint =
+                                    if (isRecordingVoice) MaterialTheme.colorScheme.error
+                                    else LocalContentColor.current
+                    )
+                }
+                DropdownMenu(
+                        expanded = attachExpanded,
+                        onDismissRequest = { attachExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                            text = { Text("拍照") },
+                            onClick = {
+                                attachExpanded = false
+                                onCapturePhoto()
+                            }
+                    )
+                    DropdownMenuItem(
+                            text = { Text("相册") },
+                            onClick = {
+                                attachExpanded = false
+                                onPickAlbum()
+                            }
+                    )
+                    DropdownMenuItem(
+                            text = { Text("视频") },
+                            onClick = {
+                                attachExpanded = false
+                                onCaptureVideo()
+                            }
+                    )
+                    DropdownMenuItem(
+                            text = { Text("语音") },
+                            onClick = {
+                                attachExpanded = false
+                                onToggleVoice()
+                            }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(4.dp))
             OutlinedTextField(
                     value = inputText,
                     onValueChange = onInputChange,
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("输入消息...") },
+                    placeholder = {
+                        Text(if (isRecordingVoice) "正在录音，点左侧停止..." else "输入消息...")
+                    },
                     maxLines = 4
             )
             Spacer(modifier = Modifier.width(8.dp))

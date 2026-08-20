@@ -18,6 +18,8 @@ import com.l2dchat.chat.ChatWebSocketManager.ChatMessage
 import com.l2dchat.chat.ChatWebSocketManager.RuntimeState
 import com.l2dchat.chat.MessageBase
 import com.l2dchat.core.config.LocalLlmSettings
+import com.l2dchat.core.config.MemSettings
+import com.l2dchat.core.config.MemSettingsStore
 import com.l2dchat.core.config.WorkerLlmSettings
 import com.l2dchat.logging.L2DLogger
 import com.l2dchat.logging.LogModule
@@ -46,6 +48,7 @@ class ChatConnectionService : Service() {
     private var lastKnownNickname: String? = null
     private var localLlmSettings = LocalLlmSettings()
     private var workerLlmSettings = WorkerLlmSettings()
+    private var memSettings = MemSettings()
     private var lastConnectionError: String? = null
 
     override fun onCreate() {
@@ -87,6 +90,8 @@ class ChatConnectionService : Service() {
         manager.setLocalLlmSettings(localLlmSettings)
         workerLlmSettings = WorkerLlmSettingsStore.read(prefs, secureStore)
         manager.setWorkerLlmSettings(workerLlmSettings)
+        memSettings = MemSettingsStore.read(prefs, SecurePreferenceMemSecretStore(secureStore))
+        manager.setMemSettings(memSettings)
         manager.startLocalRuntime()
     }
 
@@ -309,6 +314,18 @@ class ChatConnectionService : Service() {
         manager.sendUserMessage(text)
     }
 
+    private fun handleSendLifeCapture(data: Bundle) {
+        val mediaPath = data.getString(ChatServiceProtocol.EXTRA_LIFE_CAPTURE_MEDIA_PATH)?.trim()
+        if (mediaPath.isNullOrEmpty()) {
+            notifyError("生活记录媒体路径不能为空")
+            return
+        }
+        val modality = data.getString(ChatServiceProtocol.EXTRA_LIFE_CAPTURE_MODALITY).orEmpty()
+        val caption = data.getString(ChatServiceProtocol.EXTRA_LIFE_CAPTURE_CAPTION).orEmpty()
+        manager.startLocalRuntime()
+        manager.sendLifeCapture(mediaPath, modality, caption)
+    }
+
     private fun handleConfigUpdate(data: Bundle) {
         data.getString(ChatServiceProtocol.EXTRA_NICKNAME)?.let { name ->
             lastKnownNickname = name
@@ -490,6 +507,14 @@ class ChatConnectionService : Service() {
         editor.apply()
         LocalLlmSettingsStore.persist(prefs, secureStore, localLlmSettings)
         WorkerLlmSettingsStore.persist(prefs, secureStore, workerLlmSettings)
+        if (!MemSettingsStore.persist(
+                        prefs,
+                        SecurePreferenceMemSecretStore(secureStore),
+                        memSettings
+                )
+        ) {
+            logger.warn("Mem API key persistence failed; any legacy plaintext key was retained")
+        }
     }
 
     private fun Bundle.containsWorkerLlmSettings(): Boolean =
@@ -636,6 +661,8 @@ class ChatConnectionService : Service() {
                 }
                 ChatServiceProtocol.MSG_DISCONNECT -> service.manager.disconnect()
                 ChatServiceProtocol.MSG_SEND_MESSAGE -> service.handleSendMessage(msg.data)
+                ChatServiceProtocol.MSG_SEND_LIFE_CAPTURE ->
+                        service.handleSendLifeCapture(msg.data)
                 ChatServiceProtocol.MSG_UPDATE_CONFIG -> service.handleConfigUpdate(msg.data)
                 ChatServiceProtocol.MSG_START_LOCAL_RUNTIME -> {
                     service.manager.startLocalRuntime()

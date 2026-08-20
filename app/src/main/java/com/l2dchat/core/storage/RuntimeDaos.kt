@@ -8,7 +8,6 @@ import kotlinx.coroutines.flow.Flow
 import com.l2dchat.core.message.AgentConfigEntity
 import com.l2dchat.core.message.ImpressionEntity
 import com.l2dchat.core.message.MediaBlockEntity
-import com.l2dchat.core.message.MemoryEntity
 import com.l2dchat.core.message.MoodStateEntity
 import com.l2dchat.core.message.PlannerMessageEntity
 import com.l2dchat.core.message.PlannerRoundEntity
@@ -205,9 +204,6 @@ interface RuntimeStateDao {
     suspend fun upsertPromptTemplate(template: PromptTemplateEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertMemory(memory: MemoryEntity)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertImpression(impression: ImpressionEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -243,59 +239,10 @@ interface RuntimeStateDao {
     @Query("SELECT * FROM prompt_templates WHERE template_id = :templateId LIMIT 1")
     suspend fun queryPromptTemplateById(templateId: String): PromptTemplateEntity?
 
-    @Query(
-            """
-            SELECT * FROM memories
-            WHERE context_id = :contextId
-              AND agent_id = :agentId
-            ORDER BY importance DESC, updated_at_ms DESC
-            LIMIT :limit
-            """
-    )
-    suspend fun queryMemories(contextId: String, agentId: String, limit: Int): List<MemoryEntity>
-
-    @Query(
-            """
-            SELECT COUNT(*) FROM memories
-            WHERE context_id = :contextId AND agent_id = :agentId
-            """
-    )
-    suspend fun countMemories(contextId: String, agentId: String): Int
-
-    @Query(
-            """
-            SELECT * FROM memories
-            WHERE context_id = :contextId
-              AND agent_id = :agentId
-              AND content = :content
-            LIMIT 1
-            """
-    )
-    suspend fun queryMemoryByContent(
-            contextId: String,
-            agentId: String,
-            content: String
-    ): MemoryEntity?
-
-    @Query(
-            """
-            UPDATE memories
-            SET access_count = :accessCount,
-                last_access_ms = :lastAccessMillis
-            WHERE memory_id = :memoryId
-            """
-    )
-    suspend fun reinforceMemory(memoryId: String, accessCount: Int, lastAccessMillis: Long)
-
-    @Query("DELETE FROM memories WHERE memory_id = :memoryId")
-    suspend fun deleteMemory(memoryId: String)
-
-    // Unscoped persona-state wipes for "清空聊天记录" — these (memories/impressions/mood) are
+    // Unscoped persona-state wipes for "清空聊天记录" — these (impressions/mood) are
     // RE-INJECTED into the planner+replier prompts every turn, so they MUST be cleared for the context
-    // to actually be empty; the durable memory_store, the user impression/relationship summary, and
-    // the carried-over mood would otherwise survive a chat clear.
-    @Query("DELETE FROM memories") suspend fun deleteAllMemories()
-
+    // to actually be empty; the user impression/relationship summary and the carried-over mood
+    // would otherwise survive a chat clear.
     @Query("DELETE FROM impressions") suspend fun deleteAllImpressions()
 
     @Query("DELETE FROM mood_state") suspend fun deleteAllMoodState()

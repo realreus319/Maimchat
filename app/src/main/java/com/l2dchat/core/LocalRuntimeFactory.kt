@@ -125,7 +125,7 @@ object LocalRuntimeFactory {
                                                     CompositePlannerPromptContextProvider(
                                                             listOf(
                                                                     backgroundStatusProvider,
-                                                                    memoryPlannerContextProvider(
+                                                                    personaPlannerContextProvider(
                                                                             runtimeStateDaoProvider()
                                                                     )
                                                             )
@@ -135,7 +135,7 @@ object LocalRuntimeFactory {
                     )
                 },
                 decisionPlannerProcessorFactory = {
-                    val memoryProvider = memoryPlannerContextProvider(runtimeStateDaoProvider())
+                    val personaProvider = personaPlannerContextProvider(runtimeStateDaoProvider())
                     llmConfig.buildProcessor(
                             registry =
                                     LocalToolRegistryFactory.decisionRegistry(
@@ -152,7 +152,7 @@ object LocalRuntimeFactory {
                                                                     BackgroundReplierPromptContextProvider(
                                                                             taskManager
                                                                     ),
-                                                                    memoryProvider
+                                                                    personaProvider
                                                             )
                                                     )
                                     ),
@@ -189,7 +189,7 @@ object LocalRuntimeFactory {
             }
 }
 
-private fun memoryPlannerContextProvider(
+private fun personaPlannerContextProvider(
         stateDao: RuntimeStateDao?
 ): PlannerPromptContextProvider =
         stateDao?.let { RoomPlannerPromptContextProvider(it) } ?: EmptyPlannerPromptContextProvider

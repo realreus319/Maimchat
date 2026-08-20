@@ -112,27 +112,6 @@ data class ToolTaskEntity(
 )
 
 @Entity(
-        tableName = "memories",
-        indices =
-                [
-                        Index(value = ["context_id", "agent_id", "updated_at_ms"]),
-                        Index(value = ["context_id", "agent_id", "importance"])
-                ]
-)
-data class MemoryEntity(
-        @PrimaryKey @ColumnInfo(name = "memory_id") val memoryId: String,
-        @ColumnInfo(name = "context_id") val contextId: String,
-        @ColumnInfo(name = "agent_id") val agentId: String,
-        @ColumnInfo(name = "content") val content: String,
-        @ColumnInfo(name = "importance") val importance: Double,
-        @ColumnInfo(name = "category") val category: String = "general",
-        @ColumnInfo(name = "access_count") val accessCount: Int = 0,
-        @ColumnInfo(name = "last_access_ms") val lastAccessMillis: Long = 0,
-        @ColumnInfo(name = "created_at_ms") val createdAtMillis: Long,
-        @ColumnInfo(name = "updated_at_ms") val updatedAtMillis: Long
-)
-
-@Entity(
         tableName = "impressions",
         indices = [Index(value = ["context_id", "agent_id", "subject_id"], unique = true)]
 )

@@ -3,4 +3,5 @@
     <cache-path name="crop_cache" path="." />
     <files-path name="wallpaper_files" path="wallpaper/" />
     <files-path name="agent_files" path="agent_files/" />
+    <files-path name="life_capture" path="life_capture/" />
 </paths>

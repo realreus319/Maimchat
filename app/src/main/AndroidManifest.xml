@@ -10,6 +10,12 @@
          the app has no foreground Activity (wallpaper / widget chat). See BrowserOverlayHost. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Phase-7 life capture: chat-screen photo/video (camera) and voice (microphone) entries. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
     <!-- Package visibility (Android 11+) to bind the engine service by explicit component. -->
     <queries>
         <package android:name="com.l2dchat.shell" />

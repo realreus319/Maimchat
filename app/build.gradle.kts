@@ -26,6 +26,10 @@ val localProps = Properties().apply {
 }
 fun llmDefault(key: String): String = localProps.getProperty(key, "")
 
+// mem embedding provider base url is also a secret-ish default injected only in debug from
+// local.properties (key: mem.default.embeddingBaseUrl). Same mechanism as llmDefault.
+fun memDefault(key: String): String = localProps.getProperty(key, "")
+
 android {
     namespace = "com.l2dchat"
     compileSdk = 36
@@ -49,6 +53,15 @@ android {
         buildConfigField("String", "LLM_DEFAULT_REPLIER_MODEL", "\"qwen3.7-plus\"")
         buildConfigField("String", "LLM_DEFAULT_WORKER_MODEL", "\"kimi-k2.7-code\"")
         buildConfigField("boolean", "LLM_DEFAULT_PLANNER_THINKING", "true")
+
+        // mem subsystem defaults. Model ids + dimensions are NOT secret and ARE committed so every
+        // build ships with a sensible role split. The embedding base_url is blank here and injected
+        // only in the debug build type from local.properties (mem.default.embeddingBaseUrl).
+        buildConfigField("String", "MEM_DEFAULT_EXTRACTION_MODEL", "\"qwen3.7-max\"")
+        buildConfigField("String", "MEM_DEFAULT_EXTRACTION_MM_MODEL", "\"qwen3.7-plus\"")
+        buildConfigField("String", "MEM_DEFAULT_EMBEDDING_MODEL", "\"Qwen/Qwen3-Embedding-0.6B\"")
+        buildConfigField("String", "MEM_DEFAULT_EMBEDDING_BASE_URL", "\"\"")
+        buildConfigField("int", "MEM_DEFAULT_EMBEDDING_DIMENSIONS", "1024")
     }
 
     signingConfigs {
@@ -86,11 +99,14 @@ android {
             // 模型 id 与 thinking 已在 defaultConfig 硬编码（入库），此处不再覆盖。
             buildConfigField("String", "LLM_DEFAULT_BASE_URL", "\"${llmDefault("llm.default.baseUrl")}\"")
             buildConfigField("String", "LLM_DEFAULT_API_KEY", "\"${llmDefault("llm.default.apiKey")}\"")
+            // mem embedding provider default (secret-ish, debug-only, gitignored).
+            buildConfigField("String", "MEM_DEFAULT_EMBEDDING_BASE_URL", "\"${memDefault("mem.default.embeddingBaseUrl")}\"")
         }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
     kotlinOptions {
         jvmTarget = "17"
@@ -98,6 +114,14 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+    sourceSets {
+        getByName("androidTest").assets.srcDirs("$projectDir/schemas")
     }
 }
 
@@ -130,6 +154,7 @@ tasks.configureEach {
 
 dependencies {
 
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -148,6 +173,10 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
+    testImplementation(libs.androidx.room.testing)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.room.testing)

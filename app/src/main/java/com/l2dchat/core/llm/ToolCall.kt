@@ -35,7 +35,18 @@ data class LlmToolResult(
         val toolCallId: String,
         val name: String,
         val content: String,
-        val isError: Boolean = false
+        val isError: Boolean = false,
+        /**
+         * Optional multimodal content parts that accompany this tool result. When non-null and
+         * containing non-text parts (e.g. [LlmImageUrlPart]), the LLM client emits a synthetic
+         * user message carrying these parts immediately after the tool message — the OpenAI tool
+         * message wire format only supports a string `content`, so image bytes cannot ride on the
+         * tool message itself. Text-only results leave this null (the common case).
+         *
+         * Used by the host planner's `ltm_read_media` post-processing (T5): a photo result's bytes
+         * are injected as an `image_url` block so the VLM sees the picture the path points to.
+         */
+        val contentParts: List<LlmContentPart>? = null
 ) {
     init {
         require(toolCallId.isNotBlank()) { "LLM tool result id must not be blank" }

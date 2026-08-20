@@ -5,7 +5,6 @@ import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.message.AgentConfigEntity
 import com.l2dchat.core.message.ImpressionEntity
 import com.l2dchat.core.message.MediaBlockEntity
-import com.l2dchat.core.message.MemoryEntity
 import com.l2dchat.core.message.MoodStateEntity
 import com.l2dchat.core.message.PromptTemplateEntity
 import com.l2dchat.core.storage.RuntimeStateDao
@@ -20,83 +19,6 @@ import org.junit.Test
 
 class StateToolsTest {
     private val routingKey = RoutingKey(contextId = "room-a", agentId = "agent-a")
-
-    @Test
-    fun `memory tools store and search local memories`() = runBlocking {
-        val dao = FakeRuntimeStateDao()
-        val context = context()
-        val storeTool =
-                MemoryStoreTool(
-                        stateDao = dao,
-                        clockMillis = { 1_000L },
-                        memoryIdFactory = { _, _, _ -> "memory-1" }
-                )
-
-        val storeResult =
-                storeTool.execute(
-                        context,
-                        jsonObject(
-                                """{"content":"Alice likes oolong tea","category":"preference","importance":0.8}"""
-                        )
-                )
-
-        assertFalse(storeResult.isError)
-        assertEquals("Alice likes oolong tea", dao.memories.single().content)
-        assertEquals(0.8, dao.memories.single().importance, 0.0)
-        assertEquals("preference", jsonObject(storeResult.llmContent)["category"].asString)
-
-        val searchResult =
-                MemorySearchTool(dao)
-                        .execute(context, jsonObject("""{"query":"oolong","top_k":3}"""))
-        val searchJson = jsonObject(searchResult.llmContent)
-
-        assertFalse(searchResult.isError)
-        assertEquals(1, searchJson["total"].asInt)
-        assertEquals(
-                "memory-1",
-                searchJson["results"].asJsonArray[0].asJsonObject["memoryId"].asString
-        )
-    }
-
-    @Test
-    fun `memory_store dedups identical content and merges importance`() = runBlocking {
-        val dao = FakeRuntimeStateDao()
-        val context = context()
-        val store = MemoryStoreTool(stateDao = dao, clockMillis = { 1_000L })
-
-        store.execute(context, jsonObject("""{"content":"likes tea","importance":0.3}"""))
-        val second =
-                store.execute(context, jsonObject("""{"content":"likes tea","importance":0.9}"""))
-
-        // Identical content reinforces the existing row instead of inserting a duplicate.
-        assertEquals(1, dao.memories.size)
-        assertEquals(0.9, dao.memories.single().importance, 0.0)
-        assertEquals(1, dao.memories.single().accessCount)
-        assertEquals(0.9, jsonObject(second.llmContent)["importance"].asDouble, 0.0)
-    }
-
-    @Test
-    fun `memory_search reinforces recalled memories`() = runBlocking {
-        val dao = FakeRuntimeStateDao()
-        val context = context()
-        MemoryStoreTool(stateDao = dao, clockMillis = { 1_000L }, memoryIdFactory = { _, _, _ -> "m1" })
-                .execute(context, jsonObject("""{"content":"Alice likes oolong tea"}"""))
-
-        MemorySearchTool(dao, clockMillis = { 2_000L })
-                .execute(context, jsonObject("""{"query":"oolong tea"}"""))
-
-        val reinforced = dao.memories.single { it.memoryId == "m1" }
-        assertEquals(1, reinforced.accessCount)
-        assertEquals(2_000L, reinforced.lastAccessMillis)
-    }
-
-    @Test
-    fun `memory_store persists category`() = runBlocking {
-        val dao = FakeRuntimeStateDao()
-        MemoryStoreTool(stateDao = dao, clockMillis = { 1_000L })
-                .execute(context(), jsonObject("""{"content":"x","category":"fact"}"""))
-        assertEquals("fact", dao.memories.single().category)
-    }
 
     @Test
     fun `impression tools update query and list local impressions`() = runBlocking {
@@ -188,8 +110,6 @@ class StateToolsTest {
                         GetWorldStateTool.NAME,
                         LookAtTool.NAME,
                         TriggerMotionTool.NAME,
-                        MemoryStoreTool.NAME,
-                        MemorySearchTool.NAME,
                         GetUserImpressionsTool.NAME,
                         UpdateUserImpressionTool.NAME,
                         QueryImpressionTool.NAME,
@@ -218,18 +138,12 @@ class StateToolsTest {
             )
 
     private class FakeRuntimeStateDao : RuntimeStateDao {
-        val memories = mutableListOf<MemoryEntity>()
         val impressions = mutableListOf<ImpressionEntity>()
         var moodState: MoodStateEntity? = null
 
         override suspend fun upsertAgentConfig(config: AgentConfigEntity) = Unit
 
         override suspend fun upsertPromptTemplate(template: PromptTemplateEntity) = Unit
-
-        override suspend fun upsertMemory(memory: MemoryEntity) {
-            memories.removeAll { it.memoryId == memory.memoryId }
-            memories += memory
-        }
 
         override suspend fun upsertImpression(impression: ImpressionEntity) {
             impressions.removeAll {
@@ -258,51 +172,6 @@ class StateToolsTest {
 
         override suspend fun queryPromptTemplateById(templateId: String): PromptTemplateEntity? =
                 null
-
-        override suspend fun queryMemories(
-                contextId: String,
-                agentId: String,
-                limit: Int
-        ): List<MemoryEntity> =
-                memories
-                        .matchingMemoryScope(contextId, agentId)
-                        .sortedByMemoryRelevance()
-                        .take(limit)
-
-        override suspend fun countMemories(contextId: String, agentId: String): Int =
-                memories.matchingMemoryScope(contextId, agentId).size
-
-        override suspend fun queryMemoryByContent(
-                contextId: String,
-                agentId: String,
-                content: String
-        ): MemoryEntity? =
-                memories.matchingMemoryScope(contextId, agentId).firstOrNull {
-                    it.content == content
-                }
-
-        override suspend fun reinforceMemory(
-                memoryId: String,
-                accessCount: Int,
-                lastAccessMillis: Long
-        ) {
-            val index = memories.indexOfFirst { it.memoryId == memoryId }
-            if (index >= 0) {
-                memories[index] =
-                        memories[index].copy(
-                                accessCount = accessCount,
-                                lastAccessMillis = lastAccessMillis
-                        )
-            }
-        }
-
-        override suspend fun deleteMemory(memoryId: String) {
-            memories.removeAll { it.memoryId == memoryId }
-        }
-
-        override suspend fun deleteAllMemories() {
-            memories.clear()
-        }
 
         override suspend fun deleteAllImpressions() {
             impressions.clear()
@@ -347,14 +216,3 @@ class StateToolsTest {
 }
 
 private fun jsonObject(json: String) = JsonParser.parseString(json.trimIndent()).asJsonObject
-
-private fun List<MemoryEntity>.matchingMemoryScope(
-        contextId: String,
-        agentId: String
-): List<MemoryEntity> = filter { it.contextId == contextId && it.agentId == agentId }
-
-private fun List<MemoryEntity>.sortedByMemoryRelevance(): List<MemoryEntity> =
-        sortedWith(
-                compareByDescending<MemoryEntity> { it.importance }
-                        .thenByDescending { it.updatedAtMillis }
-        )

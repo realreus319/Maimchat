@@ -9,7 +9,6 @@ import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.message.AgentConfigEntity
 import com.l2dchat.core.message.ImpressionEntity
 import com.l2dchat.core.message.MediaBlockEntity
-import com.l2dchat.core.message.MemoryEntity
 import com.l2dchat.core.message.MoodStateEntity
 import com.l2dchat.core.message.PromptTemplateEntity
 import com.l2dchat.core.message.VisibleMessageRecord
@@ -89,18 +88,6 @@ class RoomReplierPromptContextProviderTest {
                                                 updatedAtMillis = 1L
                                         )
                                 ),
-                        memories =
-                                mutableListOf(
-                                        MemoryEntity(
-                                                memoryId = "mem-1",
-                                                contextId = "room-a",
-                                                agentId = "agent-a",
-                                                content = "Alice 喜欢咖啡",
-                                                importance = 0.8,
-                                                createdAtMillis = 1L,
-                                                updatedAtMillis = 1L
-                                        )
-                                ),
                         impressions =
                                 listOf(
                                         ImpressionEntity(
@@ -139,7 +126,6 @@ class RoomReplierPromptContextProviderTest {
         assertEquals("你是小倩。", context.personaPrompt)
         assertEquals("valence=0.25, arousal=0.50", context.moodState)
         assertEquals("Alice 是熟悉的用户。", context.impressionText)
-        assertEquals("- Alice 喜欢咖啡", context.memoryText)
         assertEquals("2027-06-10 12:00:00", context.currentTimeText)
         assertEquals(listOf("你好", "你好，我是小倩。"), context.historyMessages.map { it.text })
         assertFalse(context.historyMessages.first().isAssistant)
@@ -231,7 +217,6 @@ class RoomReplierPromptContextProviderTest {
     private class FakeRuntimeStateDao(
             private val agentConfig: AgentConfigEntity? = null,
             private val templates: List<PromptTemplateEntity> = emptyList(),
-            private val memories: MutableList<MemoryEntity> = mutableListOf(),
             impressions: List<ImpressionEntity> = emptyList(),
             moodState: MoodStateEntity? = null
     ) : RuntimeStateDao {
@@ -241,8 +226,6 @@ class RoomReplierPromptContextProviderTest {
         override suspend fun upsertAgentConfig(config: AgentConfigEntity) = Unit
 
         override suspend fun upsertPromptTemplate(template: PromptTemplateEntity) = Unit
-
-        override suspend fun upsertMemory(memory: MemoryEntity) = Unit
 
         override suspend fun upsertImpression(impression: ImpressionEntity) = Unit
 
@@ -272,50 +255,6 @@ class RoomReplierPromptContextProviderTest {
 
         override suspend fun queryPromptTemplateById(templateId: String): PromptTemplateEntity? =
                 templates.firstOrNull { it.templateId == templateId }
-
-        override suspend fun queryMemories(
-                contextId: String,
-                agentId: String,
-                limit: Int
-        ): List<MemoryEntity> =
-                memories
-                        .filter { it.contextId == contextId && it.agentId == agentId }
-                        .sortedWith(
-                                compareByDescending<MemoryEntity> { it.importance }
-                                        .thenByDescending { it.updatedAtMillis }
-                        )
-                        .take(limit)
-
-        override suspend fun countMemories(contextId: String, agentId: String): Int =
-                memories.count { it.contextId == contextId && it.agentId == agentId }
-
-        override suspend fun queryMemoryByContent(
-                contextId: String,
-                agentId: String,
-                content: String
-        ): MemoryEntity? =
-                memories.firstOrNull {
-                    it.contextId == contextId && it.agentId == agentId && it.content == content
-                }
-
-        override suspend fun reinforceMemory(
-                memoryId: String,
-                accessCount: Int,
-                lastAccessMillis: Long
-        ) {
-            val index = memories.indexOfFirst { it.memoryId == memoryId }
-            if (index >= 0) {
-                memories[index] = memories[index].copy(accessCount = accessCount, lastAccessMillis = lastAccessMillis)
-            }
-        }
-
-        override suspend fun deleteMemory(memoryId: String) {
-            memories.removeAll { it.memoryId == memoryId }
-        }
-
-        override suspend fun deleteAllMemories() {
-            memories.clear()
-        }
 
         override suspend fun deleteAllImpressions() {
             impressions.clear()

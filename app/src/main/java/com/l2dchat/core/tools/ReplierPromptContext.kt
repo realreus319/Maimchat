@@ -6,7 +6,6 @@ data class ReplierPromptContext(
         val personaPrompt: String? = null,
         val moodState: String? = null,
         val impressionText: String? = null,
-        val memoryText: String? = null,
         val historyMessages: List<ReplierPromptHistoryMessage> = emptyList(),
         val currentTimeText: String? = null,
         val agentDisplayName: String? = null

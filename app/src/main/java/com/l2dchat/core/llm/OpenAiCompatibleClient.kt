@@ -117,6 +117,19 @@ class OpenAiCompatibleClient(
                         "[timing] tool ${toolCall.name} took ${System.currentTimeMillis() - toolStart}ms"
                 )
                 history.add(LlmMessage.toolResult(result))
+                // T5: when a tool result carries multimodal content parts (e.g. an ltm_read_media
+                // photo whose bytes were inlined as an image_url), emit a synthetic user message
+                // carrying those parts right after the tool message — the OpenAI tool message wire
+                // format only supports a string content, so the image cannot ride on it.
+                val extraParts = result.contentParts
+                if (extraParts != null && extraParts.any { it !is LlmTextPart }) {
+                    history.add(
+                        LlmMessage(
+                            role = LlmMessageRole.USER,
+                            content = extraParts,
+                        )
+                    )
+                }
             }
         }
 

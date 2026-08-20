@@ -10,13 +10,11 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Surfaces durable Room-backed state (top memories, the user impression, current mood) into the
- * planner prompt so the decision-maker actually reasons with memory — not only the replier
- * wording stage. Memories are ordered by importance/recency (the same signal used for eviction).
+ * Surfaces durable Room-backed state (the user impression, current mood) into the planner prompt
+ * so the decision-maker actually reasons with memory — not only the replier wording stage.
  */
 class RoomPlannerPromptContextProvider(
         private val stateDao: RuntimeStateDao,
-        private val memoryLimit: Int = DEFAULT_MEMORY_LIMIT,
         private val clockMillis: () -> Long = { System.currentTimeMillis() }
 ) : PlannerPromptContextProvider {
     override suspend fun blocksFor(context: PlannerTurnContext): List<PlannerPromptContextBlock> {
@@ -33,14 +31,6 @@ class RoomPlannerPromptContextProvider(
                         name = "current_time",
                         content = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(Date(now))
                 )
-
-        val memoryText =
-                stateDao.queryMemories(contextId, agentId, memoryLimit)
-                        .mapNotNull { it.content.trim().takeIf { c -> c.isNotBlank() } }
-                        .joinToString("\n") { "- $it" }
-        if (memoryText.isNotBlank()) {
-            blocks += PlannerPromptContextBlock(name = "memory", content = memoryText)
-        }
 
         stateDao.queryImpression(contextId, agentId, CANONICAL_SUBJECT_ID)
                 ?.content
@@ -65,8 +55,4 @@ class RoomPlannerPromptContextProvider(
     }
 
     private fun Double.fmt(): String = String.format(Locale.ROOT, "%.2f", this)
-
-    companion object {
-        private const val DEFAULT_MEMORY_LIMIT = 6
-    }
 }

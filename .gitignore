@@ -164,3 +164,6 @@ docs/manual_verification/screenshots/
 
 # Local bug-feedback scratch (screenshots dropped here for debugging, not part of the app)
 bug反馈/
+
+# Local OpenCode planning artifacts
+.omo/

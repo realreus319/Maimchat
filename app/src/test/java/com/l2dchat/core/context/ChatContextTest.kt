@@ -8,7 +8,6 @@ import com.l2dchat.chat.UserInfo
 import com.l2dchat.core.message.AgentConfigEntity
 import com.l2dchat.core.message.ImpressionEntity
 import com.l2dchat.core.message.MediaBlockEntity
-import com.l2dchat.core.message.MemoryEntity
 import com.l2dchat.core.message.MoodStateEntity
 import com.l2dchat.core.message.PromptTemplateEntity
 import com.l2dchat.core.message.VisibleMessageRecord
@@ -144,7 +143,7 @@ class ChatContextTest {
     }
 
     @Test
-    fun `queries memories impressions mood and templates in routing scope`() = runBlocking {
+    fun `queries impressions mood and templates in routing scope`() = runBlocking {
         val stateDao =
                 FakeRuntimeStateDao(
                         agentConfig =
@@ -166,12 +165,6 @@ class ChatContextTest {
                                                 body = "system",
                                                 updatedAtMillis = 20L
                                         )
-                                ),
-                        memories =
-                                mutableListOf(
-                                        memory("mem-1", "room-a", "agent-a", "Alice likes coffee", 0.7),
-                                        memory("mem-2", "room-a", "agent-a", "Alice likes tea", 0.9),
-                                        memory("mem-3", "other", "agent-a", "ignore", 1.0)
                                 ),
                         impressions =
                                 listOf(
@@ -203,8 +196,6 @@ class ChatContextTest {
 
         assertEquals("Mai", context.getAgentConfig()?.displayName)
         assertEquals("system", context.getPromptTemplate("planner_system")?.body)
-        assertEquals(listOf("mem-2", "mem-1"), context.getMemories(limit = 5).map { it.memoryId })
-        assertEquals(listOf("mem-1"), context.searchMemories(" coffee ", limit = 5).map { it.memoryId })
         assertEquals("trusted user", context.getImpression("alice")?.content)
         assertEquals(listOf("imp-1"), context.getImpressions(limit = 5).map { it.impressionId })
         assertEquals(0.4, context.getMoodState()?.valence ?: 0.0, 0.0)
@@ -233,23 +224,6 @@ class ChatContextTest {
                             ),
                     messageSegment = Seg("seglist", listOf(Seg("text", text))),
                     rawMessage = null
-            )
-
-    private fun memory(
-            id: String,
-            contextId: String,
-            agentId: String,
-            content: String,
-            importance: Double
-    ): MemoryEntity =
-            MemoryEntity(
-                    memoryId = id,
-                    contextId = contextId,
-                    agentId = agentId,
-                    content = content,
-                    importance = importance,
-                    createdAtMillis = 1L,
-                    updatedAtMillis = id.takeLast(1).toLong()
             )
 
     private class FakeHistoryStore(
@@ -295,7 +269,6 @@ class ChatContextTest {
     private class FakeRuntimeStateDao(
             private val agentConfig: AgentConfigEntity? = null,
             private val templates: List<PromptTemplateEntity> = emptyList(),
-            private val memories: MutableList<MemoryEntity> = mutableListOf(),
             impressions: List<ImpressionEntity> = emptyList(),
             moodState: MoodStateEntity? = null
     ) : RuntimeStateDao {
@@ -305,8 +278,6 @@ class ChatContextTest {
         override suspend fun upsertAgentConfig(config: AgentConfigEntity) = Unit
 
         override suspend fun upsertPromptTemplate(template: PromptTemplateEntity) = Unit
-
-        override suspend fun upsertMemory(memory: MemoryEntity) = Unit
 
         override suspend fun upsertImpression(impression: ImpressionEntity) = Unit
 
@@ -328,47 +299,6 @@ class ChatContextTest {
 
         override suspend fun queryPromptTemplateById(templateId: String): PromptTemplateEntity? =
                 templates.firstOrNull { it.templateId == templateId }
-
-        override suspend fun queryMemories(
-                contextId: String,
-                agentId: String,
-                limit: Int
-        ): List<MemoryEntity> =
-                memories
-                        .filter { it.contextId == contextId && it.agentId == agentId }
-                        .sortedByMemoryRelevance()
-                        .take(limit)
-
-        override suspend fun countMemories(contextId: String, agentId: String): Int =
-                memories.count { it.contextId == contextId && it.agentId == agentId }
-
-        override suspend fun queryMemoryByContent(
-                contextId: String,
-                agentId: String,
-                content: String
-        ): MemoryEntity? =
-                memories.firstOrNull {
-                    it.contextId == contextId && it.agentId == agentId && it.content == content
-                }
-
-        override suspend fun reinforceMemory(
-                memoryId: String,
-                accessCount: Int,
-                lastAccessMillis: Long
-        ) {
-            val index = memories.indexOfFirst { it.memoryId == memoryId }
-            if (index >= 0) {
-                memories[index] = memories[index].copy(accessCount = accessCount, lastAccessMillis = lastAccessMillis)
-            }
-        }
-
-        override suspend fun deleteMemory(memoryId: String) {
-            memories.removeAll { it.memoryId == memoryId }
-        }
-
-        override suspend fun deleteAllMemories() {
-            memories.clear()
-        }
 
         override suspend fun deleteAllImpressions() {
             impressions.clear()
@@ -411,9 +341,3 @@ class ChatContextTest {
                 )
     }
 }
-
-private fun List<MemoryEntity>.sortedByMemoryRelevance(): List<MemoryEntity> =
-        sortedWith(
-                compareByDescending<MemoryEntity> { it.importance }
-                        .thenByDescending { it.updatedAtMillis }
-        )

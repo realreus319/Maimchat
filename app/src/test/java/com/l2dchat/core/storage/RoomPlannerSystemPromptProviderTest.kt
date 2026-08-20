@@ -4,7 +4,6 @@ import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.message.AgentConfigEntity
 import com.l2dchat.core.message.ImpressionEntity
 import com.l2dchat.core.message.MediaBlockEntity
-import com.l2dchat.core.message.MemoryEntity
 import com.l2dchat.core.message.MoodStateEntity
 import com.l2dchat.core.message.PromptTemplateEntity
 import com.l2dchat.core.reply.PlannerTurnContext
@@ -136,8 +135,6 @@ class RoomPlannerSystemPromptProviderTest {
 
         override suspend fun upsertPromptTemplate(template: PromptTemplateEntity) = Unit
 
-        override suspend fun upsertMemory(memory: MemoryEntity) = Unit
-
         override suspend fun upsertImpression(impression: ImpressionEntity) = Unit
 
         override suspend fun upsertMoodState(moodState: MoodStateEntity) = Unit
@@ -165,30 +162,6 @@ class RoomPlannerSystemPromptProviderTest {
 
         override suspend fun queryPromptTemplateById(templateId: String): PromptTemplateEntity? =
                 templates.firstOrNull { it.templateId == templateId }
-
-        override suspend fun queryMemories(
-                contextId: String,
-                agentId: String,
-                limit: Int
-        ): List<MemoryEntity> = emptyList()
-
-        override suspend fun countMemories(contextId: String, agentId: String): Int = 0
-
-        override suspend fun queryMemoryByContent(
-                contextId: String,
-                agentId: String,
-                content: String
-        ): MemoryEntity? = null
-
-        override suspend fun reinforceMemory(
-                memoryId: String,
-                accessCount: Int,
-                lastAccessMillis: Long
-        ) = Unit
-
-        override suspend fun deleteMemory(memoryId: String) = Unit
-
-        override suspend fun deleteAllMemories() = Unit
 
         override suspend fun deleteAllImpressions() = Unit
 

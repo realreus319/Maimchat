@@ -4,6 +4,8 @@
 > 范围：`app/src/main/java/com/l2dchat/core/**` 及其在 `chat/`、`wallpaper/`、`ui/` 的接线。
 > 已修复项仅 1 个（OkHttp read-timeout，见 F0）；其余均为**未修复**现状声明。
 
+> **更新（2026-08）**：下方 D-MEM-2/3/6/7/8/9 所述 `memory_store`/`memory_search` 工具及 `memories` 表已在 mem Kotlin 移植（阶段 0-9）中**整体移除**，由 `core/mem/` 包下的 `ltm_*` 工具面（`ltm_search`、`ltm_expand`、`ltm_read_media`、`ltm_store`、`ltm_ask`）及 Room `mem_*` 四表替代。D-MEM-1/4/5（impression/mood）仍由原 `StateTools` 路径承载，不在本次移植范围内。
+
 ## 0bis. 已修复（2026-06-18，本轮）
 
 下列缺陷已实修并通过单测（170 项全绿，新增 4 项）+ 真机复测（compat/native 两模式）：

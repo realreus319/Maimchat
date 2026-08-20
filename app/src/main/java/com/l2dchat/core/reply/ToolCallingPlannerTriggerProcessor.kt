@@ -1,9 +1,16 @@
 package com.l2dchat.core.reply
 
+import com.google.gson.Gson
+import com.google.gson.JsonParser
 import com.l2dchat.core.llm.LlmClient
+import com.l2dchat.core.llm.LlmContentPart
 import com.l2dchat.core.llm.LlmGenerationConfig
+import com.l2dchat.core.llm.LlmImageUrlPart
+import com.l2dchat.core.llm.LlmTextPart
 import com.l2dchat.core.llm.LlmToolCall
 import com.l2dchat.core.llm.LlmToolExecutor
+import com.l2dchat.core.llm.LlmToolResult
+import com.l2dchat.core.mem.Multimodal
 import com.l2dchat.core.tools.ReplierTool
 import com.l2dchat.core.tools.ToolExecutionContext
 import com.l2dchat.core.tools.ToolExecutionMode
@@ -17,7 +24,8 @@ class ToolCallingPlannerTriggerProcessor(
         private val promptBuilder: PlannerPromptBuilder = PlannerPromptBuilder(),
         private val systemPromptProvider: PlannerSystemPromptProvider =
                 EmptyPlannerSystemPromptProvider,
-        private val toolMode: ToolExecutionMode = ToolExecutionMode.NORMAL
+        private val toolMode: ToolExecutionMode = ToolExecutionMode.NORMAL,
+        private val mediaReader: LtmMediaReader = LtmMediaReader.DEFAULT,
 ) : PlannerTriggerProcessor {
     init {
         require(toolRegistry.definitionsFor(toolMode).isNotEmpty()) {
@@ -57,7 +65,7 @@ class ToolCallingPlannerTriggerProcessor(
                                 val sendResult = context.sendReply(execution.result.replyText)
                                 replySent = replySent || sendResult.sent
                             }
-                            execution.toLlmToolResult()
+                            execution.toLlmToolResult().withMediaInjection(toolCall, mediaReader)
                         }
         )
 
@@ -126,3 +134,48 @@ class ToolCallingPlannerTriggerProcessor(
         private const val REPLIER_FORCE_ATTEMPTS = 2
     }
 }
+
+/**
+ * Reads a media file's bytes as a base64 data URL for VLM injection (T5).
+ *
+ * The default implementation delegates to [Multimodal.dataUrl], which enforces the
+ * [Multimodal.MAX_IMAGE_BYTES] guard and infers the mime from the extension. Tests
+ * inject a fake to avoid touching the filesystem.
+ */
+fun interface LtmMediaReader {
+    fun readDataUrl(mediaPath: String): String
+
+    companion object {
+        val DEFAULT: LtmMediaReader = LtmMediaReader { path -> Multimodal.dataUrl(path) }
+    }
+}
+
+/**
+ * T5 host-side post-processing: when this is an `ltm_read_media` result for a photo (modality ==
+ * "photo", no error, media_path present), read the file's bytes and attach them as an
+ * `image_url` content part so the VLM sees the picture on its next turn. Video/voice results and
+ * error results pass through unchanged (a VLM cannot consume video/voice as an image).
+ *
+ * The payload shape (`media_path`/`modality`/`captured_at`/`error`) is NOT modified — this is a
+ * purely additive, host-side injection layered on top of the Python-faithful tool result.
+ */
+private fun LlmToolResult.withMediaInjection(
+        toolCall: LlmToolCall,
+        mediaReader: LtmMediaReader,
+): LlmToolResult {
+    if (isError || name != LTM_READ_MEDIA_TOOL) return this
+    val parsed = runCatching { JsonParser.parseString(content).asJsonObject }.getOrNull() ?: return this
+    if (parsed.get("error")?.takeIf { !it.isJsonNull } != null) return this
+    val modality = parsed.get("modality")?.takeIf { !it.isJsonNull }?.asString
+    if (modality != "photo") return this
+    val mediaPath = parsed.get("media_path")?.takeIf { !it.isJsonNull }?.asString
+    if (mediaPath.isNullOrBlank()) return this
+    val dataUrl = runCatching { mediaReader.readDataUrl(mediaPath) }.getOrNull() ?: return this
+    val parts: List<LlmContentPart> = listOf(
+            LlmTextPart("[media injected: $mediaPath]"),
+            LlmImageUrlPart(url = dataUrl),
+    )
+    return copy(contentParts = parts)
+}
+
+private const val LTM_READ_MEDIA_TOOL: String = "ltm_read_media"

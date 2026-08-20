@@ -11,13 +11,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Instrumented coverage for [ChatDatabase.MIGRATION_2_3]: the recreate-table migration that drops
- * the remote-only `platform` and `receiver_user_id` columns (and the latter's index) from
- * `standard_messages` while preserving the surviving rows and columns.
+ * Instrumented coverage for [ChatDatabase]'s hand-written migrations. These tests create real
+ * databases at the old versions, execute the production migration objects, and ask Room to
+ * validate the resulting schema against the exported JSON.
  *
- * [MigrationTestHelper.runMigrationsAndValidate] validates the post-migration schema against the
- * exported 3.json (identityHash + columns + indices), which is the blind spot a hand-written
- * recreate-table migration is most likely to drift from.
+ * [MigrationTestHelper.runMigrationsAndValidate] validates each post-migration schema against its
+ * exported JSON (identity hash + columns + indices), which is the blind spot hand-written DDL is
+ * most likely to drift from.
  *
  * NOTE: This is an instrumented test and needs a connected device/emulator. Run via
  *   ./gradlew :app:connectedDebugAndroidTest
@@ -92,7 +92,50 @@ class ChatDatabaseMigrationTest {
         assertTrue(columns.contains("sender_user_id"))
     }
 
+    @Test
+    fun migrate4To5_dropsLegacyMemories_andCreatesMemGraphTables() {
+        helper.createDatabase(MEM_TEST_DB, 4).use { db ->
+            db.execSQL(
+                    "INSERT INTO memories (" +
+                            "memory_id, context_id, agent_id, content, importance, category, " +
+                            "access_count, last_access_ms, created_at_ms, updated_at_ms) " +
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    arrayOf<Any?>(
+                            "legacy-memory",
+                            "room-a",
+                            "hiyori",
+                            "legacy content",
+                            0.8,
+                            "general",
+                            2,
+                            1234L,
+                            1000L,
+                            1200L
+                    )
+            )
+        }
+
+        val db =
+                helper.runMigrationsAndValidate(
+                        MEM_TEST_DB,
+                        5,
+                        true,
+                        ChatDatabase.MIGRATION_4_5
+                )
+
+        val tables = mutableSetOf<String>()
+        db.query("SELECT name FROM sqlite_master WHERE type = 'table'").use { cursor ->
+            while (cursor.moveToNext()) tables.add(cursor.getString(0))
+        }
+
+        assertFalse("legacy memories table must be dropped", tables.contains("memories"))
+        listOf("mem_nodes", "mem_event_entity_links", "mem_vectors", "mem_receipts").forEach {
+            assertTrue("$it must exist after migration", tables.contains(it))
+        }
+    }
+
     companion object {
         private const val TEST_DB = "chat-database-migration-test"
+        private const val MEM_TEST_DB = "chat-database-mem-migration-test"
     }
 }

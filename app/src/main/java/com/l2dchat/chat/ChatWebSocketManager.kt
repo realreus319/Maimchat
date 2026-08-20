@@ -9,13 +9,20 @@ import com.l2dchat.chat.transport.LocalTransport
 import com.l2dchat.core.config.AgentLlmSettingsOverride
 import com.l2dchat.core.config.DefaultAgentProfileSeeder
 import com.l2dchat.core.config.LocalLlmSettings
+import com.l2dchat.core.config.MemSettings
 import com.l2dchat.core.config.PersonaRegistry
 import com.l2dchat.core.context.RoutingKey
 import com.l2dchat.core.environment.EnvironmentTriggerSubmission
-import com.l2dchat.worker.WorkerResultRecovery
 import com.l2dchat.core.message.AgentConfigEntity
+import com.l2dchat.core.mem.BatchSource
+import com.l2dchat.core.mem.ExtractionPipeline
+import com.l2dchat.core.mem.Hashing
+import com.l2dchat.core.mem.ImageAttachment
+import com.l2dchat.core.mem.IngestBatch
+import com.l2dchat.core.mem.MemRuntimeFactory
 import com.l2dchat.core.message.RuntimeMessageMapper
 import com.l2dchat.core.message.VisibleMessageRecord
+import com.l2dchat.worker.WorkerResultRecovery
 import com.l2dchat.core.perception.PerceptionStore
 import com.l2dchat.core.reply.NoopPlannerSessionStore
 import com.l2dchat.core.reply.PlannerSessionStore
@@ -66,11 +73,43 @@ class ChatWebSocketManager {
         // Reply reconcile/poll backstop cadence + look-back window.
         private const val REPLY_RECONCILE_INTERVAL_MS = 5_000L
         private const val REPLY_RECONCILE_WINDOW_MS = 15 * 60_000L
+        // Compact→ingest sliding window (T1): once _standardMessages exceeds COMPACT_WINDOW_MAX,
+        // the newly-accumulated span beyond the last-ingested watermark is handed to the mem
+        // extraction pipeline as a chat_compact batch. Non-destructive: messages stay in the
+        // visible UI list; only the watermark advances. Idempotent via a content-hashed batchId.
+        internal const val COMPACT_WINDOW_MAX = 40
+        internal const val COMPACT_WINDOW_KEEP = 20
+        /**
+         * Minimum pending span (uptoIdx - fromIdx) before a chat_compact ingest fires.
+         *
+         * Without this guard, once caught up every new message past the threshold triggers a
+         * 1-message extraction batch — up to 12 LLM turns per chat message, contextless and
+         * expensive. Batching at MIN_BATCH amortizes the extraction cost (~one agent loop per
+         * 10 messages) while keeping backlog latency bounded (≤10 messages behind steady state).
+         * The watermark does NOT advance while the span is below MIN_BATCH, so the backlog
+         * accumulates until the next trigger crosses the threshold.
+         */
+        internal const val COMPACT_MIN_BATCH = 10
+        /**
+         * Hard cap on a single chat_compact ingest span. If the pending backlog ever exceeds
+         * this (e.g. a long offline period after restart), only the oldest [COMPACT_SPAN_MAX]
+         * messages are ingested in one batch and the watermark advances by that much; subsequent
+         * triggers catch up incrementally. Prevents any giant single batch (token explosion /
+         * context-overflow silent loss) even in edge paths.
+         */
+        internal const val COMPACT_SPAN_MAX = 40
     }
     private val logger = L2DLogger.module(LogModule.CHAT)
     private val gson = Gson()
     private var localLlmSettings = LocalLlmSettings()
+    private var memSettings = MemSettings()
     private var workerLlmSettings = com.l2dchat.core.config.WorkerLlmSettings()
+    // Mem runtime handles — rebuilt on every runtime rebuild (buildExtraNormalTools), so every
+    // read must be null-safe `?.`. Null when mem is disabled OR before the first runtime build.
+    // The compact→ingest and life_capture→ingest triggers are no-ops while these are null.
+    @Volatile private var memPipeline: ExtractionPipeline? = null
+    @Volatile private var memStore: com.l2dchat.core.mem.MemStore? = null
+    @Volatile private var memRetrieval: com.l2dchat.core.mem.MemRetrieval? = null
     private val messageHandler = Live2DChatMessageHandler()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val _runtimeState = MutableStateFlow(RuntimeState.STOPPED)
@@ -146,19 +185,9 @@ class ChatWebSocketManager {
                     motionController = localMotionController,
                     runtimeStateDaoProvider = { localRuntimeStateDaoForTools() },
                     // Give the planner an on-device worker sub-agent (proot/Alpine/python Claude-Code
-                    // port in the headless engine pkg). Context + creds resolve lazily at call time.
-                    extraNormalTools =
-                            listOf(
-                                    com.l2dchat.core.tools.AskAiAgentTool(
-                                            contextProvider = { appContext },
-                                            // Detached dispatch: hand the task to the background worker
-                                            // manager and return at once; the turn ends, the worker runs
-                                            // off-turn, its result returns later as a SYS trigger.
-                                            dispatch = { task, goal, origin ->
-                                                backgroundWorkerManager.dispatch(task, goal, origin)
-                                            },
-                                    )
-                            ),
+                    // port in the headless engine pkg). Context + creds resolve lazily at call time,
+                    // plus the ltm_* memory tools when mem is enabled via MemSettings.
+                    extraNormalTools = buildExtraNormalTools(),
                     // Every planner turn sees the live goals+status of this conversation's detached
                     // background workers, so it always knows what's running off-turn.
                     backgroundStatusProvider =
@@ -166,6 +195,56 @@ class ChatWebSocketManager {
                                 backgroundWorkerManager.statusBlock(cid, aid)
                             },
             )
+
+    /**
+     * Assemble the extra normal tools handed to the planner: the on-device
+     * worker sub-agent ([com.l2dchat.core.tools.AskAiAgentTool]) plus the ltm_*
+     * memory tools when mem is enabled via [memSettings].
+     *
+     * The mem tools are rebuilt on every runtime rebuild (which happens when
+     * [setMemSettings] changes the config) so a settings update is picked up
+     * without restarting the app. When mem is disabled,
+     * [MemRuntimeFactory.createLtmTools] returns an empty tool list and no mem
+     * object is constructed — zero behavior change.
+     */
+    private fun buildExtraNormalTools(): List<com.l2dchat.core.tools.Tool> {
+        val tools: MutableList<com.l2dchat.core.tools.Tool> =
+                mutableListOf(
+                        com.l2dchat.core.tools.AskAiAgentTool(
+                                contextProvider = { appContext },
+                                // Detached dispatch: hand the task to the background worker
+                                // manager and return at once; the turn ends, the worker runs
+                                // off-turn, its result returns later as a SYS trigger.
+                                dispatch = { task, goal, origin ->
+                                    backgroundWorkerManager.dispatch(task, goal, origin)
+                                },
+                        )
+                )
+        val context = appContext
+        if (context != null) {
+            val database = ChatDatabase.getInstance(context.applicationContext)
+            val memRuntime =
+                    MemRuntimeFactory.createLtmTools(
+                        scope = scope,
+                        memSettings = memSettings,
+                        localLlmSettings = localLlmSettings,
+                        database = database,
+                        gson = gson,
+                    )
+            tools.addAll(memRuntime.tools)
+            // Capture the handles for the compact→ingest and life_capture→ingest triggers.
+            // Overwrite on every rebuild so a settings change is picked up; readers use null-safe `?.`.
+            memPipeline = memRuntime.pipeline
+            memStore = memRuntime.store
+            memRetrieval = memRuntime.retrieval
+        } else {
+            memPipeline = null
+            memStore = null
+            memRetrieval = null
+        }
+        return tools
+    }
+
     /** Worker LLM creds: its own config if set, else fall back to the chat LLM planner config. */
     private fun workerCredsOrNull(): com.l2dchat.worker.WorkerCreds? {
         val w = workerLlmSettings
@@ -387,6 +466,13 @@ class ChatWebSocketManager {
     }
     private val _standardMessages = MutableStateFlow<List<MessageBase>>(emptyList())
     val standardMessages: StateFlow<List<MessageBase>> = _standardMessages.asStateFlow()
+    // Compact→ingest high-watermark (T1): index (exclusive) into _standardMessages up to which the
+    // mem pipeline has already ingested. Non-destructive: _standardMessages is never truncated; the
+    // watermark just tracks how far the ingester has consumed. Persisted per contextId in
+    // SharedPreferences (see saveCompactWatermark/readCompactWatermark) so a process restart does
+    // not re-ingest a giant span under a NEW batchId (token explosion / mention_count inflation).
+    @Volatile private var compactIngestedUpTo: Int = 0
+    private val compactIngestGate = CompactIngestGate()
     // True while the runtime is actively processing a turn (planner/replier running). Drives the
     // "thinking" hint in the UI. Tracked with a counter so overlapping turns balance correctly.
     private val _processing = MutableStateFlow(false)
@@ -605,6 +691,11 @@ class ChatWebSocketManager {
         localLlmSettings = settings
         localTransport.rebuildRuntime("本地 LLM 配置更新")
     }
+    fun setMemSettings(settings: MemSettings) {
+        if (memSettings == settings) return
+        memSettings = settings
+        localTransport.rebuildRuntime("mem 配置更新")
+    }
     /** Worker (cc_research) config — read lazily by the AskAiAgentTool credsProvider at task time. */
     fun setWorkerLlmSettings(settings: com.l2dchat.core.config.WorkerLlmSettings) {
         workerLlmSettings = settings
@@ -725,6 +816,295 @@ class ChatWebSocketManager {
         )
         sendStandardMessage(message)
     }
+
+    /**
+     * Phase-7 life-capture entry: a user-captured photo/video/voice clip is emitted as a standard
+     * chat message — photos carry an image seg (the inbound pipeline maps image-type segs), while
+     * video/voice use a text placeholder plus life_capture metadata in additionalConfig, since no
+     * new Seg types are introduced. The clip is then offered to the mem ingest hook.
+     */
+    fun sendLifeCapture(mediaPath: String, modality: String, caption: String) {
+        val trimmedCaption = caption.trim()
+        val additional =
+                mapOf(
+                        "life_capture" to "true",
+                        "modality" to modality,
+                        "media_path" to mediaPath
+                )
+        val displayText: String
+        val segments: List<Seg>
+        if (modality == "photo") {
+            segments = buildList {
+                add(Seg("image", mediaPath))
+                if (trimmedCaption.isNotEmpty()) add(Seg("text", trimmedCaption))
+            }
+            displayText =
+                    if (trimmedCaption.isNotEmpty()) "[图片] $trimmedCaption" else "[图片]"
+        } else {
+            val label = if (modality == "video") "[视频]" else "[语音]"
+            displayText = if (trimmedCaption.isNotEmpty()) "$label $trimmedCaption" else label
+            segments = listOf(Seg("text", displayText))
+        }
+        val raw = if (modality == "photo") trimmedCaption else displayText
+        val message = buildStandardMessage(segments, "chat", raw = raw, additional = additional)
+        addMessage(
+                ChatMessage(
+                        id = message.messageInfo.messageId!!,
+                        content = displayText,
+                        isFromUser = true
+                )
+        )
+        sendStandardMessage(message)
+        maybeIngestLifeCapture(mediaPath, modality, trimmedCaption)
+    }
+
+    /**
+     * Compact→ingest sliding-window trigger (T1, deliverable ①).
+     *
+     * Non-destructive: never truncates [_standardMessages] (it backs the visible chat UI). Instead
+     * tracks [compactIngestedUpTo] — once the list grows past [COMPACT_WINDOW_MAX], the
+     * newly-accumulated span (watermark .. size-keep) is handed to the mem extraction pipeline as
+     * a `chat_compact` batch, then the watermark advances past it.
+     *
+     * Batching economics:
+     * - The pending span must reach [COMPACT_MIN_BATCH] before an ingest fires; below that the
+     *   watermark stays put and the backlog accumulates (avoids a 1-message extraction batch per
+     *   chat message in steady state).
+     * - A single ingest never exceeds [COMPACT_SPAN_MAX] messages; if the backlog is larger, only
+     *   the oldest [COMPACT_SPAN_MAX] are ingested and the watermark advances by that much, so
+     *   subsequent triggers catch up incrementally (no giant batch / token explosion).
+     *
+     * Idempotent: the batchId is derived from the span's content hash, so a reboot re-ingest of the
+     * same span is a no-op (the pipeline's receipt table short-circuits it). The watermark itself
+     * is persisted per contextId (see [saveCompactWatermark]) so a restart does not reset it to 0
+     * and re-ingest a giant span under a NEW batchId. Fire-and-forget on Dispatchers.IO; a failed
+     * receipt leaves the watermark unchanged so a later message can retry the span. Ingest MUST
+     * NEVER break the message flow.
+     */
+    @Synchronized
+    private fun maybeIngestCompactWindow() {
+        val pipeline = memPipeline ?: return
+        val messages = _standardMessages.value
+        val size = messages.size
+        if (size <= COMPACT_WINDOW_MAX) return
+        val fromIdx = compactIngestedUpTo
+        // Ingest the newly-accumulated span, keeping the most recent [COMPACT_WINDOW_KEEP] in the
+        // window (they will be ingested later once they age past the keep edge).
+        val uptoIdx = size - COMPACT_WINDOW_KEEP
+        if (uptoIdx <= fromIdx) return
+        // MIN_BATCH guard: in steady state (caught up) each new message would otherwise trigger a
+        // 1-message extraction batch. Wait for a [COMPACT_MIN_BATCH]-sized backlog before firing.
+        val pendingSpan = uptoIdx - fromIdx
+        if (pendingSpan < COMPACT_MIN_BATCH) return
+        // SPAN_MAX clamp: never ingest more than [COMPACT_SPAN_MAX] in one batch. If the backlog is
+        // larger, ingest the oldest chunk now and let the next trigger(s) catch up incrementally.
+        val ingestUpto = minOf(uptoIdx, fromIdx + COMPACT_SPAN_MAX)
+        val span = messages.subList(fromIdx, ingestUpto)
+        if (span.isEmpty()) return
+        val modelKey = activeModelKey
+        val contextId = if (modelKey != null) historyContextId(modelKey) else "unknown"
+        val text = assembleCompactText(span, modelKey)
+        if (text.isBlank()) {
+            // Nothing digestible in this span (e.g. all motion messages); advance the watermark
+            // so we don't re-scan it forever.
+            advanceCompactWatermark(ingestUpto, modelKey)
+            return
+        }
+        val lastMessage = span.last()
+        val timeEpoch = (fallbackTimestampMillis(lastMessage) / 1000L)
+        val lastMessageId = lastMessage.messageInfo.messageId ?: "msg$ingestUpto"
+        val batchId = "compact_${contextId}_${Hashing.shortHash(text)}"
+        val batch = IngestBatch(
+            batchId = batchId,
+            source = BatchSource.CHAT_COMPACT,
+            text = text,
+            timeAnchor = timeEpoch,
+            mentionTime = timeEpoch,
+            metadata = mapOf(
+                "source" to BatchSource.CHAT_COMPACT.wireValue,
+                "context_id" to contextId,
+                "upto_message_id" to lastMessageId,
+            ),
+        )
+        // Keep the watermark unchanged until the pipeline reports DONE. The gate prevents
+        // overlapping message callbacks from scheduling the same span while IO is in flight.
+        val gateToken = compactIngestGate.tryStart() ?: return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val receipt = pipeline.ingest(batch)
+                synchronized(this@ChatWebSocketManager) {
+                    val mayAdvance = compactIngestGate.finish(gateToken, receipt.status)
+                    if (mayAdvance) {
+                        if (activeModelKey == modelKey) {
+                            advanceCompactWatermark(ingestUpto, modelKey)
+                        } else {
+                            // The user switched personas while this batch was in flight. Commit
+                            // only that persona's persisted watermark; do not overwrite the active
+                            // one.
+                            val ctx = appContext
+                            if (modelKey != null && ctx != null) {
+                                saveCompactWatermark(ctx, modelKey, ingestUpto)
+                            }
+                        }
+                    } else {
+                        logger.warn(
+                            "mem compact ingest failed (batchId=$batchId): ${receipt.error ?: "unknown error"}"
+                        )
+                    }
+
+                    // A successful chunk may leave more backlog. A persona switch may also have
+                    // accumulated an independent backlog while this gate was occupied.
+                    if (mayAdvance || activeModelKey != modelKey) {
+                        maybeIngestCompactWindow()
+                    }
+                }
+            } finally {
+                // ExtractionPipeline rethrows coroutine cancellation. Always release the gate so
+                // a surviving manager scope cannot remain permanently blocked. The acquisition
+                // token prevents this cleanup from releasing a newer ingest.
+                compactIngestGate.abort(gateToken)
+            }
+        }
+    }
+
+    /**
+     * Advance [compactIngestedUpTo] to [value] and persist it per contextId.
+     * Caller MUST hold the instance lock (this method is called only from `@Synchronized` contexts).
+     */
+    private fun advanceCompactWatermark(value: Int, modelKey: String?) {
+        compactIngestedUpTo = value
+        val ctx = appContext
+        if (modelKey != null && ctx != null) {
+            saveCompactWatermark(ctx, modelKey, value)
+        }
+    }
+
+    /**
+     * Reset [compactIngestedUpTo] to 0 and clear the persisted value per contextId.
+     * Caller MUST hold the instance lock (this method is called only from `@Synchronized` contexts).
+     */
+    private fun resetCompactWatermarkLocked() {
+        compactIngestedUpTo = 0
+        val key = activeModelKey
+        val ctx = appContext
+        if (key != null && ctx != null) {
+            clearCompactWatermark(ctx, key)
+        }
+    }
+
+    /**
+     * Persist the compact watermark per contextId. Keyed by `historyContextId(modelKey)` so
+     * multiple personas do not collide. Uses the same SharedPreferences file as saveHistory.
+     */
+    private fun saveCompactWatermark(context: Context, modelKey: String, value: Int) {
+        historyPreferences(context)
+            .edit()
+            .putInt(compactWatermarkKey(modelKey), value)
+            .apply()
+    }
+
+    /** Read and clamp the persisted watermark to `[0, clamp]`; returns 0 if unset. */
+    private fun readCompactWatermark(context: Context, modelKey: String, clamp: Int): Int {
+        val raw = historyPreferences(context).getInt(compactWatermarkKey(modelKey), 0)
+        return raw.coerceIn(0, clamp)
+    }
+
+    /** Remove the persisted watermark for [modelKey] (used on clear). */
+    private fun clearCompactWatermark(context: Context, modelKey: String) {
+        historyPreferences(context)
+            .edit()
+            .remove(compactWatermarkKey(modelKey))
+            .apply()
+    }
+
+    private fun compactWatermarkKey(modelKey: String): String =
+        "compact_watermark_" + historyContextId(modelKey)
+
+    /**
+     * Assemble the chat_compact batch text per the [compactPlannerContext] pattern:
+     * `[HH:MM speaker]：text` lines, oldest→newest, each truncated to 400 chars.
+     */
+    private fun assembleCompactText(span: List<MessageBase>, modelKey: String?): String =
+        span.mapNotNull { m ->
+            val raw = m.rawMessage?.trim()?.takeIf { it.isNotBlank() }
+                ?: m.messageSegment.extractText()?.trim()?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val who = if (isAssistantMessage(m, modelKey)) "助手" else "用户"
+            val hhmm = formatCompactTime(m)
+            "[$hhmm $who]：${raw.take(400)}"
+        }.joinToString("\n")
+
+    private fun Seg.extractText(): String? =
+        when (type) {
+            "seglist" -> {
+                @Suppress("UNCHECKED_CAST")
+                (data as? List<Seg>)?.joinToString(separator = "") { it.extractText() ?: "" }
+                    ?.takeIf { it.isNotBlank() }
+            }
+            "text" -> data?.toString()?.takeIf { it.isNotBlank() }
+            else -> null
+        }
+
+    private fun isAssistantMessage(m: MessageBase, modelKey: String?): Boolean {
+        // Assistant messages carry the model key as the sender userId (see buildStandardMessage).
+        val senderId = m.messageInfo.senderInfo?.userInfo?.userId
+        return if (modelKey != null) senderId == modelKey else false
+    }
+
+    private fun formatCompactTime(m: MessageBase): String {
+        val epoch = (fallbackTimestampMillis(m) / 1000L)
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = epoch * 1000L }
+        return "%02d:%02d".format(cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE))
+    }
+
+    /**
+     * life_capture ingest trigger (T1, deliverables ②③).
+     *
+     * Builds an [IngestBatch] per the Python life_capture contract:
+     * - source = LIFE_CAPTURE
+     * - photo → images=[ImageAttachment(path=mediaPath)]; text = caption or "[图片]"
+     * - video/voice → no image bytes (no transcription exists on host); text = caption or "[视频]"/"[语音]"
+     * - metadata carries modality, media_path, captured_at (epoch seconds) — the extraction agent
+     *   uses these to fill the life_capture node's metadata fields verbatim.
+     *
+     * Idempotent via batchId = "life_${modality}_${shortHash(mediaPath)}". Fire-and-forget on
+     * Dispatchers.IO; failures are logged and swallowed.
+     */
+    private fun maybeIngestLifeCapture(mediaPath: String, modality: String, caption: String) {
+        val pipeline = memPipeline ?: return
+        val trimmedCaption = caption.trim()
+        val nowEpoch = System.currentTimeMillis() / 1000L
+        val (text, images) = when (modality) {
+            "photo" ->
+                (trimmedCaption.ifBlank { "[图片]" }) to
+                    listOf(ImageAttachment(path = mediaPath, placeholder = "[图片]"))
+            "video" ->
+                (trimmedCaption.ifBlank { "[视频]" }) to emptyList<ImageAttachment>()
+            "voice" ->
+                (trimmedCaption.ifBlank { "[语音]" }) to emptyList<ImageAttachment>()
+            else ->
+                (trimmedCaption.ifBlank { "[$modality]" }) to emptyList<ImageAttachment>()
+        }
+        val batchId = "life_${modality}_${Hashing.shortHash(mediaPath)}"
+        val batch = IngestBatch(
+            batchId = batchId,
+            source = BatchSource.LIFE_CAPTURE,
+            text = text,
+            timeAnchor = nowEpoch,
+            mentionTime = nowEpoch,
+            metadata = mapOf(
+                "modality" to modality,
+                "media_path" to mediaPath,
+                "captured_at" to nowEpoch.toString(),
+                "source" to BatchSource.LIFE_CAPTURE.wireValue,
+            ),
+            images = images,
+        )
+        scope.launch(Dispatchers.IO) {
+            runCatching { pipeline.ingest(batch) }
+                .onFailure { logger.warn("mem life_capture ingest failed (batchId=$batchId)", it) }
+        }
+    }
     fun sendStandardMessage(message: MessageBase) {
         addStandardMessage(message)
         if (!localTransport.send(message)) {
@@ -836,11 +1216,14 @@ class ChatWebSocketManager {
         val key = activeModelKey
         val ctx = appContext
         if (key != null && ctx != null) saveHistory(ctx, key)
+        maybeIngestCompactWindow()
     }
 
+    @Synchronized
     fun clearMessages() {
         _messages.value = emptyList()
         _standardMessages.value = emptyList()
+        resetCompactWatermarkLocked()
         failedMessageIds.clear()
         environmentStateProvider.clearRecentMessages()
         lastServerMessageTime = 0L
@@ -855,8 +1238,8 @@ class ChatWebSocketManager {
     /**
      * Wipe ALL persisted chat data so "清空聊天记录" yields a genuinely EMPTY context: the conversation
      * (messages / standard_messages / media_blocks), the persona STATE that is re-injected into every
-     * planner+replier prompt (memories / impressions / mood_state — without this the persona keeps
-     * remembering the user and carries its mood across a clear), and the planner session logs
+     * planner+replier prompt (impressions / mood_state — without this the persona keeps remembering
+     * the user and carries its mood across a clear), and the planner session logs
      * (planner_rounds / planner_messages / tool_tasks). Unscoped on purpose: the same conversation's
      * rows are spread across inconsistent context/agent ids (user id vs agent self-id), so a
      * per-context delete misses some. Agent CONFIG (agent_configs / prompt_templates) is preserved —
@@ -872,7 +1255,6 @@ class ChatWebSocketManager {
                     deleteAllStandardMessages()
                 }
                 db.runtimeStateDao().apply {
-                    deleteAllMemories()
                     deleteAllImpressions()
                     deleteAllMoodState()
                     deleteAllMediaBlocks()
@@ -887,9 +1269,11 @@ class ChatWebSocketManager {
         }
     }
 
+    @Synchronized
     fun clearMessagesEphemeral() {
         _messages.value = emptyList()
         _standardMessages.value = emptyList()
+        resetCompactWatermarkLocked()
         failedMessageIds.clear()
         environmentStateProvider.clearRecentMessages()
         lastServerMessageTime = 0L    }
@@ -978,6 +1362,16 @@ class ChatWebSocketManager {
     ) {
         _messages.value = visibleMessages
         _standardMessages.value = standardMessages
+        // Restore the persisted compact watermark, clamped to the loaded list size. Without this a
+        // process restart resets compactIngestedUpTo to 0 and the next message past COMPACT_WINDOW_MAX
+        // re-ingests a giant span under a NEW batchId (token explosion / mention_count inflation).
+        val key = activeModelKey
+        val ctx = appContext
+        if (key != null && ctx != null) {
+            compactIngestedUpTo = readCompactWatermark(ctx, key, standardMessages.size)
+        } else {
+            compactIngestedUpTo = 0
+        }
         syncEnvironmentRecentMessages()
         lastServerMessageTime =
                 _standardMessages.value

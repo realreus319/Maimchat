@@ -32,8 +32,6 @@ object LocalToolRegistryFactory {
         tools += LookAtTool(stateProvider = environmentStateProvider, gson = gson)
         tools += TriggerMotionTool(motionController = motionController, gson = gson)
         if (runtimeStateDao != null) {
-            tools += MemoryStoreTool(stateDao = runtimeStateDao, gson = gson)
-            tools += MemorySearchTool(stateDao = runtimeStateDao, gson = gson)
             tools += GetUserImpressionsTool(stateDao = runtimeStateDao, gson = gson)
             tools += UpdateUserImpressionTool(stateDao = runtimeStateDao, gson = gson)
             tools += QueryImpressionTool(stateDao = runtimeStateDao, gson = gson)

@@ -217,6 +217,19 @@ class ChatServiceClient(context: Context) : ServiceConnection {
         )
     }
 
+    fun sendLifeCapture(mediaPath: String, modality: String, caption: String) {
+        val path = mediaPath.trim()
+        if (path.isEmpty()) return
+        sendCommand(
+                ChatServiceProtocol.MSG_SEND_LIFE_CAPTURE,
+                Bundle().apply {
+                    putString(ChatServiceProtocol.EXTRA_LIFE_CAPTURE_MEDIA_PATH, path)
+                    putString(ChatServiceProtocol.EXTRA_LIFE_CAPTURE_MODALITY, modality)
+                    putString(ChatServiceProtocol.EXTRA_LIFE_CAPTURE_CAPTION, caption)
+                }
+        )
+    }
+
     fun setUserProfile(nickname: String?) {
         val sanitized = nickname?.trim().takeUnless { it.isNullOrEmpty() }
         _userNickname.value = sanitized
@@ -632,6 +645,7 @@ class ChatServiceClient(context: Context) : ServiceConnection {
                 ChatServiceProtocol.MSG_UNREGISTER_CLIENT -> "MSG_UNREGISTER_CLIENT"
                 ChatServiceProtocol.MSG_DISCONNECT -> "MSG_DISCONNECT"
                 ChatServiceProtocol.MSG_SEND_MESSAGE -> "MSG_SEND_MESSAGE"
+                ChatServiceProtocol.MSG_SEND_LIFE_CAPTURE -> "MSG_SEND_LIFE_CAPTURE"
                 ChatServiceProtocol.MSG_UPDATE_CONFIG -> "MSG_UPDATE_CONFIG"
                 ChatServiceProtocol.MSG_REQUEST_SNAPSHOT -> "MSG_REQUEST_SNAPSHOT"
                 ChatServiceProtocol.MSG_CLEAR_MESSAGES -> "MSG_CLEAR_MESSAGES"
